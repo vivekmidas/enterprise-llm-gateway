@@ -1,0 +1,24 @@
+[project]
+name = "enterprise-llm-gateway"
+version = "0.1.0"
+description = "Enterprise LLM Gateway"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "langgraph",
+    "langchain",
+    "pydantic",
+    "redis",
+    "sqlalchemy",
+    "alembic",
+    "presidio-analyzer",
+    "presidio-anonymizer",
+    "httpx",
+    "python-dotenv",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-instrumentation-fastapi",
+]
+
+[tool.uv]
