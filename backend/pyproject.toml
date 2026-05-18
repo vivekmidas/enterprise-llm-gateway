@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-api",
     "opentelemetry-sdk",
     "opentelemetry-instrumentation-fastapi",
+    "spacy>=3.8.14",
 ]
 
 [tool.uv]
