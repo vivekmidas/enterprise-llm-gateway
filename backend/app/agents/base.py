@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 class AgentInput(BaseModel):
     trace_id: str
@@ -13,9 +13,9 @@ class AgentOutput(BaseModel):
     trace_id: str
     content: str
     metadata: Dict[str, Any] = {}
-    violations: list[str] = []
+    violations: List[str] = []
     latency_ms: float
-    status: str = "success"   # success | flagged | rejected
+    status: str = "success"
 
 class BaseAgent(ABC):
     name: str
@@ -25,6 +25,3 @@ class BaseAgent(ABC):
     @abstractmethod
     async def run(self, inp: AgentInput) -> AgentOutput:
         pass
-
-    async def validate(self, inp: AgentInput) -> bool:
-        return True

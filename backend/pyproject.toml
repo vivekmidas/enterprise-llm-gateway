@@ -1,25 +1,27 @@
 [project]
 name = "enterprise-llm-gateway"
-version = "0.1.0"
-description = "Enterprise LLM Gateway"
+version = "0.2.2"
+description = "Enterprise LLM Gateway with Guardrails & Workflow Engine"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "langgraph",
-    "langchain",
-    "pydantic",
-    "redis",
-    "sqlalchemy",
-    "alembic",
-    "presidio-analyzer",
-    "presidio-anonymizer",
-    "httpx",
-    "python-dotenv",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-instrumentation-fastapi",
-    "spacy>=3.8.14",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "pydantic>=2.9.0",
+    "presidio-analyzer>=2.2.0",
+    "presidio-anonymizer>=2.2.0",
+    "spacy>=3.7.0",
+    "python-dotenv>=1.0.0",
+    "redis>=5.0.0",
+    "httpx>=0.27.0",
+    "structlog>=24.0.0",
 ]
 
 [tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "black>=24.0.0",
+]
+
