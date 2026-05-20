@@ -20,6 +20,17 @@ class AgentRegistry:
         return list(cls._agents.keys())
 
     @classmethod
+    def list_agent_metadata(cls):
+        return [
+            {
+                "name": agent.name,
+                "description": agent.description,
+                "group": agent.category,
+            }
+            for agent in cls._agents.values()
+        ]
+
+    @classmethod
     def auto_discover(cls):
         """Auto discover and register all agents on startup"""
         base_path = "app.agents"

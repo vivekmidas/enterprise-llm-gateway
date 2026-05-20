@@ -21,6 +21,7 @@ class BaseAgent(ABC):
     name: str
     description: str
     version: str = "1.0.0"
+    category = ""
 
     @abstractmethod
     async def run(self, inp: AgentInput) -> AgentOutput:

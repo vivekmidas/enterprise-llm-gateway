@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 import uuid
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -28,6 +28,17 @@ class ChatResponse(BaseModel):
     violations: list = []
     masked_content: str = ""
     status: str
+
+class WorkflowSaveRequest(BaseModel):
+    id: str
+    name: str = "Untitled Workflow"
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    edges: List[Dict[str, Any]] = Field(default_factory=list)
+
+class WorkflowResponse(WorkflowSaveRequest):
+    version: int
+
+workflows_by_id: Dict[str, List[WorkflowResponse]] = {}
 
 # ======================
 # Imports for Agents
@@ -73,7 +84,37 @@ async def root():
 
 @app.get("/agents")
 async def list_agents():
-    return {"agents": AgentRegistry.list_agents()}
+    return {"agents": AgentRegistry.list_agent_metadata()}
+
+@app.get("/api/workflows")
+async def list_latest_workflows():
+    latest_workflows = [
+        versions[-1]
+        for versions in workflows_by_id.values()
+        if versions
+    ]
+    return {"workflows": latest_workflows}
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_latest_workflow(workflow_id: str):
+    versions = workflows_by_id.get(workflow_id)
+    if not versions:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    return versions[-1]
+
+@app.post("/api/workflows", response_model=WorkflowResponse)
+async def save_workflow(workflow: WorkflowSaveRequest):
+    versions = workflows_by_id.setdefault(workflow.id, [])
+    saved_workflow = WorkflowResponse(
+        id=workflow.id,
+        name=workflow.name,
+        nodes=workflow.nodes,
+        edges=workflow.edges,
+        version=len(versions) + 1,
+    )
+    versions.append(saved_workflow)
+    return saved_workflow
 
 # ======================
 # MAIN CHAT ENDPOINT

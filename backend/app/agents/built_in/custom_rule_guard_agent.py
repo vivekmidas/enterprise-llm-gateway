@@ -3,9 +3,10 @@ import time
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 
 class CustomRuleGuardAgent(BaseAgent):
-    name = "custom_rule_guard"
+    name = "CustomRuleGuardAgent"
     description = "Dynamic rule-based guard using JSON config"
     version = "1.0.0"
+    category = "Guardrails"
 
     async def run(self, inp: AgentInput) -> AgentOutput:
         start = time.time()
