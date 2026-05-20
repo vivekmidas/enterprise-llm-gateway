@@ -1,0 +1,56 @@
+curl -LsSf https://astral.sh/uv/install.sh | sh
+cd backend
+uv sync
+python3 -m venv .venv
+source .venv/bin/activate
+python -m spacy download en_core_web_lg
+uv add presidio-analyzer presidio-anonymizer spacy
+pip install presidio-analyzer presidio-anonymizer spacy
+
+mermaid
+
+flowchart TD
+    A[Client Request\nPOST /api/chat] --> B[Trace ID Generation]
+    B --> C[Input Guard\nPresidio NER Guard]
+    C --> D[Profanity Guard]
+    D --> E[Custom Rule Guard]
+    E --> F[MicroLLM Validator\nSmall LLM Policy Check]
+    F --> G{Status OK?}
+    G -->|No| H[Reject + Log Violations]
+    G -->|Yes| I[Context Setter Agent]
+    I --> J[Main LLM Call\nvLLM / HF / OpenAI]
+    J --> K[Output Guard\nMandatory Final Check]
+    K --> L[Response Formatter]
+    L --> M[Return Safe Response\nto Client]
+
+    subgraph "Guardrail Layer"
+        C & D & E & F & K
+    end
+
+    subgraph "Agent Layer"
+        I & J
+    end
+
+    classDef guard fill:#ff9999,stroke:#333
+    classDef agent fill:#99ccff,stroke:#333
+    class C,D,E,F,K guard
+    class I,J agent
+
+curl -X POST http://localhost:8000/api/chat \
+ -H "Content-Type: application/json" \
+ -d '{
+"message": "Hi, my phone number is 9876543210 and email is test@company.com. What is the weather?",
+"workflow_id": "default",
+"user_id": "user123"
+}'
+
+curl -X POST http://localhost:8000/api/agents/test \
+ -H "Content-Type: application/json" \
+ -d '{
+"agent_name": "presidio_ner_guard",
+"content": "My account number is ACCT-987654 and password is Secret123!",
+"config": {
+"entities": ["PHONE_NUMBER", "EMAIL_ADDRESS", "PII_PASSWORD"],
+"keywords": ["secret"]
+}
+}'

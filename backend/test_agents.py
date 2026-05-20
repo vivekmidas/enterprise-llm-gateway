@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from app.agents.base import AgentInput
-from app.agents.built_in.presidio_ner_guard_agent import PresidioNERGuardAgent
+from app.agents.built_in.presidio.presidio_ner_guard_agent import PresidioNERGuardAgent
 
 async def test_presidio():
     agent = PresidioNERGuardAgent()

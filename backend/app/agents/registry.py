@@ -7,9 +7,9 @@ class AgentRegistry:
     _agents: Dict[str, BaseAgent] = {}
 
     @classmethod
-    def register(cls, agent_instance: BaseAgent):
-        cls._agents[agent_instance.name] = agent_instance
-        print(f"✅ Agent registered: {agent_instance.name} v{agent_instance.version}")
+    def register(cls, agent: BaseAgent):
+        cls._agents[agent.name] = agent
+        print(f"✅ Agent registered: {agent.name} v{agent.version}")
 
     @classmethod
     def get_agent(cls, name: str):
@@ -21,15 +21,14 @@ class AgentRegistry:
 
     @classmethod
     def auto_discover(cls):
-        """Auto-register all agents in built_in and custom folders"""
-        package = "app.agents"
-        for module_info in pkgutil.iter_modules([f"backend/app/agents"]):
-            if module_info.name in ["built_in", "custom"]:
-                try:
-                    module = importlib.import_module(f"{package}.{module_info.name}")
-                    # Import all .py files inside
-                    for sub_info in pkgutil.iter_modules(module.__path__):
-                        if not sub_info.name.startswith("__"):
-                            importlib.import_module(f"{package}.{module_info.name}.{sub_info.name}")
-                except Exception as e:
-                    print(f"Warning: Could not load {module_info.name}: {e}")
+        """Auto discover and register all agents on startup"""
+        base_path = "app.agents"
+        
+        # Discover built_in agents
+        for module_info in pkgutil.iter_modules(["backend/app/agents/built_in"]):
+            if module_info.name.startswith("__"):
+                continue
+            try:
+                importlib.import_module(f"{base_path}.built_in.{module_info.name}")
+            except Exception as e:
+                print(f"Warning loading {module_info.name}: {e}")

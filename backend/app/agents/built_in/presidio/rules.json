@@ -1,0 +1,24 @@
+{
+    "name": "presidio_ner_guard",
+    "config": {
+        "entities": [
+            "PHONE_NUMBER",
+            "EMAIL_ADDRESS",
+            "PII_PASSWORD"
+        ],
+        "score_threshold": 0.65,
+        "keywords": [
+            "confidential",
+            "secret",
+            "internal-only"
+        ],
+        "custom_patterns": [
+            {
+                "name": "account_number",
+                "regex": "\\bACCT-\\d{6,10}\\b",
+                "score": 0.9,
+                "entity_type": "ACCOUNT_NUMBER"
+            }
+        ]
+    }
+}
