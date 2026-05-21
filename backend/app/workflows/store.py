@@ -97,3 +97,16 @@ async def list_workflows_from_store() -> list:
         return workflows
     except Exception:
         return []
+
+
+async def delete_workflow_from_store(workflow_id: str, version: Optional[str] = None) -> bool:
+    """Delete workflow file and invalidate cache."""
+    if version is None:
+        version = "1.0"
+
+    file_path = f"{WORKFLOWS_DIR}/{workflow_id}_v{version}.json"
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        await redis_cache.invalidate_workflow(workflow_id)
+        return True
+    return False

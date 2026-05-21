@@ -1,10 +1,13 @@
 from typing import Optional
 from fastapi import HTTPException
+from datetime import datetime
+
 
 from app.models.workflow import WorkflowDefinition
 from app.workflows.store import (
     save_workflow_to_store,
-    load_workflow_from_store
+    load_workflow_from_store,
+    delete_workflow_from_store
 )
 from app.core.cache import redis_cache
 from app.workflows.builder import build_graph_from_definition
@@ -12,7 +15,13 @@ from app.workflows.builder import build_graph_from_definition
 
 async def save_workflow(definition: WorkflowDefinition, db_session=None) -> dict:
     """Public service method"""
+    definition.updated_at = datetime.utcnow()  # Update the timestamp
     return await save_workflow_to_store(definition)
+
+
+async def delete_workflow(workflow_id: str, version: Optional[str] = None) -> bool:
+    """Public service method to delete workflow"""
+    return await delete_workflow_from_store(workflow_id, version)
 
 
 async def get_workflow(workflow_id: str, version: Optional[str] = None):

@@ -26,6 +26,7 @@ class WorkflowDefinition(BaseModel):
     nodes: List[NodeConfig]
     edges: List[EdgeConfig]
     entry_point: str = "guard_input"
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     global_rules: Dict[str, Any]  # profanity, PII patterns, score_thresholds
     llm_config: Dict[str, Any]  # default HF endpoint, fallback, etc.
     metadata: Dict[str, Any] = Field(default_factory=dict)

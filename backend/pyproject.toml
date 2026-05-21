@@ -20,7 +20,7 @@ dependencies = [
     "redis[hiredis]",  # optional for performance
     "langgraph-checkpoint-redis",  # for future checkpointer alignment
     "aioredis",  # if using async
-    "pydantic_settings",
+    "pydantic-settings"
     
 
 ]

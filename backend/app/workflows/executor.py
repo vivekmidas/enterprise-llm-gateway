@@ -3,7 +3,8 @@ import json
 from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph, END
-from app.workflows.state import WorkflowState
+from app.utils.state import EnterpriseState
+from app.utils.state import WorkflowState
 from app.agents.base import AgentInput
 from app.agents.registry import AgentRegistry
 from app.core.llm_router import LLMRouter

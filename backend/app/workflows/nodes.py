@@ -93,7 +93,7 @@ def create_final_sanctity_node(config: Dict[str, Any]):
     async def sanctity_node(state: EnterpriseState) -> EnterpriseState:
         output = state.messages[-1].content if state.messages else ""
         violations = state.violations[:]
-        if "bad" in output.lower():
+        if "bad" in str(output).lower():
             violations.append("policy_violation")
 
         return state.model_copy(update={

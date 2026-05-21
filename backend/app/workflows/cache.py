@@ -9,7 +9,8 @@ from langgraph.graph.state import CompiledStateGraph  # StateGraph compiled
 
 from ..models.workflow import WorkflowDefinition
 from app.core.config import get_redis_client
-from .service import build_compiled_graph  # your existing graph builder
+from app.workflows.builder import build_graph_from_definition
+from app.workflows.store import load_workflow_from_store
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class CompiledGraphCache:
         key = f"{workflow_id}:{version or 'latest'}"
         return self.prefix + hashlib.sha256(key.encode()).hexdigest()
 
-    async def get(self, workflow_id: str, version: Optional[str] = None) -> Optional[CompiledGraph]:
+    async def get(self, workflow_id: str, version: Optional[str] = None) -> Optional[CompiledStateGraph]:
         """Get compiled graph - check local -> Redis -> rebuild"""
         cache_key = self._get_cache_key(workflow_id, version)
         hash_key = cache_key  # for Redis
@@ -38,15 +39,16 @@ class CompiledGraphCache:
 
         # 2. Redis cache
         try:
-            cached_data = self.redis.get(hash_key)
+            cached_data = await self.redis.get(hash_key)
             if cached_data:
                 # We cannot reliably pickle CompiledGraph due to callables
                 # So we store metadata + version, and rebuild if needed
                 metadata = json.loads(cached_data)
                 logger.debug(f"Cache hit (Redis metadata): {workflow_id}")
                 
-                # Rebuild and store locally
-                compiled = await build_compiled_graph(workflow_id, version)
+                # Rebuild and store locally - builder needs WorkflowDefinition object
+                definition = await load_workflow_from_store(workflow_id, version)
+                compiled = await build_graph_from_definition(definition)
                 self.local_cache[cache_key] = compiled
                 return compiled
         except Exception as e:
@@ -54,15 +56,16 @@ class CompiledGraphCache:
 
         # 3. Miss - build fresh
         logger.info(f"Cache miss - building graph: {workflow_id}")
-        compiled = await build_compiled_graph(workflow_id, version)
+        definition = await load_workflow_from_store(workflow_id, version)
+        compiled = await build_graph_from_definition(definition)
         
         # Cache locally + metadata in Redis
         self.local_cache[cache_key] = compiled
-        self._cache_metadata(workflow_id, version)
+        await self._cache_metadata(workflow_id, version)
         
         return compiled
 
-    def _cache_metadata(self, workflow_id: str, version: Optional[str]):
+    async def _cache_metadata(self, workflow_id: str, version: Optional[str]):
         """Store lightweight metadata in Redis for invalidation"""
         key = self._get_cache_key(workflow_id, version)
         metadata = {
@@ -72,7 +75,7 @@ class CompiledGraphCache:
             "ttl": self.ttl
         }
         try:
-            self.redis.setex(key, self.ttl, json.dumps(metadata))
+            await self.redis.setex(key, self.ttl, json.dumps(metadata))
         except Exception as e:
             logger.error(f"Failed to cache metadata: {e}")
 
@@ -80,19 +83,19 @@ class CompiledGraphCache:
         """Invalidate on workflow update (called from save_workflow)"""
         key = self._get_cache_key(workflow_id, version)
         try:
-            self.redis.delete(key)
+            await self.redis.delete(key)
             if key in self.local_cache:
                 del self.local_cache[key]
             logger.info(f"Invalidated compiled graph cache: {workflow_id}")
         except Exception as e:
             logger.error(f"Cache invalidation failed: {e}")
 
-    def clear_all(self):
+    async def clear_all(self):
         """For admin/debug"""
         try:
-            keys = self.redis.keys(self.prefix + "*")
+            keys = await self.redis.keys(self.prefix + "*")
             if keys:
-                self.redis.delete(*keys)
+                await self.redis.delete(*keys)
             self.local_cache.clear()
             logger.info("Cleared all compiled graph cache")
         except Exception as e:
