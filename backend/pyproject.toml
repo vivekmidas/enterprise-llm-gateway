@@ -16,6 +16,13 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "structlog>=24.0.0",
     "httpx>=0.27.0",
+    "redis >= 5.0",
+    "redis[hiredis]",  # optional for performance
+    "langgraph-checkpoint-redis",  # for future checkpointer alignment
+    "aioredis",  # if using async
+    "pydantic_settings",
+    
+
 ]
 
 [tool.uv]

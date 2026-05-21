@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.api.workflows.schemas import WorkflowResponse, WorkflowSaveRequest
-from app.api.workflows.store import (
+from backend.app.workflows.store import (
     get_latest_workflow,
     list_latest_workflows,
     save_workflow,
