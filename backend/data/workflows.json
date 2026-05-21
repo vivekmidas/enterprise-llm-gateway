@@ -1,0 +1,352 @@
+{
+  "workflows": {
+    "email_channel": [
+      {
+        "id": "email_channel",
+        "name": "Email Channel",
+        "nodes": [
+          {
+            "id": "start",
+            "type": "custom",
+            "position": {
+              "x": 150,
+              "y": 150
+            },
+            "data": {
+              "label": "Start",
+              "name": "Start",
+              "description": "Entry point for every workflow run",
+              "group": "Start",
+              "category": "Start",
+              "icon": "play-circle",
+              "propertySchema": [
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "enabled": true
+              }
+            },
+            "width": 268,
+            "height": 99
+          },
+          {
+            "id": "WhatsApp-1779356516133",
+            "type": "custom",
+            "position": {
+              "x": 519,
+              "y": 192
+            },
+            "data": {
+              "label": "WhatsApp",
+              "name": "WhatsApp",
+              "description": "Customer initiates WhatsApp chat",
+              "group": "Trigger",
+              "category": "Trigger",
+              "icon": "message-square",
+              "triggerType": "whatsapp",
+              "propertySchema": [
+                {
+                  "key": "actionClass",
+                  "label": "Action Class",
+                  "type": "string",
+                  "placeholder": "com.enterprise.workflow.actions.CustomAction"
+                },
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "actionClass": "",
+                "enabled": true
+              }
+            },
+            "width": 272,
+            "height": 99,
+            "selected": true,
+            "positionAbsolute": {
+              "x": 519,
+              "y": 192
+            },
+            "dragging": false
+          }
+        ],
+        "edges": [
+          {
+            "type": "smoothstep",
+            "animated": true,
+            "source": "start",
+            "sourceHandle": null,
+            "target": "WhatsApp-1779356516133",
+            "targetHandle": null,
+            "id": "reactflow__edge-start-WhatsApp-1779356516133"
+          }
+        ],
+        "version": 1
+      },
+      {
+        "id": "email_channel",
+        "name": "Email Channel",
+        "nodes": [
+          {
+            "id": "start",
+            "type": "custom",
+            "position": {
+              "x": 150,
+              "y": 150
+            },
+            "data": {
+              "label": "Start",
+              "name": "Start",
+              "description": "Entry point for every workflow run",
+              "group": "Start",
+              "category": "Start",
+              "icon": "play-circle",
+              "propertySchema": [
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "enabled": true
+              }
+            },
+            "width": 268,
+            "height": 99
+          },
+          {
+            "id": "WhatsApp-1779356516133",
+            "type": "custom",
+            "position": {
+              "x": 519,
+              "y": 192
+            },
+            "data": {
+              "label": "WhatsApp",
+              "name": "WhatsApp",
+              "description": "Customer initiates WhatsApp chat",
+              "group": "Trigger",
+              "category": "Trigger",
+              "icon": "message-square",
+              "triggerType": "whatsapp",
+              "propertySchema": [
+                {
+                  "key": "actionClass",
+                  "label": "Action Class",
+                  "type": "string",
+                  "placeholder": "com.enterprise.workflow.actions.CustomAction"
+                },
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "actionClass": "",
+                "enabled": true
+              }
+            },
+            "width": 272,
+            "height": 99,
+            "selected": true,
+            "positionAbsolute": {
+              "x": 519,
+              "y": 192
+            },
+            "dragging": false
+          }
+        ],
+        "edges": [
+          {
+            "type": "smoothstep",
+            "animated": true,
+            "source": "start",
+            "sourceHandle": null,
+            "target": "WhatsApp-1779356516133",
+            "targetHandle": null,
+            "id": "reactflow__edge-start-WhatsApp-1779356516133"
+          }
+        ],
+        "version": 2
+      },
+      {
+        "id": "email_channel",
+        "name": "Email Channel",
+        "nodes": [
+          {
+            "id": "start",
+            "type": "custom",
+            "position": {
+              "x": 150,
+              "y": 150
+            },
+            "data": {
+              "label": "Start",
+              "name": "Start",
+              "description": "Entry point for every workflow run",
+              "group": "Start",
+              "category": "Start",
+              "icon": "play-circle",
+              "propertySchema": [
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "enabled": true
+              }
+            },
+            "width": 268,
+            "height": 99
+          },
+          {
+            "id": "WhatsApp-1779356516133",
+            "type": "custom",
+            "position": {
+              "x": 519,
+              "y": 192
+            },
+            "data": {
+              "label": "WhatsApp",
+              "name": "WhatsApp",
+              "description": "Customer initiates WhatsApp chat",
+              "group": "Trigger",
+              "category": "Trigger",
+              "icon": "message-square",
+              "triggerType": "whatsapp",
+              "propertySchema": [
+                {
+                  "key": "actionClass",
+                  "label": "Action Class",
+                  "type": "string",
+                  "placeholder": "com.enterprise.workflow.actions.CustomAction"
+                },
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "actionClass": "",
+                "enabled": true
+              }
+            },
+            "width": 272,
+            "height": 99,
+            "selected": true,
+            "positionAbsolute": {
+              "x": 519,
+              "y": 192
+            },
+            "dragging": false
+          }
+        ],
+        "edges": [
+          {
+            "type": "smoothstep",
+            "animated": true,
+            "source": "start",
+            "sourceHandle": null,
+            "target": "WhatsApp-1779356516133",
+            "targetHandle": null,
+            "id": "reactflow__edge-start-WhatsApp-1779356516133"
+          }
+        ],
+        "version": 3
+      },
+      {
+        "id": "email_channel",
+        "name": "Email Channel",
+        "nodes": [
+          {
+            "id": "start",
+            "type": "custom",
+            "position": {
+              "x": 150,
+              "y": 150
+            },
+            "data": {
+              "label": "Start",
+              "name": "Start",
+              "description": "Entry point for every workflow run",
+              "group": "Start",
+              "category": "Start",
+              "icon": "play-circle",
+              "propertySchema": [
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "enabled": true
+              }
+            },
+            "width": 268,
+            "height": 99
+          },
+          {
+            "id": "WhatsApp-1779359331790",
+            "type": "custom",
+            "position": {
+              "x": 546,
+              "y": 366
+            },
+            "data": {
+              "label": "WhatsApp",
+              "name": "WhatsApp",
+              "description": "Customer initiates WhatsApp chat",
+              "group": "Trigger",
+              "category": "Trigger",
+              "icon": "message-square",
+              "triggerType": "whatsapp",
+              "propertySchema": [
+                {
+                  "key": "actionClass",
+                  "label": "Action Class",
+                  "type": "string",
+                  "placeholder": "com.enterprise.workflow.actions.CustomAction"
+                },
+                {
+                  "key": "enabled",
+                  "label": "Enabled",
+                  "type": "boolean"
+                }
+              ],
+              "properties": {
+                "actionClass": "",
+                "enabled": true
+              }
+            },
+            "width": 272,
+            "height": 99
+          }
+        ],
+        "edges": [
+          {
+            "type": "smoothstep",
+            "animated": true,
+            "source": "start",
+            "sourceHandle": null,
+            "target": "WhatsApp-1779359331790",
+            "targetHandle": null,
+            "id": "reactflow__edge-start-WhatsApp-1779359331790"
+          }
+        ],
+        "version": 4
+      }
+    ]
+  }
+}
