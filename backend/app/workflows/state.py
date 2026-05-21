@@ -11,3 +11,4 @@ class WorkflowState(BaseModel):
     llm_response: str = ""
     final_response: str = ""
     status: str = "in_progress"
+    agents_executed: List[str] = []   # Added for safety

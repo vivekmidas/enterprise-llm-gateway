@@ -7,7 +7,7 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 class PresidioNERGuardAgent(BaseAgent):
-    name = "PresidioNERGuardAgent"
+    name = "presidio_ner_guard"
     description = "Advanced PII + Custom Rules using Presidio"
     version = "1.1.0"
     category = "Guardrails"

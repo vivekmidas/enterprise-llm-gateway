@@ -4,7 +4,7 @@ from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 
 class ProfanityGuardAgent(BaseAgent):
-    name = "ProfanityGuardAgent"
+    name = "profanity_guard"
     description = "Profanity and offensive content detection"
     version = "1.1.0"
     category = "Guardrails"

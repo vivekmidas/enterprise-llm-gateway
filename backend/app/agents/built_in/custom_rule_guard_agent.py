@@ -3,7 +3,7 @@ import time
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 
 class CustomRuleGuardAgent(BaseAgent):
-    name = "CustomRuleGuardAgent"
+    name = "custom_rule_guard"
     description = "Dynamic rule-based guard using JSON config"
     version = "1.0.0"
     category = "Guardrails"
