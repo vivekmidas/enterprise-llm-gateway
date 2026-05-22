@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from app.core.observability import setup_observability
 
 load_dotenv()
 
 app = FastAPI(title="Enterprise LLM Gateway", version="0.2.3")
+logger = setup_observability(app)
 
 # CORS
 app.add_middleware(
@@ -24,7 +26,7 @@ from app.agents.registry import AgentRegistry
 # ====================== Startup - Register Agents ======================
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 Starting Enterprise LLM Gateway v0.2.3...")
+    logger.info("starting_gateway", version="0.2.3")
     AgentRegistry.auto_discover()
     
     # Register all built-in agents
@@ -39,7 +41,7 @@ async def startup_event():
                        ContextSetterAgent, SentimentAnalyzerAgent, OutputGuardAgent]:
         AgentRegistry.register(agent_class())
 
-    print(f"✅ Loaded {len(AgentRegistry.list_agents())} agents")
+    logger.info("agents_registered", count=len(AgentRegistry.list_agents()))
     
 app.include_router(root_router)
 app.include_router(agents_router)

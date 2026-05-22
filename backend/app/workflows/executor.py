@@ -1,5 +1,7 @@
 # backend/app/workflows/executor.py
 import json
+import structlog
+from opentelemetry import trace
 from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph, END
@@ -10,6 +12,8 @@ from app.agents.registry import AgentRegistry
 from app.core.llm_router import LLMRouter
 
 router = LLMRouter()
+logger = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def message_content_to_text(content: object) -> str:
@@ -32,53 +36,58 @@ def message_content_to_text(content: object) -> str:
 
 def create_agent_node(agent):
     async def agent_node(state: WorkflowState) -> WorkflowState:
-        try:
-            agent_input = AgentInput(
-                trace_id=state.trace_id,
-                content=state.masked_content or state.content,
-                context=state.context,
-                metadata=state.metadata
-            )
+        with tracer.start_as_current_span(f"agent:{getattr(agent, 'name', 'unknown')}") as span:
+            span.set_attribute("agent.name", getattr(agent, "name", "unknown"))
+            span.set_attribute("trace_id", state.trace_id)
+            try:
+                agent_input = AgentInput(
+                    trace_id=state.trace_id,
+                    content=state.masked_content or state.content,
+                    context=state.context,
+                    metadata=state.metadata
+                )
 
-            result = await agent.run(agent_input)
+                result = await agent.run(agent_input)
 
-            new_state = state.model_copy()
-            new_state.content = result.content
-            new_state.masked_content = result.content
-            new_state.metadata.update(result.metadata or {})
-            if result.violations:
-                new_state.violations.extend(result.violations)
-            return new_state
+                new_state = state.model_copy()
+                new_state.content = result.content
+                new_state.masked_content = result.content
+                new_state.metadata.update(result.metadata or {})
+                if result.violations:
+                    new_state.violations.extend(result.violations)
+                return new_state
 
-        except Exception as e:
-            print(f"Agent Error [{getattr(agent, 'name', 'unknown')}]: {e}")
-            new_state = state.model_copy()
-            new_state.violations.append(f"agent_error:{getattr(agent, 'name', 'unknown')}")
-            return new_state
+            except Exception as e:
+                logger.error("agent_execution_failed", agent=getattr(agent, 'name', 'unknown'), error=str(e))
+                new_state = state.model_copy()
+                new_state.violations.append(f"agent_error:{getattr(agent, 'name', 'unknown')}")
+                return new_state
 
     return agent_node
 
 
 async def llm_node(state: WorkflowState) -> WorkflowState:
-    try:
-        llm = await router.get_llm(temperature=0.7, max_tokens=1024)
-        prompt = state.masked_content or state.content
+    with tracer.start_as_current_span("llm_node") as span:
+        span.set_attribute("llm.provider", router.provider)
+        try:
+            llm = await router.get_llm(temperature=0.7, max_tokens=1024)
+            prompt = state.masked_content or state.content
 
-        response = await llm.ainvoke(prompt)
-        content = message_content_to_text(response.content if hasattr(response, "content") else response)
+            response = await llm.ainvoke(prompt)
+            content = message_content_to_text(response.content if hasattr(response, "content") else response)
 
-        new_state = state.model_copy()
-        new_state.llm_response = content
-        new_state.content = content
-        new_state.final_response = content
-        return new_state
+            new_state = state.model_copy()
+            new_state.llm_response = content
+            new_state.content = content
+            new_state.final_response = content
+            return new_state
 
-    except Exception as e:
-        print(f"LLM Error: {e}")
-        new_state = state.model_copy()
-        new_state.llm_response = "Sorry, I couldn't generate a response at this time."
-        new_state.final_response = new_state.llm_response
-        return new_state
+        except Exception as e:
+            logger.error("llm_call_failed", error=str(e))
+            new_state = state.model_copy()
+            new_state.llm_response = "Sorry, I couldn't generate a response at this time."
+            new_state.final_response = new_state.llm_response
+            return new_state
 
 
 async def passthrough_node(state: WorkflowState) -> WorkflowState:
@@ -92,6 +101,9 @@ async def execute_dynamic_workflow(
     context: Optional[Dict[str, Any]] = None,
 ):
     """Main execution function"""
+    log = logger.bind(trace_id=trace_id)
+    log.info("workflow_execution_started", workflow_id=workflow_config.get("id"))
+    
     state = WorkflowState(
         trace_id=trace_id,
         content=input_content,
