@@ -21,6 +21,7 @@ from app.api.agents.router import router as agents_router
 from app.api.chat.router import router as chat_router
 from app.api.root.router import router as root_router
 from app.api.workflows.router import router as workflows_router
+from app.api.observability.router import router as obs_router
 from app.agents.registry import AgentRegistry
 
 # ====================== Startup - Register Agents ======================
@@ -47,6 +48,7 @@ app.include_router(root_router)
 app.include_router(agents_router)
 app.include_router(chat_router)
 app.include_router(workflows_router)
+app.include_router(obs_router)
 
 if __name__ == "__main__":
     import uvicorn

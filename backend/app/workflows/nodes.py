@@ -12,16 +12,26 @@ logger = logging.getLogger(__name__)
 
 def create_node_handler(node: NodeConfig) -> Callable:
     """Factory - returns async node function"""
+    ui_data = getattr(node, "data", {}) if hasattr(node, "data") else {}
+    
+    # Determine node type (handling UI vs Engine naming)
     node_type = node.type.lower()
-    config = node.config or {}
+    if node_type == "custom":
+        group = ui_data.get("group", "").lower()
+        if group == "start": node_type = "context_setter"
+        elif group == "trigger": node_type = "guard"
+        else: node_type = "custom_agent"
+
+    # Extract config from Engine format or UI properties format
+    config = node.config or ui_data.get("properties", {})
 
     handlers = {
-        "input_guard": create_input_guard_node,
-        "context_agent": create_context_agent_node,
+        "guard": create_input_guard_node,
+        "context_setter": create_context_agent_node,
         "llm_call": create_llm_call_node,
         "tool_call": create_tool_call_node,
         "final_sanctity": create_final_sanctity_node,
-        "custom": create_custom_node,
+        "custom_agent": create_custom_node,
     }
 
     if node_type not in handlers:

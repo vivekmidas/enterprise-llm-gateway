@@ -1,5 +1,6 @@
 # backend/app/workflows/executor.py
 import json
+import time
 import structlog
 from opentelemetry import trace
 from typing import Any, Dict, Optional
@@ -10,6 +11,7 @@ from app.utils.state import WorkflowState
 from app.agents.base import AgentInput
 from app.agents.registry import AgentRegistry
 from app.core.llm_router import LLMRouter
+from app.core.cache import trace_store
 
 router = LLMRouter()
 logger = structlog.get_logger(__name__)
@@ -101,6 +103,7 @@ async def execute_dynamic_workflow(
     context: Optional[Dict[str, Any]] = None,
 ):
     """Main execution function"""
+    start_time = time.time()
     log = logger.bind(trace_id=trace_id)
     log.info("workflow_execution_started", workflow_id=workflow_config.get("id"))
     
@@ -141,8 +144,13 @@ async def execute_dynamic_workflow(
             raise ValueError(f"Unsupported node type: {node_type}")
 
     # Add edges
-    for edge in workflow_config.get("edges", []):
-        graph.add_edge(edge["source"], edge["target"])
+    edges_raw = workflow_config.get("edges", [])
+    edges_list = edges_raw.values() if isinstance(edges_raw, dict) else edges_raw
+    for edge in edges_list:
+        source = edge.get("source") or edge.get("from_node")
+        target = edge.get("target") or edge.get("to_node")
+        if source and target:
+            graph.add_edge(source, target)
 
     # Entry / Exit
     nodes = workflow_config.get("nodes", [])
@@ -166,5 +174,11 @@ async def execute_dynamic_workflow(
     result_dict["final_response"] = result_dict.get("llm_response") or result_dict.get("content", input_content)
     result_dict["agents_executed"] = agents_executed
     result_dict["trace_id"] = trace_id
+    result_dict["workflow_id"] = workflow_config.get("id")
+    result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
+    result_dict["timestamp"] = time.time()
+
+    # Persist trace for metrics/observability
+    await trace_store.save_trace(trace_id, result_dict)
 
     return result_dict

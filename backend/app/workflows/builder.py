@@ -32,9 +32,12 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
             raise
 
     # === Add Edges ===
-    for edge in definition.edges:
-        source = edge.get("from") or edge.get("from_node")
-        target = edge.get("to") or edge.get("to_node")
+    # Handle edges whether it's a list or a dictionary (keyed by edge id)
+    edges_data = definition.edges.values() if isinstance(definition.edges, dict) else definition.edges
+
+    for edge in edges_data:
+        source = edge.get("source") or edge.get("from") or edge.get("from_node")
+        target = edge.get("target") or edge.get("to") or edge.get("to_node")
         
         if not source or not target:
             continue

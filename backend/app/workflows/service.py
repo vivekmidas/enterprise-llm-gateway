@@ -9,7 +9,7 @@ from app.workflows.store import (
     load_workflow_from_store,
     delete_workflow_from_store
 )
-from app.core.cache import redis_cache
+from app.core.cache import workflow_cache
 from app.workflows.builder import build_graph_from_definition
 
 
@@ -27,7 +27,7 @@ async def delete_workflow(workflow_id: str, version: Optional[str] = None) -> bo
 async def get_workflow(workflow_id: str, version: Optional[str] = None):
     """Main entry point with Redis cache"""
     # 1. Try cache
-    cached = await redis_cache.get_compiled_graph(workflow_id, version)
+    cached = await workflow_cache.get_compiled_graph(workflow_id, version)
     if cached:
         return cached
 
@@ -38,7 +38,7 @@ async def get_workflow(workflow_id: str, version: Optional[str] = None):
     compiled = await build_graph_from_definition(definition)
 
     # 4. Cache it
-    await redis_cache.set_compiled_graph(workflow_id, definition.version, compiled)
+    await workflow_cache.set_compiled_graph(workflow_id, definition.version, compiled)
 
     return compiled
 

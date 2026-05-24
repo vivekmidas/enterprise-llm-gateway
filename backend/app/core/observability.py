@@ -8,6 +8,13 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
 
+def filter_http_methods(_, __, event_dict):
+    """Filter out logs that specify an HTTP method other than GET or POST."""
+    method = event_dict.get("method") or event_dict.get("http_method")
+    if method and str(method).upper() not in ["GET", "POST"]:
+        raise structlog.DropEvent
+    return event_dict
+
 def setup_observability(app):
     """
     Initializes structured logging, OpenTelemetry tracing, and Prometheus metrics.
@@ -17,6 +24,7 @@ def setup_observability(app):
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
+            filter_http_methods,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),

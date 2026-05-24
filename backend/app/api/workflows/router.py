@@ -9,12 +9,12 @@ from app.workflows.store import (
 )
 from app.workflows.service import save_workflow, delete_workflow
 
-router = APIRouter(prefix="/api/workflows")
+router = APIRouter(prefix="/workflow")
 
 
 @router.get("")
 async def get_workflows():
-    return {"workflows": await list_workflows_from_store()}
+    return await list_workflows_from_store()
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)
@@ -26,7 +26,12 @@ async def get_workflow(workflow_id: str, version: Optional[str] = None):
 
 
 @router.post("", response_model=dict)
-async def create_workflow(workflow: WorkflowDefinition):
+async def create_workflow(request: WorkflowSaveRequest):
+    # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
+    workflow = WorkflowDefinition(
+        **request.model_dump(),
+        version="1"
+    )
     return await save_workflow(workflow)
 
 
