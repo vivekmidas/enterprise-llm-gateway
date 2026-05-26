@@ -15,9 +15,9 @@ class WorkflowCache:
         self.ttl = settings.REDIS_CACHE_TTL
         self._local_compiled_cache: Dict[str, Any] = {}
 
-    async def set_compiled_graph(self, workflow_id: str, version: str, compiled_graph: Any) -> bool:
+    async def set_compiled_graph(self, agent_id: str, version: str, compiled_graph: Any) -> bool:
         """Cache compiled LangGraph object locally and store a validity token in Redis."""
-        key = f"compiled_graph:{workflow_id}:v{version or 'latest'}"
+        key = f"compiled_graph:{agent_id}:v{version or 'latest'}"
         try:
             # 1. Store the actual object in local memory
             self._local_compiled_cache[key] = compiled_graph
@@ -31,9 +31,9 @@ class WorkflowCache:
             logger.error(f"Failed to cache graph {key}: {e}")
             return False
 
-    async def get_compiled_graph(self, workflow_id: str, version: str | None = None) -> Optional[Any]:
+    async def get_compiled_graph(self, agent_id: str, version: str | None = None) -> Optional[Any]:
         """Retrieve compiled graph from local memory, checking Redis for validity."""
-        key = f"compiled_graph:{workflow_id}:v{version or 'latest'}"
+        key = f"compiled_graph:{agent_id}:v{version or 'latest'}"
         try:
             # 1. Check local cache
             if key in self._local_compiled_cache:
@@ -51,21 +51,21 @@ class WorkflowCache:
             logger.error(f"Failed to get cached graph {key}: {e}")
             return None
 
-    async def invalidate_workflow(self, workflow_id: str) -> None:
+    async def invalidate_agent(self, agent_id: str) -> None:
         """Invalidate all versions across Redis and local cache."""
         try:
             # 1. Clear local cache entries for this workflow
-            prefix = f"compiled_graph:{workflow_id}:"
+            prefix = f"compiled_graph:{agent_id}:"
             local_keys = [k for k in self._local_compiled_cache if k.startswith(prefix)]
             for k in local_keys:
                 self._local_compiled_cache.pop(k, None)
 
             # 2. Delete tokens from Redis to notify other workers
-            async for key in self.client.scan_iter(match=f"compiled_graph:{workflow_id}:*"):
+            async for key in self.client.scan_iter(match=f"compiled_graph:{agent_id}:*"):
                 await self.client.delete(key)
-            logger.info(f"Invalidated cache for workflow {workflow_id}")
+            logger.info(f"Invalidated cache for agent {agent_id}")
         except Exception as e:
-            logger.warning(f"Cache invalidation failed for {workflow_id}: {e}")
+            logger.warning(f"Cache invalidation failed for {agent_id}: {e}")
 
 class TraceStore:
     """Dedicated class for handling execution traces and observability data."""

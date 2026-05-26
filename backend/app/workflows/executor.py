@@ -6,8 +6,7 @@ from opentelemetry import trace
 from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph, END
-from app.utils.state import EnterpriseState
-from app.utils.state import WorkflowState
+from app.utils.state import WorkflowState as AgentState
 from app.agents.base import AgentInput
 from app.agents.registry import AgentRegistry
 from app.core.llm_router import LLMRouter
@@ -37,7 +36,7 @@ def message_content_to_text(content: object) -> str:
 
 
 def create_agent_node(agent, node_config: Dict[str, Any] = None):
-    async def agent_node(state: WorkflowState) -> WorkflowState:
+    async def agent_node(state: AgentState) -> AgentState:
         with tracer.start_as_current_span(f"agent:{getattr(agent, 'name', 'unknown')}") as span:
             span.set_attribute("agent.name", getattr(agent, "name", "unknown"))
             span.set_attribute("trace_id", state.trace_id)
@@ -83,7 +82,7 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
     return agent_node
 
 
-async def llm_node(state: WorkflowState) -> WorkflowState:
+async def llm_node(state: AgentState) -> AgentState:
     with tracer.start_as_current_span("llm_node") as span:
         span.set_attribute("llm.provider", router.provider)
         logger.debug("llm_call_started", provider=router.provider, trace_id=state.trace_id)
@@ -110,12 +109,12 @@ async def llm_node(state: WorkflowState) -> WorkflowState:
             return new_state
 
 
-async def passthrough_node(state: WorkflowState) -> WorkflowState:
+async def passthrough_node(state: AgentState) -> AgentState:
     return state
 
 
-async def execute_dynamic_workflow(
-    workflow_config: Dict[str, Any],
+async def execute_dynamic_agent(
+    agent_config: Dict[str, Any],
     input_content: str,
     trace_id: str,
     context: Optional[Dict[str, Any]] = None,
@@ -123,9 +122,9 @@ async def execute_dynamic_workflow(
     """Main execution function"""
     start_time = time.time()
     log = logger.bind(trace_id=trace_id)
-    log.info("workflow_execution_started", workflow_id=workflow_config.get("id"))
+    log.info("agent_execution_started", agent_id=agent_config.get("id"))
     
-    state = WorkflowState(
+    state = AgentState(
         trace_id=trace_id,
         content=input_content,
         masked_content=input_content,
@@ -136,20 +135,20 @@ async def execute_dynamic_workflow(
         final_response=""
     )
 
-    graph = StateGraph(WorkflowState)
+    graph = StateGraph(AgentState)
     agents_executed = []
 
     def create_condition_router(mapping: Dict[str, str]):
         """Standard router logic for conditional branching."""
-        async def router(state: WorkflowState) -> str:
+        async def router(state: AgentState) -> str:
             decision = "failure" if state.violations else "success"
             next_node = mapping.get(decision) or list(mapping.values())[0]
-            log.info("workflow_branching_decision", decision=decision, next_node=next_node, trace_id=state.trace_id)
+            log.info("agent_branching_decision", decision=decision, next_node=next_node, trace_id=state.trace_id)
             return decision
         return router
 
     # Add nodes
-    for node in workflow_config.get("nodes", []):
+    for node in agent_config.get("nodes", []):
         node_id = node["id"]
         node_type = node.get("type")
 
@@ -175,7 +174,7 @@ async def execute_dynamic_workflow(
             raise ValueError(f"Unsupported node type: {node_type}")
 
     # Add edges
-    edges_raw = workflow_config.get("edges", [])
+    edges_raw = agent_config.get("edges", [])
     edges_list = edges_raw.values() if isinstance(edges_raw, dict) else edges_raw
     
     # Group edges by source to detect conditional routing
@@ -202,7 +201,7 @@ async def execute_dynamic_workflow(
             graph.add_edge(source, target)
 
     # Entry / Exit
-    nodes = workflow_config.get("nodes", [])
+    nodes = agent_config.get("nodes", [])
     if nodes:
         graph.set_entry_point(nodes[0]["id"])
         graph.add_edge(nodes[-1]["id"], END)
@@ -213,7 +212,7 @@ async def execute_dynamic_workflow(
     result = await compiled.ainvoke(state)
 
     # Normalize result to dict safely
-    if isinstance(result, WorkflowState):
+    if isinstance(result, AgentState):
         result_dict = result.model_dump()
     elif isinstance(result, dict):
         result_dict = result.copy()
@@ -223,11 +222,11 @@ async def execute_dynamic_workflow(
     result_dict["final_response"] = result_dict.get("llm_response") or result_dict.get("content", input_content)
     result_dict["agents_executed"] = agents_executed
     result_dict["trace_id"] = trace_id
-    result_dict["workflow_id"] = workflow_config.get("id")
+    result_dict["agent_id"] = agent_config.get("id")
     result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
     result_dict["timestamp"] = time.time()
 
-    log.info("workflow_execution_completed",
+    log.info("agent_execution_completed",
              latency_ms=result_dict["latency_ms"],
              violations_count=len(result_dict.get("violations", [])),
              agents_count=len(agents_executed))

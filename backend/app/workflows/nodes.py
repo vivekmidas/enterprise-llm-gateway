@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_node_handler(node: NodeConfig) -> Callable:
-    """Factory - returns async node function"""
+    """Factory - returns async agent node function"""
     ui_data = getattr(node, "data", {}) if hasattr(node, "data") else {}
     
     # Determine node type (handling UI vs Engine naming)

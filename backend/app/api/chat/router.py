@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.chat.schemas import ChatRequest, ChatResponse
 from app.api.chat.workflow import DEFAULT_CHAT_WORKFLOW
-from app.workflows.executor import execute_dynamic_workflow
+from app.workflows.executor import execute_dynamic_agent
 
 router = APIRouter(prefix="/api")
 logger = structlog.get_logger(__name__)
@@ -19,8 +19,8 @@ async def chat(request: ChatRequest):
     log.info("chat_request_started")
 
     try:
-        result = await execute_dynamic_workflow(
-            workflow_config=DEFAULT_CHAT_WORKFLOW,
+        result = await execute_dynamic_agent(
+            agent_config=DEFAULT_CHAT_WORKFLOW,
             input_content=request.message,
             trace_id=trace_id,
             context={"user_id": request.user_id, **request.context},

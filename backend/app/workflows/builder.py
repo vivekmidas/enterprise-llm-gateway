@@ -17,7 +17,7 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
     Returns CompiledStateGraph (the executable compiled graph).
     """
     if not definition.nodes:
-        raise ValueError(f"Workflow {definition.id} must have at least one node")
+        raise ValueError(f"Agent {definition.id} must have at least one node")
 
     graph = StateGraph(state_schema=EnterpriseState)
 
@@ -65,7 +65,7 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
         interrupt_before=["final_sanctity"]   # Enforce final safety check
     )
 
-    logger.info(f"✅ Successfully compiled workflow: {definition.id} v{definition.version}")
+    logger.info(f"✅ Successfully compiled agent: {definition.id} v{definition.version}")
     return compiled
 
 
