@@ -1,0 +1,91 @@
+{
+  "id": "whats",
+  "version": "1",
+  "name": "whats",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 150,
+        "y": 150
+      },
+      "data": {
+        "label": "Start",
+        "name": "Start",
+        "description": "Entry point for every workflow run",
+        "group": "Start",
+        "category": "Start",
+        "icon": "play-circle",
+        "propertySchema": [
+          {
+            "key": "enabled",
+            "label": "Enabled",
+            "type": "boolean"
+          }
+        ],
+        "properties": {
+          "enabled": true
+        }
+      },
+      "width": 268,
+      "height": 99
+    },
+    {
+      "id": "WhatsApp-1779695541078",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 524,
+        "y": 342
+      },
+      "data": {
+        "label": "WhatsApp",
+        "name": "WhatsApp",
+        "description": "Customer initiates WhatsApp chat",
+        "group": "Trigger",
+        "category": "Trigger",
+        "icon": "message-square",
+        "triggerType": "whatsapp",
+        "propertySchema": [
+          {
+            "key": "actionClass",
+            "label": "Action Class",
+            "type": "string",
+            "placeholder": "com.enterprise.workflow.actions.CustomAction"
+          },
+          {
+            "key": "enabled",
+            "label": "Enabled",
+            "type": "boolean"
+          }
+        ],
+        "properties": {
+          "actionClass": "",
+          "enabled": true
+        }
+      },
+      "width": 272,
+      "height": 99
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "animated": true,
+      "source": "start",
+      "sourceHandle": null,
+      "target": "WhatsApp-1779695541078",
+      "targetHandle": null,
+      "id": "reactflow__edge-start-WhatsApp-1779695541078"
+    }
+  ],
+  "entry_point": "guard_input",
+  "updated_at": "2026-05-25T08:06:31.623723",
+  "global_rules": {},
+  "llm_config": {},
+  "metadata": {}
+}

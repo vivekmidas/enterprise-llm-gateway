@@ -1,4 +1,5 @@
 import uuid
+import structlog
 
 from fastapi import APIRouter, HTTPException
 
@@ -7,11 +8,15 @@ from app.api.chat.workflow import DEFAULT_CHAT_WORKFLOW
 from app.workflows.executor import execute_dynamic_workflow
 
 router = APIRouter(prefix="/api")
+logger = structlog.get_logger(__name__)
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     trace_id = str(uuid.uuid4())
+    log = logger.bind(trace_id=trace_id, user_id=request.user_id, workflow_id=request.workflow_id)
+
+    log.info("chat_request_started")
 
     try:
         result = await execute_dynamic_workflow(
@@ -19,6 +24,12 @@ async def chat(request: ChatRequest):
             input_content=request.message,
             trace_id=trace_id,
             context={"user_id": request.user_id, **request.context},
+        )
+
+        log.info("chat_request_success", 
+                 latency_ms=result.get("latency_ms"),
+                 violations_count=len(result.get("violations", [])),
+                 agents_executed=result.get("agents_executed")
         )
 
         return ChatResponse(
@@ -31,4 +42,5 @@ async def chat(request: ChatRequest):
         )
 
     except Exception as e:
+        log.error("chat_request_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

@@ -28,19 +28,8 @@ from app.agents.registry import AgentRegistry
 @app.on_event("startup")
 async def startup_event():
     logger.info("starting_gateway", version="0.2.3")
+    # Dynamic discovery now handles all registrations automatically
     AgentRegistry.auto_discover()
-    
-    # Register all built-in agents
-    from app.agents.built_in.presidio.presidio_ner_guard_agent import PresidioNERGuardAgent
-    from app.agents.built_in.profanity_guard_agent import ProfanityGuardAgent
-    from app.agents.built_in.custom_rule_guard_agent import CustomRuleGuardAgent
-    from app.agents.built_in.context_setter_agent import ContextSetterAgent
-    from app.agents.built_in.sentiment_analyzer_agent import SentimentAnalyzerAgent
-    from app.agents.built_in.output_guard_agent import OutputGuardAgent
-
-    for agent_class in [PresidioNERGuardAgent, ProfanityGuardAgent, CustomRuleGuardAgent,
-                       ContextSetterAgent, SentimentAnalyzerAgent, OutputGuardAgent]:
-        AgentRegistry.register(agent_class())
 
     logger.info("agents_registered", count=len(AgentRegistry.list_agents()))
     

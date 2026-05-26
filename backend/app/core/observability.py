@@ -1,18 +1,28 @@
 import logging
 import structlog
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import TracerProvider, ReadableSpan
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
 
+class FilterInternalSpansProcessor(BatchSpanProcessor):
+    """Filters out spans with SpanKind.INTERNAL to reduce terminal noise."""
+    def on_end(self, span: ReadableSpan) -> None:
+        # Do not process/export spans that are marked as INTERNAL
+        if span.kind == trace.SpanKind.INTERNAL:
+            return
+        super().on_end(span)
+
 def filter_http_methods(_, __, event_dict):
     """Filter out logs that specify an HTTP method other than GET or POST."""
     method = event_dict.get("method") or event_dict.get("http_method")
-    if method and str(method).upper() not in ["GET", "POST"]:
+    if method and str(method).upper() not in ["GET", "POST"] :
         raise structlog.DropEvent
+    print(event_dict)
+    name = event_dict.get("name")
     return event_dict
 
 def setup_observability(app):
@@ -44,7 +54,7 @@ def setup_observability(app):
     provider = TracerProvider(resource=resource)
     
     # Use ConsoleSpanExporter for development. In production, use OTLPSpanExporter.
-    processor = BatchSpanProcessor(ConsoleSpanExporter())
+    processor = FilterInternalSpansProcessor(ConsoleSpanExporter())
     provider.add_span_processor(processor)
     
     # Set global tracer provider

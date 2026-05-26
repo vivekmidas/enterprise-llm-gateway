@@ -1,5 +1,4 @@
 import asyncio
-import time
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 
@@ -22,8 +21,7 @@ class ProfanityGuardAgent(BaseAgent):
         self.analyzer.registry.add_recognizer(recognizer)
 
     async def run(self, inp: AgentInput) -> AgentOutput:
-        start = time.time()
-        config = inp.config or {}
+        # Logic implementation (execute() handles timing and status wrapping)
 
         results = await asyncio.to_thread(
             self.analyzer.analyze,
@@ -43,6 +41,7 @@ class ProfanityGuardAgent(BaseAgent):
             trace_id=inp.trace_id,
             content=masked,
             violations=violations,
-            latency_ms=round((time.time() - start) * 1000, 2),
-            status="flagged" if violations else "success"
+            latency_ms=0.0,  # Will be set by execute()
+            start_time=0.0,  # Will be set by execute()
+            end_time=0.0     # Will be set by execute()
         )

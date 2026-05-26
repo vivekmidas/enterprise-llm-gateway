@@ -1,0 +1,201 @@
+{
+  "id": "stmp",
+  "version": "1",
+  "name": "stmp",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 132.73914984627152,
+        "y": 186.09086850325053
+      },
+      "data": {
+        "label": "Start",
+        "name": "Start",
+        "description": "Entry point for every workflow run",
+        "group": "Start",
+        "category": "Start",
+        "icon": "play-circle",
+        "propertySchema": [
+          {
+            "key": "enabled",
+            "label": "Enabled",
+            "type": "boolean"
+          }
+        ],
+        "properties": {
+          "enabled": true
+        }
+      },
+      "width": 268,
+      "height": 99,
+      "selected": false,
+      "positionAbsolute": {
+        "x": 132.73914984627152,
+        "y": 186.09086850325053
+      },
+      "dragging": false
+    },
+    {
+      "id": "SMTP Agent-1779711521772",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 460,
+        "y": 205
+      },
+      "data": {
+        "label": "SMTP Agent",
+        "name": "SMTP Agent",
+        "description": "Polls and reads emails from server",
+        "group": "Trigger",
+        "category": "Trigger",
+        "icon": "message-square",
+        "triggerType": "smtp",
+        "propertySchema": [
+          {
+            "key": "host",
+            "label": "Host",
+            "type": "string",
+            "placeholder": "smtp.gmail.com"
+          },
+          {
+            "key": "port",
+            "label": "Port",
+            "type": "number",
+            "placeholder": "587"
+          },
+          {
+            "key": "secure",
+            "label": "Use TLS/SSL",
+            "type": "boolean"
+          },
+          {
+            "key": "username",
+            "label": "Username",
+            "type": "string",
+            "placeholder": "service-account@company.com"
+          },
+          {
+            "key": "password",
+            "label": "Password",
+            "type": "password",
+            "placeholder": "App Password or Secret"
+          },
+          {
+            "key": "interval",
+            "label": "Polling Interval (mins)",
+            "type": "number",
+            "placeholder": "5"
+          }
+        ],
+        "properties": {
+          "host": "",
+          "port": 587,
+          "secure": true,
+          "username": "",
+          "password": "",
+          "interval": 1
+        }
+      },
+      "width": 269,
+      "height": 99,
+      "selected": false,
+      "positionAbsolute": {
+        "x": 460,
+        "y": 205
+      },
+      "dragging": false
+    },
+    {
+      "id": "generic_llm_agent-1779711767690",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 576,
+        "y": 429
+      },
+      "data": {
+        "label": "generic_llm_agent",
+        "name": "generic_llm_agent",
+        "description": "Generic LLM call via IP/Port",
+        "group": "LLM",
+        "category": "LLM",
+        "icon": "bot",
+        "propertySchema": [
+          {
+            "key": "ip",
+            "label": "IP Address",
+            "type": "string",
+            "placeholder": "127.0.0.1"
+          },
+          {
+            "key": "port",
+            "label": "Port",
+            "type": "number",
+            "placeholder": "8000"
+          },
+          {
+            "key": "model",
+            "label": "Model Name",
+            "type": "string",
+            "placeholder": "llama-3"
+          },
+          {
+            "key": "systemPrompt",
+            "label": "System Prompt",
+            "type": "textarea",
+            "placeholder": "Instructions for the model"
+          },
+          {
+            "key": "temperature",
+            "label": "Temperature",
+            "type": "number",
+            "placeholder": "0.7"
+          }
+        ],
+        "properties": {
+          "ip": "127.0.0.1",
+          "port": 8000,
+          "model": "llama-3",
+          "systemPrompt": "You are a helpful assistant.",
+          "temperature": 0.7
+        }
+      },
+      "width": 231,
+      "height": 99,
+      "selected": true,
+      "dragging": false
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "animated": true,
+      "source": "start",
+      "sourceHandle": null,
+      "target": "SMTP Agent-1779711521772",
+      "targetHandle": null,
+      "id": "reactflow__edge-start-SMTP Agent-1779711521772"
+    },
+    {
+      "type": "smoothstep",
+      "animated": true,
+      "source": "SMTP Agent-1779711521772",
+      "sourceHandle": null,
+      "target": "generic_llm_agent-1779711767690",
+      "targetHandle": null,
+      "id": "reactflow__edge-SMTP Agent-1779711521772-generic_llm_agent-1779711767690"
+    }
+  ],
+  "entry_point": "guard_input",
+  "updated_at": "2026-05-25T12:23:12.115177",
+  "global_rules": {},
+  "llm_config": {},
+  "metadata": {}
+}

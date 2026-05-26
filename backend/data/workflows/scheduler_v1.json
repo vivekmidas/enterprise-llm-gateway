@@ -1,7 +1,7 @@
 {
-  "id": "email_channel",
+  "id": "scheduler",
   "version": "1",
-  "name": "Email Channel",
+  "name": "scheduler",
   "nodes": [
     {
       "id": "start",
@@ -107,7 +107,7 @@
     }
   ],
   "entry_point": "guard_input",
-  "updated_at": "2026-05-25T13:39:23.408358",
+  "updated_at": "2026-05-25T13:39:21.746287",
   "global_rules": {},
   "llm_config": {},
   "metadata": {}

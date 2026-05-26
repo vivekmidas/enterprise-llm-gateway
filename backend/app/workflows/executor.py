@@ -36,29 +36,44 @@ def message_content_to_text(content: object) -> str:
     return str(content)
 
 
-def create_agent_node(agent):
+def create_agent_node(agent, node_config: Dict[str, Any] = None):
     async def agent_node(state: WorkflowState) -> WorkflowState:
         with tracer.start_as_current_span(f"agent:{getattr(agent, 'name', 'unknown')}") as span:
             span.set_attribute("agent.name", getattr(agent, "name", "unknown"))
             span.set_attribute("trace_id", state.trace_id)
             try:
+                agent_name = getattr(agent, "name", "unknown")
+                logger.debug("agent_execution_started", agent=agent_name, trace_id=state.trace_id)
+
                 agent_input = AgentInput(
                     trace_id=state.trace_id,
                     content=state.masked_content or state.content,
+                    config=node_config or {},
                     context=state.context,
                     metadata=state.metadata
                 )
 
-                result = await agent.run(agent_input)
+                # Call the standardized execute method instead of run
+                result = await agent.execute(agent_input)
+
+                logger.debug("agent_execution_finished",
+                             agent=agent_name,
+                             status=result.status,
+                             violations_count=len(result.violations),
+                             latency_ms=result.latency_ms)
 
                 new_state = state.model_copy()
                 new_state.content = result.content
                 new_state.masked_content = result.content
                 new_state.metadata.update(result.metadata or {})
+                
                 if result.violations:
                     new_state.violations.extend(result.violations)
-                return new_state
+                
+                if result.status == "failure":
+                    logger.warning("agent_execution_status_failure", agent=getattr(agent, 'name'), error=result.error)
 
+                return new_state
             except Exception as e:
                 logger.error("agent_execution_failed", agent=getattr(agent, 'name', 'unknown'), error=str(e))
                 new_state = state.model_copy()
@@ -71,11 +86,14 @@ def create_agent_node(agent):
 async def llm_node(state: WorkflowState) -> WorkflowState:
     with tracer.start_as_current_span("llm_node") as span:
         span.set_attribute("llm.provider", router.provider)
+        logger.debug("llm_call_started", provider=router.provider, trace_id=state.trace_id)
         try:
             llm = await router.get_llm(temperature=0.7, max_tokens=1024)
             prompt = state.masked_content or state.content
 
             response = await llm.ainvoke(prompt)
+            logger.debug("llm_call_finished", trace_id=state.trace_id)
+
             content = message_content_to_text(response.content if hasattr(response, "content") else response)
 
             new_state = state.model_copy()
@@ -130,15 +148,19 @@ async def execute_dynamic_workflow(
             agent = AgentRegistry.get_agent(node.get("name"))
             if not agent:
                 raise ValueError(f"Unknown agent: {node.get('name')}")
-            graph.add_node(node_id, create_agent_node(agent))
+            log.debug("adding_agent_node", node_id=node_id, agent_name=agent.name)
+            node_config = node.get("properties") or node.get("config") or {}
+            graph.add_node(node_id, create_agent_node(agent, node_config))
             agents_executed.append(agent.name)
 
         elif node_type == "llm":
+            log.debug("adding_llm_node", node_id=node_id)
             graph.add_node(node_id, llm_node)
             agents_executed.append("main_llm")
 
         elif node_type in {"trigger", "start", "end"}:
             graph.add_node(node_id, passthrough_node)
+            log.debug("adding_system_node", node_id=node_id, type=node_type)
 
         else:
             raise ValueError(f"Unsupported node type: {node_type}")
@@ -150,6 +172,7 @@ async def execute_dynamic_workflow(
         source = edge.get("source") or edge.get("from_node")
         target = edge.get("target") or edge.get("to_node")
         if source and target:
+            log.debug("adding_edge", source=source, target=target)
             graph.add_edge(source, target)
 
     # Entry / Exit
@@ -177,6 +200,11 @@ async def execute_dynamic_workflow(
     result_dict["workflow_id"] = workflow_config.get("id")
     result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
     result_dict["timestamp"] = time.time()
+
+    log.info("workflow_execution_completed",
+             latency_ms=result_dict["latency_ms"],
+             violations_count=len(result_dict.get("violations", [])),
+             agents_count=len(agents_executed))
 
     # Persist trace for metrics/observability
     await trace_store.save_trace(trace_id, result_dict)

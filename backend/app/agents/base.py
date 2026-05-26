@@ -15,6 +15,8 @@ class AgentOutput(BaseModel):
     metadata: Dict[str, Any] = {}
     violations: List[str] = []
     latency_ms: float
+    start_time: float
+    end_time: float
     status: str = "success"
 
 class BaseAgent(ABC):
