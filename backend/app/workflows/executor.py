@@ -139,6 +139,15 @@ async def execute_dynamic_workflow(
     graph = StateGraph(WorkflowState)
     agents_executed = []
 
+    def create_condition_router(mapping: Dict[str, str]):
+        """Standard router logic for conditional branching."""
+        async def router(state: WorkflowState) -> str:
+            decision = "failure" if state.violations else "success"
+            next_node = mapping.get(decision) or list(mapping.values())[0]
+            log.info("workflow_branching_decision", decision=decision, next_node=next_node, trace_id=state.trace_id)
+            return decision
+        return router
+
     # Add nodes
     for node in workflow_config.get("nodes", []):
         node_id = node["id"]
@@ -158,7 +167,7 @@ async def execute_dynamic_workflow(
             graph.add_node(node_id, llm_node)
             agents_executed.append("main_llm")
 
-        elif node_type in {"trigger", "start", "end"}:
+        elif node_type in {"trigger", "start", "end", "condition"}:
             graph.add_node(node_id, passthrough_node)
             log.debug("adding_system_node", node_id=node_id, type=node_type)
 
@@ -168,11 +177,28 @@ async def execute_dynamic_workflow(
     # Add edges
     edges_raw = workflow_config.get("edges", [])
     edges_list = edges_raw.values() if isinstance(edges_raw, dict) else edges_raw
+    
+    # Group edges by source to detect conditional routing
+    source_edges = {}
     for edge in edges_list:
         source = edge.get("source") or edge.get("from_node")
         target = edge.get("target") or edge.get("to_node")
+        condition = edge.get("condition")
+        
         if source and target:
-            log.debug("adding_edge", source=source, target=target)
+            if source not in source_edges:
+                source_edges[source] = {}
+            source_edges[source][condition or "default"] = target
+
+    for source, mapping in source_edges.items():
+        # If there are specific 'success'/'failure' conditions, use a router
+        if any(c in mapping for c in ["success", "failure"]):
+            log.debug("adding_conditional_edges", source=source, paths=mapping)
+            graph.add_conditional_edges(source, create_condition_router(mapping), mapping)
+        else:
+            # Default to standard edge (takes the "default" or first one)
+            target = mapping.get("default") or list(mapping.values())[0]
+            log.debug("adding_standard_edge", source=source, target=target)
             graph.add_edge(source, target)
 
     # Entry / Exit
