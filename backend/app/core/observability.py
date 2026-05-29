@@ -7,6 +7,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
+from rich.console import Console
+from rich.traceback import install
 
 class FilterInternalSpansProcessor(BatchSpanProcessor):
     """Filters out spans with SpanKind.INTERNAL to reduce terminal noise."""
@@ -29,18 +31,21 @@ def setup_observability(app):
     """
     Initializes structured logging, OpenTelemetry tracing, and Prometheus metrics.
     """
+    console = Console()
+    install()
     # 1. Structured Logging Setup (structlog)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             filter_http_methods,
+            structlog.dev.set_exc_info,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,

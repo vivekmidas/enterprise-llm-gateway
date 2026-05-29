@@ -1,13 +1,13 @@
 import asyncio
 import uuid
-from app.agents.base import AgentInput
-from app.agents.built_in.presidio.presidio_ner_guard_agent import PresidioNERGuardAgent
+from app.nodes.base import NodeInput
+from app.nodes.built_in.presidio.presidio_ner_guard_agent import PresidioNERGuardAgent
 
 async def test_presidio():
     agent = PresidioNERGuardAgent()
     trace_id = str(uuid.uuid4())
     
-    test_input = AgentInput(
+    test_input = NodeInput(
         trace_id=trace_id,
         content="Hi, my name is John Doe, my phone is +91 9876543210 and email is john.doe@company.com. My password is Secret123!",
         context={"user_id": "123"},

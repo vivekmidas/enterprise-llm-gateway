@@ -1,14 +1,14 @@
 import asyncio
 import time
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from backend.app.nodes.built_in.base import NodeOutput
 
-class CustomRuleGuardAgent(BaseAgent):
+class CustomRuleGuardAgent(BaseNode):
     name = "custom_rule_guard"
     description = "Dynamic rule-based guard using JSON config"
     version = "1.0.0"
     category = "Guardrails"
-
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         config = inp.config or {}
         
@@ -21,9 +21,11 @@ class CustomRuleGuardAgent(BaseAgent):
                 violations.append(f"custom_keyword:{kw}")
                 masked = masked.replace(kw, f"[REDACTED-{kw}]")
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=masked,
+            start_time=start,
+            end_time=time.time(),
             violations=violations,
             latency_ms=round((time.time() - start) * 1000, 2),
             status="flagged" if violations else "success"

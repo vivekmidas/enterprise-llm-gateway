@@ -39,7 +39,7 @@ class WorkflowCache:
             if key in self._local_compiled_cache:
                 # 2. Check if the token still exists in Redis (hasn't been invalidated)
                 if await self.client.exists(key):
-                    logger.debug(f"Hybrid cache hit for {key}")
+                    logger.info(f"Hybrid cache hit for {key}")
                     return self._local_compiled_cache[key]
                 else:
                     # Token gone? Invalidate local entry

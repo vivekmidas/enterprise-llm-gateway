@@ -1,0 +1,164 @@
+[
+    {
+        "name": "WhatsApp",
+        "description": "Customer initiates WhatsApp chat",
+        "group": "Trigger",
+        "icon": "message-square",
+        "triggerType": "whatsapp",
+        "propertySchema": [
+            {
+                "key": "phoneNumber",
+                "label": "Phone Number",
+                "type": "string",
+                "placeholder": "+1..."
+            },
+            {
+                "key": "apiKey",
+                "label": "WhatsApp API Key",
+                "type": "password"
+            }
+        ],
+        "defaultProperties": {
+            "phoneNumber": "",
+            "apiKey": ""
+        }
+    },
+    {
+        "name": "Email",
+        "description": "Customer sends an email",
+        "group": "Trigger",
+        "icon": "message-square",
+        "triggerType": "email",
+        "propertySchema": [
+            {
+                "key": "inboxAddress",
+                "label": "Inbox Address",
+                "type": "string",
+                "placeholder": "support@example.com"
+            },
+            {
+                "key": "includeAttachments",
+                "label": "Include Attachments",
+                "type": "boolean"
+            }
+        ],
+        "defaultProperties": {
+            "inboxAddress": "",
+            "includeAttachments": true
+        }
+    },
+    {
+        "name": "LLM Agent",
+        "description": "Large Language Model processing",
+        "group": "LLM",
+        "icon": "bot",
+        "propertySchema": [
+            {
+                "key": "model",
+                "label": "Model",
+                "type": "choice",
+                "options": [
+                    "gpt-4.1",
+                    "gpt-4.1-mini",
+                    "claude-3-opus",
+                    "custom"
+                ]
+            },
+            {
+                "key": "systemPrompt",
+                "label": "System Prompt",
+                "type": "textarea",
+                "placeholder": "Instructions for the model"
+            },
+            {
+                "key": "temperature",
+                "label": "Temperature",
+                "type": "number",
+                "placeholder": "0.7"
+            },
+            {
+                "key": "streamResponse",
+                "label": "Stream Response",
+                "type": "boolean"
+            }
+        ],
+        "defaultProperties": {
+            "model": "gpt-4.1-mini",
+            "systemPrompt": "You are a helpful assistant.",
+            "temperature": 0.7,
+            "streamResponse": true
+        }
+    },
+    {
+        "name": "Condition",
+        "description": "Evaluates the agent state and branches execution based on success or failure.",
+        "group": "Condition",
+        "icon": "workflow",
+        "propertySchema": [
+            {
+                "key": "checkType",
+                "label": "Check For",
+                "type": "choice",
+                "options": [
+                    "Status (Success/Failure)",
+                    "Presence of Violations"
+                ]
+            }
+        ],
+        "defaultProperties": {
+            "checkType": "Status (Success/Failure)"
+        }
+    },
+    {
+        "name": "Success End",
+        "description": "Completes the workflow successfully",
+        "group": "End",
+        "icon": "check-circle",
+        "outcome": "success"
+    },
+    {
+        "name": "Failure End",
+        "description": "Completes the workflow with failure",
+        "group": "End",
+        "icon": "x-circle",
+        "outcome": "failure"
+    },
+    {
+        "name": "DB Agent",
+        "description": "Connects to a database and runs a SQL command",
+        "group": "Data",
+        "icon": "database",
+        "propertySchema": [
+            {
+                "key": "ipAddress",
+                "label": "IP Address",
+                "type": "string",
+                "placeholder": "10.0.0.12"
+            },
+            {
+                "key": "port",
+                "label": "Port",
+                "type": "number",
+                "placeholder": "5432"
+            },
+            {
+                "key": "dbName",
+                "label": "Database Name",
+                "type": "string",
+                "placeholder": "customers"
+            },
+            {
+                "key": "sqlCommand",
+                "label": "SQL Command",
+                "type": "textarea",
+                "placeholder": "select * from customers limit 10"
+            }
+        ],
+        "defaultProperties": {
+            "ipAddress": "",
+            "port": 5432,
+            "dbName": "",
+            "sqlCommand": ""
+        }
+    }
+]

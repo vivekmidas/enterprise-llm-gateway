@@ -1,5 +1,5 @@
 [project]
-name = "enterprise-llm-gateway"
+name = "backend"
 version = "0.2.3"
 description = "Enterprise-grade LLM Gateway with LangGraph workflows, observability, and guardrails."
 dependencies = [
@@ -22,5 +22,13 @@ dependencies = [
     "langchain-openai",
     "presidio_anonymizer",
     "presidio_analyzer",
-    "httpx"
+    "httpx",
+
+]
+dev = [
+  { include-group = "prod" },
+  { include-group = "docs" },
+  { include-group = "release-tools" },
+  "ruff",
+  "coverage"
 ]

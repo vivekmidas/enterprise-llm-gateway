@@ -1,15 +1,15 @@
 import httpx
 import time
 from typing import Any, Dict
-from app.agents.built_in.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.built_in.base import BaseNode, NodeInput, NodeOutput
 
-class GenericLLMAgent(BaseAgent):
+class GenericLLMAgent(BaseNode):
     name = "generic_llm_agent"
     description = "Calls an LLM via specific IP and Port using OpenAI-compatible API"
     version = "1.0.0"
     category = "LLM"
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         start_ts = time.time()
         config = inp.config or {}
         
@@ -40,7 +40,7 @@ class GenericLLMAgent(BaseAgent):
                 # Extracting content from OpenAI response format
                 ai_message = data["choices"][0]["message"]["content"]
                 
-                return AgentOutput(
+                return NodeOutput(
                     trace_id=inp.trace_id,
                     content=ai_message,
                     metadata={
@@ -51,7 +51,7 @@ class GenericLLMAgent(BaseAgent):
                     status="success"
                 )
         except Exception as e:
-            return AgentOutput(
+            return NodeOutput(
                 trace_id=inp.trace_id,
                 content=inp.content,
                 status="failure",

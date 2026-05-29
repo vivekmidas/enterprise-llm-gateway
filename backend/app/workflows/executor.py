@@ -7,8 +7,8 @@ from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph, END
 from app.utils.state import WorkflowState as AgentState
-from app.agents.base import AgentInput
-from app.agents.registry import AgentRegistry
+from app.nodes.base import NodeInput, NodeOutput
+from app.nodes.registry import NodesRegistry
 from app.core.llm_router import LLMRouter
 from app.core.cache import trace_store
 
@@ -42,9 +42,9 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
             span.set_attribute("trace_id", state.trace_id)
             try:
                 agent_name = getattr(agent, "name", "unknown")
-                logger.debug("agent_execution_started", agent=agent_name, trace_id=state.trace_id)
+                logger.info("agent_execution_started", agent=agent_name, trace_id=state.trace_id)
 
-                agent_input = AgentInput(
+                agent_input = NodeInput(
                     trace_id=state.trace_id,
                     content=state.masked_content or state.content,
                     config=node_config or {},
@@ -55,7 +55,7 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
                 # Call the standardized execute method instead of run
                 result = await agent.execute(agent_input)
 
-                logger.debug("agent_execution_finished",
+                logger.info("agent_execution_finished",
                              agent=agent_name,
                              status=result.status,
                              violations_count=len(result.violations),
@@ -85,13 +85,13 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
 async def llm_node(state: AgentState) -> AgentState:
     with tracer.start_as_current_span("llm_node") as span:
         span.set_attribute("llm.provider", router.provider)
-        logger.debug("llm_call_started", provider=router.provider, trace_id=state.trace_id)
+        logger.info("llm_call_started", provider=router.provider, trace_id=state.trace_id)
         try:
             llm = await router.get_llm(temperature=0.7, max_tokens=1024)
             prompt = state.masked_content or state.content
 
             response = await llm.ainvoke(prompt)
-            logger.debug("llm_call_finished", trace_id=state.trace_id)
+            logger.info("llm_call_finished", trace_id=state.trace_id)
 
             content = message_content_to_text(response.content if hasattr(response, "content") else response)
 
@@ -153,7 +153,7 @@ async def execute_dynamic_agent(
         node_type = node.get("type")
 
         if node_type == "agent":
-            agent = AgentRegistry.get_agent(node.get("name"))
+            agent = NodesRegistry.get_nodes(node.get("name"))
             if not agent:
                 raise ValueError(f"Unknown agent: {node.get('name')}")
             log.debug("adding_agent_node", node_id=node_id, agent_name=agent.name)

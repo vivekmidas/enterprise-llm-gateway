@@ -1,10 +1,10 @@
 from fastapi import APIRouter
 
-from app.agents.registry import AgentRegistry
+from app.nodes.registry import NodesRegistry
 
 router = APIRouter()
 
 
 @router.get("/")
 async def root():
-    return {"status": "running", "agents": AgentRegistry.list_agents()}
+    return {"status": "running", "nodes": NodesRegistry.list_nodes()}

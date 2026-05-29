@@ -26,7 +26,7 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
     with tracer.start_as_current_span("save_agent_to_store") as span:
         span.set_attribute("agent_id", definition.id)
         span.set_attribute("version", definition.version)
-        logger.debug("saving_agent_to_store", agent_id=definition.id, version=definition.version)
+        logger.info("saving_agent_to_store", agent_id=definition.id, version=definition.version)
 
         if not definition.id:
             raise HTTPException(status_code=400, detail="Agent id is required")
@@ -36,7 +36,7 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
 
         # Save as JSON
         file_path = f"{AGENTS_DIR}/{definition.id}_v{definition.version}.json"
-        logger.debug("workflow_file_path", file_path=file_path)
+        logger.info("workflow_file_path", file_path=file_path)
         
         try:
             data = definition.model_dump(mode="json", exclude_none=True)
@@ -85,7 +85,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
             
             # Strict validation using Pydantic
             definition = WorkflowDefinition.model_validate(data)
-            logger.debug("workflow_loaded_from_store", agent_id=agent_id, version=version)
+            logger.info("workflow_loaded_from_store", agent_id=agent_id, version=version)
             return definition
 
         except FileNotFoundError:

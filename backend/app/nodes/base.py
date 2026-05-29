@@ -2,14 +2,14 @@ from abc import ABC, abstractmethod
 from pydantic import BaseModel
 from typing import Dict, Any, List
 
-class AgentInput(BaseModel):
+class NodeInput(BaseModel):
     trace_id: str
     content: str
     context: Dict[str, Any] = {}
     metadata: Dict[str, Any] = {}
     config: Dict[str, Any] = {}
 
-class AgentOutput(BaseModel):
+class NodeOutput(BaseModel):
     trace_id: str
     content: str
     metadata: Dict[str, Any] = {}
@@ -19,12 +19,15 @@ class AgentOutput(BaseModel):
     end_time: float
     status: str = "success"
 
-class BaseAgent(ABC):
+class BaseNode(ABC):
     name: str
+    icon:str
+    category: str
+    group: str
     description: str
     version: str = "1.0.0"
-    category = ""
+    color: str = "#000000"
 
     @abstractmethod
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         pass

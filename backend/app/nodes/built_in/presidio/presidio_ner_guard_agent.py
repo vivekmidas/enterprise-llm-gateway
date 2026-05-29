@@ -1,12 +1,12 @@
 import asyncio
 import time
 from typing import Dict, Any
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
-class PresidioNERGuardAgent(BaseAgent):
+class PresidioNERGuardAgent(BaseNode):
     name = "presidio_ner_guard"
     description = "Advanced PII + Custom Rules using Presidio"
     version = "1.1.0"
@@ -16,7 +16,7 @@ class PresidioNERGuardAgent(BaseAgent):
         self.analyzer = AnalyzerEngine()
         self.anonymizer = AnonymizerEngine()
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         config: Dict[str, Any] = inp.config or {}
 
@@ -47,9 +47,11 @@ class PresidioNERGuardAgent(BaseAgent):
             )
             masked_content = anonymized.text
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=masked_content,
+            start_time=start,
+            end_time=time.time(),
             violations=violations,
             metadata={"entities_detected": len(results)},
             latency_ms=round((time.time() - start) * 1000, 2),

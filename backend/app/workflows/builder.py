@@ -26,7 +26,7 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
         try:
             node_func: Callable = create_node_handler(node_config)
             graph.add_node(node_config.id, node_func)
-            logger.debug(f"Added node → {node_config.id} ({node_config.type})")
+            logger.info(f"Added node → {node_config.id} ({node_config.type})")
         except Exception as e:
             logger.error(f"Failed to create handler for node {node_config.id}: {e}")
             raise

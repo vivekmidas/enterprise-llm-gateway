@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from app.workflows.state import WorkflowState
-from app.agents.registry import registry
+from app.nodes.registry import registry
 
 async def build_default_workflow():
     graph = StateGraph(WorkflowState)

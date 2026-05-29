@@ -1,13 +1,13 @@
 # backend/app/agents/built_in/output_guard_agent.py
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.base import  BaseNode, NodeInput, NodeOutput
 import time
 
-class OutputGuardAgent(BaseAgent):
+class OutputGuardAgent(BaseNode):
     name = "output_guard"
     description = "Final safety check - PII leak, MAD, policy compliance"
     version = "1.0.0"
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         violations = []
 
@@ -17,10 +17,12 @@ class OutputGuardAgent(BaseAgent):
             if kw in inp.content.lower():
                 violations.append(f"output_pii_leak:{kw}")
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=inp.content,
             violations=violations,
+            start_time=start,
+            end_time=time.time(),
             metadata={"final_check": "passed" if not violations else "failed"},
             latency_ms=round((time.time() - start) * 1000, 2),
             status="flagged" if violations else "success"

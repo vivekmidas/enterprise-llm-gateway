@@ -3,14 +3,14 @@ import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-class AgentInput(BaseModel):
+class NodeInput(BaseModel):
     trace_id: str
     content: str
     config: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-class AgentOutput(BaseModel):
+class NodeOutput(BaseModel):
     trace_id: str
     content: str
     status: str = "success"  # "success" or "failure"
@@ -21,14 +21,22 @@ class AgentOutput(BaseModel):
     start_time: float = 0.0
     end_time: float = 0.0
 
-class BaseAgent(abc.ABC):
+class BaseNode(abc.ABC):
     """
-    Standardized Base Class for all Enterprise LLM Gateway agents.
+    Standardized Base Class for all Enterprise LLM Gateway nodes.
     """
-    name: str = "base_agent"
-    description: str = "Standard agent base"
+    name: str = "base_node"       # Machine identifier
+    label: str = "Base Node"      # UI-facing display name (matches frontend 'label')
+    description: str = "Standard node base"
     version: str = "1.0.0"
-    category: str = "Custom"
+    category: str = "Custom"       # Internal functional category
+    group: str = "Custom"          # UI grouping (matches frontend 'group')
+
+    # Visual properties for the UI (aligned with frontend BaseNodeData)
+    icon: str = "bot"              # Name of the icon to be mapped in frontend
+    color: str = "#7C3AED"         # Brand color (hex code)
+    badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
+    sub_label: Optional[str] = None # Optional sub-label
 
     def get_name(self) -> str:
         return self.name
@@ -41,14 +49,14 @@ class BaseAgent(abc.ABC):
         return getattr(self, "propertySchema", [])
 
     @abc.abstractmethod
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         """
         Core logic to be implemented by child agents.
         Should return content and metadata/violations.
         """
         pass
 
-    async def execute(self, inp: AgentInput) -> AgentOutput:
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         """
         Standard execution wrapper with observability, timing, and error handling.
         """
@@ -67,7 +75,7 @@ class BaseAgent(abc.ABC):
 
         except Exception as e:
             end_ts = time.time()
-            return AgentOutput(
+            return NodeOutput(
                 trace_id=inp.trace_id,
                 content=inp.content,
                 status="failure",

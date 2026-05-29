@@ -1,8 +1,8 @@
 import asyncio
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 
-class ProfanityGuardAgent(BaseAgent):
+class ProfanityGuardAgent(BaseNode):
     name = "profanity_guard"
     description = "Profanity and offensive content detection"
     version = "1.1.0"
@@ -20,7 +20,7 @@ class ProfanityGuardAgent(BaseAgent):
         recognizer = PatternRecognizer(supported_entity="PROFANITY", patterns=patterns)
         self.analyzer.registry.add_recognizer(recognizer)
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         # Logic implementation (execute() handles timing and status wrapping)
 
         results = await asyncio.to_thread(
@@ -37,7 +37,7 @@ class ProfanityGuardAgent(BaseAgent):
             violations.append(f"profanity")
             masked = masked[:r.start] + "[PROFANITY_REDACTED]" + masked[r.end:]
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=masked,
             violations=violations,

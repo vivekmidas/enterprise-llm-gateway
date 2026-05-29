@@ -3,13 +3,13 @@ import time
 import subprocess
 import structlog
 from typing import Any, Dict
-from app.agents.built_in.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.built_in.base import BaseNode, NodeInput, NodeOutput
 
 logger = structlog.get_logger(__name__)
 
-class SchedulerAgent(BaseAgent):
+class SchedulerAgent(BaseNode):
     """
-    Agent that schedules a background task to run a command or another agent
+    Node that schedules a background task to run a command or another node
     at a specific interval.
     """
     name = "scheduler_agent"
@@ -17,7 +17,7 @@ class SchedulerAgent(BaseAgent):
     version = "1.0.0"
     category = "Custom"
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         config = inp.config or {}
         interval = float(config.get("interval", 60))
         unit = config.get("unit", "seconds")
@@ -36,7 +36,7 @@ class SchedulerAgent(BaseAgent):
         if target_agent:
             msg += f" Mode: agent trigger ('{target_agent}')"
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=msg,
             status="success",
@@ -48,9 +48,9 @@ class SchedulerAgent(BaseAgent):
             }
         )
 
-    async def _scheduler_loop(self, delay: float, command: str, target_agent: str, original_input: AgentInput):
+    async def _scheduler_loop(self, delay: float, command: str, target_agent: str, original_input: NodeInput):
         # Deferred import to avoid circular dependency during registry auto-discovery
-        from app.agents.registry import AgentRegistry
+        from app.nodes.registry import NodesRegistry
         
         log = logger.bind(
             scheduler_trace_id=original_input.trace_id, 
@@ -75,13 +75,13 @@ class SchedulerAgent(BaseAgent):
                     )
 
                 if target_agent:
-                    agent = AgentRegistry.get_agent(target_agent)
+                    agent = NodesRegistry.get_nodes(target_agent)
                     if agent:
                         log.info("scheduler_triggering_agent")
                         # Create a fresh input for the periodic execution
                         execution_input = original_input.model_copy()
                         execution_input.trace_id = f"{original_input.trace_id}-auto-{int(time.time())}"
-                        await agent.execute(execution_input)
+                        await agent.run(execution_input)
                     else:
                         log.warning("scheduler_target_agent_not_found")
             

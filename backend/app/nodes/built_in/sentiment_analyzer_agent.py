@@ -1,13 +1,13 @@
 # backend/app/agents/built_in/sentiment_analyzer_agent.py
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
 import time
 
-class SentimentAnalyzerAgent(BaseAgent):
+class SentimentAnalyzerAgent(BaseNode ):
     name = "sentiment_analyzer"
     description = "Analyzes sentiment of user message"
     version = "1.0.0"
 
-    async def run(self, inp: AgentInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         
         # Simple rule-based + can be replaced with small LLM
@@ -22,9 +22,11 @@ class SentimentAnalyzerAgent(BaseAgent):
             sentiment = "positive"
             score = 0.85
 
-        return AgentOutput(
+        return NodeOutput(
             trace_id=inp.trace_id,
             content=inp.content,
+            start_time=start,
+            end_time=time.time(),
             metadata={"sentiment": sentiment, "score": score},
             latency_ms=round((time.time() - start) * 1000, 2)
         )
