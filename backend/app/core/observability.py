@@ -1,18 +1,18 @@
-import logging
+# src/core/observability.py
 import structlog
+import sys
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider, ReadableSpan
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from prometheus_fastapi_instrumentator import Instrumentator
-from rich.console import Console
-from rich.traceback import install
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from prometheus_client import Counter, Histogram 
 
-class FilterInternalSpansProcessor(BatchSpanProcessor):
-    """Filters out spans with SpanKind.INTERNAL to reduce terminal noise."""
-    def on_end(self, span: ReadableSpan) -> None:
+
+
+"""Filters out spans with SpanKind.INTERNAL to reduce terminal noise."""
+def on_end(self, span: ReadableSpan) -> None:
         # Do not process/export spans that are marked as INTERNAL
         if span.kind == trace.SpanKind.INTERNAL:
             return
@@ -27,49 +27,75 @@ def filter_http_methods(_, __, event_dict):
     name = event_dict.get("name")
     return event_dict
 
-def setup_observability(app):
-    """
-    Initializes structured logging, OpenTelemetry tracing, and Prometheus metrics.
-    """
-    console = Console()
-    install()
-    # 1. Structured Logging Setup (structlog)
+# ========================= METRICS (M in MELT) =========================
+REQUEST_COUNTER = Counter(
+    'http_requests_total', 
+    'Total HTTP requests', 
+    ['method', 'endpoint', 'status_code']
+)
+
+REQUEST_LATENCY = Histogram(
+    'http_request_duration_seconds',
+    'HTTP request latency in seconds',
+    ['method', 'endpoint']
+)
+
+TOKEN_USAGE = Counter(
+    'llm_tokens_total',
+    'Total tokens used by LLMs',
+    ['provider', 'model', 'direction']  # direction: input/output
+)
+
+# ========================= STRUCTLOG SETUP (L + E in MELT) =========================
+def setup_structlog():
+    """Configure structlog - single place for all logging config"""
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.ExceptionRenderer(),
+    ]
+
+    # Pretty console in dev, JSON in production
+    if sys.stdout.isatty():
+        processors.append(structlog.dev.ConsoleRenderer())
+    else:
+        processors.append(structlog.processors.JSONRenderer())
+
     structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            filter_http_methods,
-            structlog.dev.set_exc_info,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        processors=processors,
+        
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
-    # 2. OpenTelemetry Tracing Setup
-    # Define the service resource
-    resource = Resource.create({"service.name": "enterprise-llm-gateway"})
-    
-    # Initialize TracerProvider
-    provider = TracerProvider(resource=resource)
-    
-    # Use ConsoleSpanExporter for development. In production, use OTLPSpanExporter.
-    processor = FilterInternalSpansProcessor(ConsoleSpanExporter())
-    provider.add_span_processor(processor)
-    
-    # Set global tracer provider
-    trace.set_tracer_provider(provider)
+logger = structlog.get_logger("enterprise_llm_gateway")
 
-    # Auto-instrument FastAPI and HTTPX
+
+# ========================= TRACING (T in MELT) =========================
+def setup_tracing():
+    """OpenTelemetry tracing setup"""
+    trace.set_tracer_provider(TracerProvider())
+    trace.get_tracer_provider().add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://jaeger:4317"))  # configurable later
+    )
+
+
+# ========================= MAIN SETUP =========================
+def setup_observability(app):
+    """Call this once in main.py - full MELT in one function"""
+    setup_structlog()
+    setup_tracing()
+    
+    # Instrument FastAPI
     FastAPIInstrumentor.instrument_app(app)
-    HTTPXClientInstrumentor().instrument()
+    
+    logger.info("Observability initialized with structlog + OpenTelemetry + Prometheus")
+    return app
 
-    # 3. Prometheus Metrics Setup
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
-    return structlog.get_logger()
+# Helper for easy structured logging
+def get_logger():
+    return logger

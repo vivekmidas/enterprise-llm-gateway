@@ -1,13 +1,12 @@
 import asyncio
 import time
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
-from backend.app.nodes.built_in.base import NodeOutput
 
 class CustomRuleGuardAgent(BaseNode):
-    name = "custom_rule_guard"
-    description = "Dynamic rule-based guard using JSON config"
-    version = "1.0.0"
-    category = "Guardrails"
+    name: str = "custom_rule_guard"
+    description: str = "Dynamic rule-based guard using JSON config"
+    version: str = "1.0.0"
+    category: str = "Guardrails"
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         config = inp.config or {}

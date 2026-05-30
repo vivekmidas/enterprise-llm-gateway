@@ -12,10 +12,10 @@ class SchedulerAgent(BaseNode):
     Node that schedules a background task to run a command or another node
     at a specific interval.
     """
-    name = "scheduler_agent"
-    description = "Runs a command or triggers an agent recurringly in the background"
-    version = "1.0.0"
-    category = "Custom"
+    name: str = "scheduler_agent"
+    description: str = "Runs a command or triggers an agent recurringly in the background"
+    version: str = "1.0.0"
+    category: str = "Custom"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         config = inp.config or {}
@@ -75,7 +75,7 @@ class SchedulerAgent(BaseNode):
                     )
 
                 if target_agent:
-                    agent = NodesRegistry.get_nodes(target_agent)
+                    agent = NodesRegistry.get_node(target_agent)
                     if agent:
                         log.info("scheduler_triggering_agent")
                         # Create a fresh input for the periodic execution

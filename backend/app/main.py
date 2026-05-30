@@ -1,12 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.core.observability import setup_observability
+from app.core.observability import get_logger, setup_observability, REQUEST_COUNTER, REQUEST_LATENCY, TOKEN_USAGE
+from app.api.nodes.router import router as agents_router
+from app.api.chat.router import router as chat_router
+from app.api.root.router import router as root_router
+from app.api.workflows.router import router as workflows_router
+from app.api.observability.router import router as obs_router
+from app.nodes.registry import NodesRegistry
 
 load_dotenv()
 
 app = FastAPI(title="Enterprise LLM Gateway", version="0.2.3")
-logger = setup_observability(app)
+#app = setup_observability(app)
+logger = get_logger()
+
 
 # CORS
 app.add_middleware(
@@ -16,14 +24,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-from app.api.nodes.router import router as agents_router
-from app.api.chat.router import router as chat_router
-from app.api.root.router import router as root_router
-from app.api.workflows.router import router as workflows_router
-from app.api.observability.router import router as obs_router
-from app.nodes.registry import NodesRegistry
-
 # ====================== Startup - Register Nodes ======================
 @app.on_event("startup")
 async def startup_event():

@@ -1,7 +1,7 @@
 import abc
 import time
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class NodeInput(BaseModel):
     trace_id: str
@@ -21,10 +21,12 @@ class NodeOutput(BaseModel):
     start_time: float = 0.0
     end_time: float = 0.0
 
-class BaseNode(abc.ABC):
+class BaseNode(BaseModel, abc.ABC):
     """
     Standardized Base Class for all Enterprise LLM Gateway nodes.
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     name: str = "base_node"       # Machine identifier
     label: str = "Base Node"      # UI-facing display name (matches frontend 'label')
     description: str = "Standard node base"

@@ -3,9 +3,9 @@ from app.nodes.base import BaseNode, NodeInput, NodeOutput
 import time
 
 class SentimentAnalyzerAgent(BaseNode ):
-    name = "sentiment_analyzer"
-    description = "Analyzes sentiment of user message"
-    version = "1.0.0"
+    name: str = "sentiment_analyzer"
+    description: str = "Analyzes sentiment of user message"
+    version: str = "1.0.0"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()

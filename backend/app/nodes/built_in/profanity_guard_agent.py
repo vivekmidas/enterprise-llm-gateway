@@ -3,10 +3,10 @@ from app.nodes.base import BaseNode, NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 
 class ProfanityGuardAgent(BaseNode):
-    name = "profanity_guard"
-    description = "Profanity and offensive content detection"
-    version = "1.1.0"
-    category = "Guardrails"
+    name: str = "profanity_guard"
+    description: str = "Profanity and offensive content detection"
+    version: str = "1.1.0"
+    category: str = "Guardrails"
 
     def __init__(self):
         self.analyzer = AnalyzerEngine()

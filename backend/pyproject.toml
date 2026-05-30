@@ -15,6 +15,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi",
     "opentelemetry-instrumentation-httpx",
     "prometheus-fastapi-instrumentator",
+    "opentelemetry-exporter-otlp",
     "langgraph",
     "langchain",
     "spacy",
@@ -36,3 +37,20 @@ dev = [
   "pytest-cov"
   
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "B", "C4", "UP", "SIM", "TID", "RUF"]
+ignore = ["E501"]  # Will adjust later
+
+[tool.ruff.lint]
+extend-select = ["I"]  # isort
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true

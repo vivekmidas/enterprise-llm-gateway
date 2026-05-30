@@ -5,7 +5,6 @@ import pkgutil
 import structlog
 from typing import Dict, List, Optional, Type
 from app.nodes.built_in.base import BaseNode
-from app.nodes.base import BaseNode
 
 logger = structlog.get_logger(__name__)
 
@@ -25,7 +24,7 @@ class NodesRegistry:
         logger.info("node_registered", name=agent.name, category=agent.category, version=agent.version)
 
     @classmethod
-    def get_nodes(cls, name: str) -> Optional[BaseNode]:
+    def get_node(cls, name: str) -> Optional[BaseNode]:
         """Retrieves a node by its unique name."""
         logger.debug("get_node_request", name=name)
         node = cls._nodes.get(name)
@@ -38,6 +37,7 @@ class NodesRegistry:
     @classmethod
     def list_nodes(cls) -> List[BaseNode]:
         """Returns a list of all registered nodes."""
+        
         logger.debug("list_nodes_request", count=len(cls._nodes))
         return list(cls._nodes.values())
 

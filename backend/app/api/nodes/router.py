@@ -11,7 +11,8 @@ router = APIRouter()
 
 @router.get("/nodes")
 async def list_nodes():
-    return {"nodes": NodesRegistry.list_nodes()}
+    # FastAPI will now use the Pydantic model serialization for each BaseNode in the list
+    return {"nodes": [node.model_dump() for node in NodesRegistry.list_nodes()]}
 
 
 @router.get("/categories")

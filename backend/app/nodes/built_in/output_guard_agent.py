@@ -3,9 +3,9 @@ from app.nodes.base import  BaseNode, NodeInput, NodeOutput
 import time
 
 class OutputGuardAgent(BaseNode):
-    name = "output_guard"
-    description = "Final safety check - PII leak, MAD, policy compliance"
-    version = "1.0.0"
+    name: str = "output_guard"
+    description: str = "Final safety check - PII leak, MAD, policy compliance"
+    version: str = "1.0.0"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()

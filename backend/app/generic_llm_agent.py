@@ -1,12 +1,12 @@
 import httpx
 import time
 from typing import Any, Dict
-from app.nodes.built_in.base import BaseAgent, NodeInput, NodeOutput
-class GenericLLMAgent(BaseAgent):
-    name = "generic_llm_agent"
-    description = "Calls an LLM via specific IP and Port using OpenAI-compatible API"
-    version = "1.0.0"
-    category = "LLM"
+from app.nodes.built_in.base import BaseNode, NodeInput, NodeOutput
+class GenericLLMAgent(BaseNode):
+    name: str = "generic_llm_agent"
+    description: str = "Calls an LLM via specific IP and Port using OpenAI-compatible API"
+    version: str = "1.0.0"
+    category: str = "LLM"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start_ts = time.time()

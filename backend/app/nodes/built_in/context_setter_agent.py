@@ -3,9 +3,9 @@ from app.nodes.base import BaseNode, NodeInput, NodeOutput
 import time
 
 class ContextSetterAgent(BaseNode):
-    name = "context_setter"
-    description = "Enriches input with user context from CRM / DB"
-    version = "1.0.0"
+    name: str = "context_setter"
+    description: str = "Enriches input with user context from CRM / DB"
+    version: str = "1.0.0"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
