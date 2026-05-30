@@ -1,0 +1,27 @@
+{
+  "id": "test-api-workflow-123",
+  "version": "1",
+  "name": "Integration Test Workflow",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "data": {
+        "name": "Start",
+        "group": "Start",
+        "properties": {
+          "enabled": true
+        }
+      }
+    }
+  ],
+  "edges": [],
+  "entry_point": "guard_input",
+  "updated_at": "2026-05-30T07:53:52.755730",
+  "global_rules": {},
+  "llm_config": {},
+  "metadata": {},
+  "category": "testing"
+}
