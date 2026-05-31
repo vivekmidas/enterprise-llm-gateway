@@ -3,7 +3,7 @@ import time
 import subprocess
 import structlog
 from typing import Any, Dict
-from app.nodes.built_in.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
 
 logger = structlog.get_logger(__name__)
 

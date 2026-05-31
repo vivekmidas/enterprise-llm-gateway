@@ -5,16 +5,20 @@ from app.nodes.base import BaseNode, NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
+from app.core.observability import get_logger
+
+logger = get_logger()
 
 class PresidioNERGuardAgent(BaseNode):
-    name = "presidio_ner_guard"
-    description = "Advanced PII + Custom Rules using Presidio"
-    version = "1.1.0"
-    category = "Guardrails"
+    name:str = "presidio_ner_guard"
+    description:str = "Advanced PII + Custom Rules using Presidio"
+    version:str = "1.1.0"
+    category:str = "Guardrails"
 
-    def __init__(self):
-        self.analyzer = AnalyzerEngine()
-        self.anonymizer = AnonymizerEngine()
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._analyzer = AnalyzerEngine()
+        self._anonymizer = AnonymizerEngine()
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
@@ -25,7 +29,7 @@ class PresidioNERGuardAgent(BaseNode):
 
         # Run analysis
         results = await asyncio.to_thread(
-            self.analyzer.analyze,
+            self._analyzer.analyze,
             text=inp.content,
             entities=entities,
             language="en",
@@ -40,7 +44,7 @@ class PresidioNERGuardAgent(BaseNode):
             violations.append(f"pii:{entity}")
             # Mask
             anonymized = await asyncio.to_thread(
-                self.anonymizer.anonymize,
+                self._anonymizer.anonymize,
                 text=masked_content,
                 analyzer_results=[result],
                 operators={"DEFAULT": OperatorConfig("replace", {"new_value": f"[REDACTED-{entity}]"})}

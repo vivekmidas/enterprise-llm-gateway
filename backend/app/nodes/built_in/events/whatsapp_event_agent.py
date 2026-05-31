@@ -1,11 +1,13 @@
 # backend/app/agents/built_in/context_setter_agent.py
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
 import time
-
+from app.core.observability import get_logger
+logger = get_logger()
 class ContextSetterAgent(BaseNode):
-    name = "whatsapp_event_agent"
-    description = "Activated when a new WhatsApp event is received"
-    version = "1.0.0"
+    name:str = "whatsapp_event_agent"
+    description:str = "Activated when a new WhatsApp event is received"
+    version:str = "1.0.0"
+    category:str = "Context Enrichment"
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()

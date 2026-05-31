@@ -1,7 +1,7 @@
 import httpx
 import time
 from typing import Any, Dict
-from app.nodes.built_in.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode, NodeInput, NodeOutput
 class GenericLLMAgent(BaseNode):
     name: str = "generic_llm_agent"
     description: str = "Calls an LLM via specific IP and Port using OpenAI-compatible API"

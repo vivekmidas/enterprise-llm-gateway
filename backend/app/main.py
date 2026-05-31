@@ -12,7 +12,7 @@ from app.nodes.registry import NodesRegistry
 load_dotenv()
 
 app = FastAPI(title="Enterprise LLM Gateway", version="0.2.3")
-#app = setup_observability(app)
+app = setup_observability(app)
 logger = get_logger()
 
 

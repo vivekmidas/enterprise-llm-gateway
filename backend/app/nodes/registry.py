@@ -4,7 +4,7 @@ import os
 import pkgutil
 import structlog
 from typing import Dict, List, Optional, Type
-from app.nodes.built_in.base import BaseNode
+from app.nodes.base import BaseNode
 
 logger = structlog.get_logger(__name__)
 
@@ -50,39 +50,38 @@ class NodesRegistry:
         # 1. Discover built-in nodes
         try:
             import app.nodes.built_in as built_in_pkg
-            if hasattr(built_in_pkg, "__file__") and built_in_pkg.__file__:
-                package_path = os.path.dirname(built_in_pkg.__file__)
-                logger.info("scanning_builtin_package_path", path=package_path)
-                cls._scan_package(package_path, "app.nodes.built_in")
-            elif hasattr(built_in_pkg, "__path__"):
-                for path in built_in_pkg.__path__:
-                    logger.info("scanning_builtin_package_path", path=path)
-                    cls._scan_package(path, "app.nodes.built_in")
+            package_name = built_in_pkg.__name__
+            # Ensure we scan all paths in the package as a single list for robust recursion
+            package_paths = list(getattr(built_in_pkg, "__path__", []))
+            if not package_paths and hasattr(built_in_pkg, "__file__") and built_in_pkg.__file__:
+                package_paths = [os.path.dirname(built_in_pkg.__file__)]
+            cls._scan_package(package_paths, package_name)
         except ImportError:
             logger.warning("built_in_agents_package_not_found")
 
         # 2. Discover plugin agents from 'plugins/agents' folder (allows dropping new .py files)
-        plugins_dir = os.path.join(os.getcwd(), "plugins", "agents")
+        plugins_dir = os.path.join(os.getcwd(), "plugins", "nodes")
         if os.path.exists(plugins_dir):
             import sys
             if plugins_dir not in sys.path:
                 sys.path.append(plugins_dir)
             logger.info("scanning_plugins_directory", path=plugins_dir)
-            cls._scan_package(plugins_dir, "")
+            cls._scan_package([plugins_dir], "")
         else:
             logger.debug("plugins_directory_not_found", path=plugins_dir)
 
     @classmethod
-    def _scan_package(cls, package_path: str, prefix: str):
+    def _scan_package(cls, package_paths: List[str], prefix: str):
         """Walks through a package and its sub-packages to find agents."""
-        logger.info("scanning_package", package_path=package_path, prefix=prefix)
+        logger.info("scanning_package", paths=package_paths, prefix=prefix)
 
         # 1. Load the root package itself first (to find agents in __init__.py)
         if prefix:
             cls._load_module(prefix)
 
         # 2. Recursively find and load all sub-modules
-        for _, module_name, ispkg in pkgutil.walk_packages([package_path], prefix=f"{prefix}." if prefix else ""):
+        for _, module_name, ispkg in pkgutil.walk_packages(package_paths, prefix=f"{prefix}." if prefix else ""):
+            logger.debug("found_module", module=module_name, is_package=ispkg)
             if ispkg:
                 logger.info("scanning_directory", module=module_name)
             cls._load_module(module_name)

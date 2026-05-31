@@ -1,6 +1,7 @@
 # src/core/observability.py
 import structlog
 import sys
+import logging
 from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -24,7 +25,7 @@ def filter_http_methods(_, __, event_dict):
     if method and str(method).upper() not in ["GET", "POST"] :
         raise structlog.DropEvent
     print(event_dict)
-    name = event_dict.get("name")
+    #name = event_dict.get("name")
     return event_dict
 
 # ========================= METRICS (M in MELT) =========================
@@ -65,9 +66,8 @@ def setup_structlog():
 
     structlog.configure(
         processors=processors,
-        
         wrapper_class=structlog.stdlib.BoundLogger,
-        logger_factory=structlog.stdlib.LoggerFactory(),
+        #logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
@@ -91,10 +91,8 @@ def setup_observability(app):
     
     # Instrument FastAPI
     FastAPIInstrumentor.instrument_app(app)
-    
     logger.info("Observability initialized with structlog + OpenTelemetry + Prometheus")
     return app
-
 
 # Helper for easy structured logging
 def get_logger():

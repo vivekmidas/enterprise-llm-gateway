@@ -9,7 +9,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings",
     "redis>=4.2.0",
-    "structlog",
+    "structlog>=25.5.0",
     "opentelemetry-api",
     "opentelemetry-sdk",
     "opentelemetry-instrumentation-fastapi",
@@ -23,6 +23,7 @@ dependencies = [
     "langchain-openai",
     "presidio_anonymizer",
     "presidio_analyzer",
+    
     "httpx",
 
 ]

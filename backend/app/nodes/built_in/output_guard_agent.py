@@ -1,11 +1,33 @@
 # backend/app/agents/built_in/output_guard_agent.py
 from app.nodes.base import  BaseNode, NodeInput, NodeOutput
+from typing import List, Dict, Any
 import time
 
 class OutputGuardAgent(BaseNode):
     name: str = "output_guard"
     description: str = "Final safety check - PII leak, MAD, policy compliance"
     version: str = "1.0.0"
+    category: str = "Guardrails"
+    property_schema: List[Dict[str, Any]] = [
+        {
+            "name": "checkPII",
+            "type": "boolean",
+            "label": "Check for PII leaks",
+            "default": True
+        },
+        {
+            "name": "checkMAD",
+            "type": "boolean",
+            "label": "Check for MAD (Misogyny, Ableism, Discrimination)",
+            "default": True
+        },
+        {
+            "name": "checkPolicy",
+            "type": "boolean",
+            "label": "Check for custom policy violations",
+            "default": False
+        }
+    ]
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
