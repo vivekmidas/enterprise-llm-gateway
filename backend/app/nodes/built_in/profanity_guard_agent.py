@@ -23,7 +23,14 @@ class ProfanityGuardAgent(BaseNode):
         recognizer = PatternRecognizer(supported_entity="PROFANITY", patterns=patterns)
         self._analyzer.registry.add_recognizer(recognizer)
 
-    async def run(self, inp: NodeInput) -> NodeOutput:
+    async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            content=inp.content,
+            status="success"
+        )
+        
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         # Logic implementation (execute() handles timing and status wrapping)
 
         results = await asyncio.to_thread(

@@ -6,39 +6,38 @@ import structlog
 from typing import Dict, List, Optional, Type
 from app.nodes.base import BaseNode
 
-logger = structlog.get_logger(__name__)
-
 class NodesRegistry: 
     """
     Registry for managing and dynamically discovering nodes.
     """
     _nodes: Dict[str, BaseNode] = {}
+    logger = structlog.get_logger("NodesRegistry")
 
     @classmethod
     def register(cls, agent: BaseNode):
         """Registers an instantiated node."""
         if not agent.name or agent.name == "base_node":
-            logger.debug("skip_registration_base_agent", agent_name=agent.name)
+            cls.logger.debug("skip_registration_base_agent", agent_name=agent.name)
             return
         cls._nodes[agent.name] = agent
-        logger.info("node_registered", name=agent.name, category=agent.category, version=agent.version)
+        cls.logger.info("node_registered", name=agent.name, category=agent.category, version=agent.version)
 
     @classmethod
     def get_node(cls, name: str) -> Optional[BaseNode]:
         """Retrieves a node by its unique name."""
-        logger.debug("get_node_request", name=name)
+        cls.logger.debug("get_node_request", name=name)
         node = cls._nodes.get(name)
         if node:
-            logger.debug("get_node_hit", name=name)
+            cls.logger.debug("get_node_hit", name=name)
         else:
-            logger.debug("get_node_miss", name=name)
+            cls.logger.debug("get_node_miss", name=name)
         return node
 
     @classmethod
     def list_nodes(cls) -> List[BaseNode]:
         """Returns a list of all registered nodes."""
         
-        logger.debug("list_nodes_request", count=len(cls._nodes))
+        cls.logger.debug("list_nodes_request", count=len(cls._nodes))
         return list(cls._nodes.values())
 
     @classmethod
@@ -46,7 +45,7 @@ class NodesRegistry:
         """
         Dynamically discovers nodes in built-in and plugin directories.
         """
-        logger.info("auto_discover_started")
+        cls.logger.info("auto_discover_started")
         # 1. Discover built-in nodes
         try:
             import app.nodes.built_in as built_in_pkg
@@ -57,7 +56,7 @@ class NodesRegistry:
                 package_paths = [os.path.dirname(built_in_pkg.__file__)]
             cls._scan_package(package_paths, package_name)
         except ImportError:
-            logger.warning("built_in_agents_package_not_found")
+            cls.logger.warning("built_in_agents_package_not_found")
 
         # 2. Discover plugin agents from 'plugins/agents' folder (allows dropping new .py files)
         plugins_dir = os.path.join(os.getcwd(), "plugins", "nodes")
@@ -65,15 +64,22 @@ class NodesRegistry:
             import sys
             if plugins_dir not in sys.path:
                 sys.path.append(plugins_dir)
-            logger.info("scanning_plugins_directory", path=plugins_dir)
+            cls.logger.info("scanning_plugins_directory", path=plugins_dir)
             cls._scan_package([plugins_dir], "")
         else:
-            logger.debug("plugins_directory_not_found", path=plugins_dir)
+            cls.logger.debug("plugins_directory_not_found", path=plugins_dir)
+
+        # Log the "output" of the discovery process
+        cls.logger.info(
+            "auto_discover_completed", 
+            nodes_count=len(cls._nodes), 
+            registered_nodes=list(cls._nodes.keys())
+        )
 
     @classmethod
     def _scan_package(cls, package_paths: List[str], prefix: str):
         """Walks through a package and its sub-packages to find agents."""
-        logger.info("scanning_package", paths=package_paths, prefix=prefix)
+        cls.logger.info("scanning_package", paths=package_paths, prefix=prefix)
 
         # 1. Load the root package itself first (to find agents in __init__.py)
         if prefix:
@@ -81,15 +87,15 @@ class NodesRegistry:
 
         # 2. Recursively find and load all sub-modules
         for _, module_name, ispkg in pkgutil.walk_packages(package_paths, prefix=f"{prefix}." if prefix else ""):
-            logger.debug("found_module", module=module_name, is_package=ispkg)
+            cls.logger.debug("found_module", module=module_name, is_package=ispkg)
             if ispkg:
-                logger.info("scanning_directory", module=module_name)
+                cls.logger.info("scanning_directory", module=module_name)
             cls._load_module(module_name)
 
     @classmethod
     def _scan_directory(cls, directory: str):
         """Scans a flat directory for python files containing agents."""
-        logger.debug("scanning_directory", directory=directory)
+        cls.logger.debug("scanning_directory", directory=directory)
         for filename in os.listdir(directory):
             if filename.endswith(".py") and not filename.startswith("__"):
                 module_name = filename[:-3]
@@ -98,7 +104,7 @@ class NodesRegistry:
     @classmethod
     def _load_module(cls, module_name: str):
         """Loads a module and registers any BaseAgent subclasses found within."""
-        logger.debug("loading_module", module=module_name)
+        cls.logger.debug("loading_module", module=module_name)
         try:
             # Import the module. 
             # We avoid importlib.reload() as it can break class identity checks (issubclass)
@@ -107,11 +113,11 @@ class NodesRegistry:
 
             for _, obj in inspect.getmembers(module, inspect.isclass):
                 if issubclass(obj, BaseNode) and obj is not BaseNode:
-                    logger.info("found_node_class", class_name=obj.__name__, module=module_name)
+                    cls.logger.info("found_node_class", class_name=obj.__name__, module=module_name)
                     try:
                         instance = obj()
                         cls.register(instance)
                     except Exception as e:
-                        logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
+                        cls.logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
         except Exception as e:
-            logger.error("node_module_load_failed", module=module_name, error=str(e))
+            cls.logger.error("node_module_load_failed", module=module_name, error=str(e))

@@ -10,8 +10,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import Counter, Histogram 
 
-
-
 """Filters out spans with SpanKind.INTERNAL to reduce terminal noise."""
 def on_end(self, span: ReadableSpan) -> None:
         # Do not process/export spans that are marked as INTERNAL

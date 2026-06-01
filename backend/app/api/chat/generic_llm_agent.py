@@ -55,5 +55,6 @@ class GenericLLMAgent(BaseNode):
                 trace_id=inp.trace_id,
                 content=inp.content,
                 status="failure",
-                error=f"Generic LLM request failed: {str(e)}",
+                code=500,
+                error_message=f"Generic LLM request failed: {str(e)}",
             )

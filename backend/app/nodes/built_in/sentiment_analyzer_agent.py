@@ -7,7 +7,14 @@ class SentimentAnalyzerAgent(BaseNode ):
     description: str = "Analyzes sentiment of user message"
     version: str = "1.0.0"
 
-    async def run(self, inp: NodeInput) -> NodeOutput:
+    async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            content=inp.content,
+            status="success"
+        )
+        
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         
         # Simple rule-based + can be replaced with small LLM

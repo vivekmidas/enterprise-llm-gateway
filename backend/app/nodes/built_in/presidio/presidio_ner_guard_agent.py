@@ -1,13 +1,9 @@
 import asyncio
-import time
 from typing import Dict, Any
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
-from app.core.observability import get_logger
-
-logger = get_logger()
 
 class PresidioNERGuardAgent(BaseNode):
     name:str = "presidio_ner_guard"
@@ -19,9 +15,15 @@ class PresidioNERGuardAgent(BaseNode):
         super().__init__(**data)
         self._analyzer = AnalyzerEngine()
         self._anonymizer = AnonymizerEngine()
+        
+    async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            content=inp.content,
+            status="success"
+        )
 
-    async def run(self, inp: NodeInput) -> NodeOutput:
-        start = time.time()
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         config: Dict[str, Any] = inp.config or {}
 
         entities = config.get("entities", ["PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "CREDIT_CARD"])
@@ -54,10 +56,6 @@ class PresidioNERGuardAgent(BaseNode):
         return NodeOutput(
             trace_id=inp.trace_id,
             content=masked_content,
-            start_time=start,
-            end_time=time.time(),
             violations=violations,
             metadata={"entities_detected": len(results)},
-            latency_ms=round((time.time() - start) * 1000, 2),
-            status="flagged" if violations else "success"
         )

@@ -1,23 +1,27 @@
 import asyncio
 import time
 import subprocess
-import structlog
 from typing import Any, Dict
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
 
-logger = structlog.get_logger(__name__)
-
 class SchedulerAgent(BaseNode):
     """
-    Node that schedules a background task to run a command or another node
+    Agent that schedules a background task to run a command or another agent
     at a specific interval.
     """
-    name: str = "scheduler_agent"
-    description: str = "Runs a command or triggers an agent recurringly in the background"
-    version: str = "1.0.0"
-    category: str = "Custom"
+    name:str = "scheduler_agent"
+    description:str = "Runs a command or triggers an agent recurringly in the background"
+    version:str = "1.0.0"
+    category:str = "Custom"
 
-    async def run(self, inp: NodeInput) -> NodeOutput:
+    async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            content=inp.content,
+            status="success"
+        )
+        
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         config = inp.config or {}
         interval = float(config.get("interval", 60))
         unit = config.get("unit", "seconds")
@@ -52,7 +56,7 @@ class SchedulerAgent(BaseNode):
         # Deferred import to avoid circular dependency during registry auto-discovery
         from app.nodes.registry import NodesRegistry
         
-        log = logger.bind(
+        log = self.logger.bind(
             scheduler_trace_id=original_input.trace_id, 
             delay=delay, 
             command=command, 
