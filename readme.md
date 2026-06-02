@@ -54,3 +54,41 @@ curl -X POST http://localhost:8000/api/agents/test \
 "keywords": ["secret"]
 }
 }'
+
+### Category Management API
+
+**List Categories**
+```bash
+curl -X GET http://localhost:8000/categories
+```
+
+**Create Category**
+```bash
+curl -X POST http://localhost:8000/categories \
+ -H "Content-Type: application/json" \
+ -d '{
+  "name": "Social Media",
+  "icon": "share",
+  "color": "#1DA1F2"
+ }'
+```
+
+**Get Category**
+```bash
+curl -X GET http://localhost:8000/categories/{category_id}
+```
+
+**Update Category**
+```bash
+curl -X PUT http://localhost:8000/categories/{category_id} \
+ -H "Content-Type: application/json" \
+ -d '{
+  "name": "Updated Social Media",
+  "color": "#000000"
+ }'
+```
+
+**Delete Category**
+```bash
+curl -X DELETE http://localhost:8000/categories/{category_id}
+```

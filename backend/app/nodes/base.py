@@ -43,6 +43,7 @@ class BaseNode(BaseModel, abc.ABC):
     badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
     sub_label: Optional[str] = None # Optional sub-label
     property_schema: List[Dict[str, Any]] = Field(default_factory=list)  # For dynamic property rendering in UI
+    properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
 
     @cached_property
     def logger(self):

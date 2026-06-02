@@ -20,11 +20,12 @@ dependencies = [
     "langchain",
     "spacy",
     "rich",
+    "aiosqlite",
     "sqlalchemy",
     "langchain-openai",
     "presidio_anonymizer",
     "presidio_analyzer",
-    
+    "greenlet",
     "httpx",
 
 ]

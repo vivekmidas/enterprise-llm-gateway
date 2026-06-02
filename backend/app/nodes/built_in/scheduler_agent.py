@@ -1,7 +1,7 @@
 import asyncio
 import time
 import subprocess
-from typing import Any, Dict
+from typing import Any, Dict, List
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
 
 class SchedulerAgent(BaseNode):
@@ -13,6 +13,18 @@ class SchedulerAgent(BaseNode):
     description:str = "Runs a command or triggers an agent recurringly in the background"
     version:str = "1.0.0"
     category:str = "Custom"
+    property_schema: List[Dict[str, Any]] = [
+        {"key": "interval", "label": "Interval", "type": "number"},
+        {"key": "unit", "label": "Unit", "type": "choice", "options": ["seconds", "minutes"]},
+        {"key": "command", "label": "Shell Command", "type": "string"},
+        {"key": "targetAgent", "label": "Target Agent", "type": "choice", "options": []}
+    ]
+    properties: Dict[str, Any] = {
+        "interval": 60,
+        "unit": "seconds",
+        "command": "",
+        "targetAgent": ""
+    }
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(

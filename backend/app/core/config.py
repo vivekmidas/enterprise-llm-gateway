@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str | None = None
     REDIS_CACHE_TTL: int = 3600 * 6  # 6 hours for compiled graphs
     ENVIRONMENT: str = "development"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./enterprise_gateway.db"
 
     class Config:
         env_file = ".env"

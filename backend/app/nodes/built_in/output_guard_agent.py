@@ -10,24 +10,29 @@ class OutputGuardAgent(BaseNode):
     category: str = "Guardrails"
     property_schema: List[Dict[str, Any]] = [
         {
-            "name": "checkPII",
+            "key": "checkPII",
             "type": "boolean",
             "label": "Check for PII leaks",
             "default": True
         },
         {
-            "name": "checkMAD",
+            "key": "checkMAD",
             "type": "boolean",
             "label": "Check for MAD (Misogyny, Ableism, Discrimination)",
             "default": True
         },
         {
-            "name": "checkPolicy",
+            "key": "checkPolicy",
             "type": "boolean",
             "label": "Check for custom policy violations",
             "default": False
         }
     ]
+    properties: Dict[str, Any] = {
+        "checkPII": True,
+        "checkMAD": True,
+        "checkPolicy": False
+    }
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(

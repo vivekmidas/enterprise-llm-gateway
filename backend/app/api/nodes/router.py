@@ -1,36 +1,38 @@
-import json
-from pathlib import Path
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import structlog
-from app.nodes.registry import NodesRegistry
-from app.workflows.store import load_workflow_from_store
-logger = structlog.get_logger(__name__)
 
+from app.core.database import get_db
+from app.models.db_models import NodeDB
+
+logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
 @router.get("")
-async def list_nodes():
-    # FastAPI will now use the Pydantic model serialization for each BaseNode in the list
-    return {"nodes": [node.model_dump() for node in NodesRegistry.list_nodes()]}
+async def list_nodes(db: AsyncSession = Depends(get_db)):
+    """Fetches all registered nodes from the database."""
+    result = await db.execute(select(NodeDB))
+    nodes = result.scalars().all()
+    return {"nodes": nodes}
+
+@router.put("/{node_name}")
+async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depends(get_db)):
+    """Updates a node definition in the registry (catalog)."""
+    result = await db.execute(select(NodeDB).where(NodeDB.name == node_name))
+    node = result.scalar_one_or_none()
+    if not node:
+        return {"error": "Node not found"}
+
+    # Update node fields based on incoming data
+    for key, value in node_data.items():
+        if hasattr(node, key):
+            setattr(node, key, value)
+
+    db.add(node)
+    await db.commit()
+    await db.refresh(node)
+    logger.info("node_updated", node_name=node_name)
+    return {"node": node}
 
 
-@router.get("/categories")
-async def get_workflow_categories():
-    logger.info("get_workflow_categories_request")
-    
-    # Define path relative to the app directory
-    base_dir = Path(__file__).resolve().parent.parent.parent
-    file_path = base_dir / "data" / "node_categories.json"
-    
-    categories = []
-    try:
-        if file_path.exists():
-            with open(file_path, "r") as f:
-                categories = json.load(f)
-            # Ensure consistent ordering by name
-            categories.sort(key=lambda x: x.get("name", ""))
-    except (json.JSONDecodeError, IOError) as e:
-        logger.error("failed_to_load_categories", error=str(e), path=str(file_path))
-
-    logger.info("get_workflow_categories_response", count=len(categories))
-    return {"categories": categories}

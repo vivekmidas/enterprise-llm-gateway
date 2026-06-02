@@ -80,3 +80,59 @@ async def test_get_nonexistent_workflow():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get("/workflows/non-existent-id")
     assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_category_lifecycle():
+    """
+    Test the full lifecycle of a category: Create -> Get -> Update -> List -> Delete.
+    """
+    payload = {
+        "name": "Test Category",
+        "icon": "test-icon",
+        "color": "#ffffff"
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Create
+        create_res = await ac.post("/categories", json=payload)
+        assert create_res.status_code == 201
+        data = create_res.json()
+        category_id = data["id"]
+        assert data["name"] == payload["name"]
+
+        # 2. Get by ID
+        get_res = await ac.get(f"/categories/{category_id}")
+        assert get_res.status_code == 200
+        assert get_res.json()["name"] == "Test Category"
+
+        # 3. Update
+        update_payload = {"name": "Updated Category"}
+        update_res = await ac.put(f"/categories/{category_id}", json=update_payload)
+        assert update_res.status_code == 200
+        assert update_res.json()["name"] == "Updated Category"
+
+        # 4. List all
+        list_res = await ac.get("/categories")
+        assert list_res.status_code == 200
+        list_data = list_res.json()
+        assert "categories" in list_data
+        assert any(c["id"] == category_id for c in list_data["categories"])
+
+        # 5. Delete
+        delete_res = await ac.delete(f"/categories/{category_id}")
+        assert delete_res.status_code == 204
+
+        # 6. Verify Deletion
+        verify_res = await ac.get(f"/categories/{category_id}")
+        assert verify_res.status_code == 404
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_category():
+    """
+    Test getting a category that does not exist.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get("/categories/99999")
+    assert response.status_code == 404

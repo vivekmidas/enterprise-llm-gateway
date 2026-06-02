@@ -8,7 +8,14 @@ class ProfanityGuardAgent(BaseNode):
     description: str = "Profanity and offensive content detection"
     version: str = "1.1.0"
     category: str = "Guardrails"
-    property_schema: List[Dict[str, Any]] = []
+    property_schema: List[Dict[str, Any]] = [
+        {"key": "enabled", "label": "Enabled", "type": "boolean"},
+        {"key": "sensitivity", "label": "Sensitivity", "type": "choice", "options": ["low", "medium", "high"]}
+    ]
+    properties: Dict[str, Any] = {
+        "enabled": True,
+        "sensitivity": "medium"
+    }
 
     def __init__(self, **data):
         super().__init__(**data)

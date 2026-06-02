@@ -2,7 +2,7 @@ from app.core.observability import get_logger
 
 import httpx
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 from app.nodes.base import BaseNode, NodeInput, NodeOutput
 
 logger = get_logger()
@@ -11,6 +11,22 @@ class GenericLLMAgent(BaseNode):
     description:str = "Calls an LLM via specific IP and Port using OpenAI-compatible API"
     version:str = "1.0.0"
     category:str = "LLM"
+
+    property_schema: List[Dict[str, Any]] = [
+        {"key": "ip", "label": "IP Address", "type": "string", "placeholder": "127.0.0.1"},
+        {"key": "port", "label": "Port", "type": "string", "placeholder": "8000"},
+        {"key": "model", "label": "Model Name", "type": "string", "placeholder": "default-model"},
+        {"key": "temperature", "label": "Temperature", "type": "number", "placeholder": "0.7"},
+        {"key": "systemPrompt", "label": "System Prompt", "type": "textarea"},
+    ]
+
+    properties: Dict[str, Any] = {
+        "ip": "127.0.0.1",
+        "port": "8000",
+        "model": "default-model",
+        "temperature": 0.7,
+        "systemPrompt": "You are a helpful assistant."
+    }
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(

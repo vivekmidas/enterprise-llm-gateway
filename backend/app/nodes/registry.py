@@ -1,7 +1,9 @@
 import importlib
 import inspect
+import json
 import os
 import pkgutil
+from pathlib import Path
 import structlog
 from typing import Dict, List, Optional, Type
 from app.nodes.base import BaseNode
@@ -19,8 +21,33 @@ class NodesRegistry:
         if not agent.name or agent.name == "base_node":
             cls.logger.debug("skip_registration_base_agent", agent_name=agent.name)
             return
+
+        # Enrich node with external properties (from JSON) if they exist
+        cls._enrich_node_from_storage(agent)
+
         cls._nodes[agent.name] = agent
         cls.logger.info("node_registered", name=agent.name, category=agent.category, version=agent.version)
+
+    @classmethod
+    def _enrich_node_from_storage(cls, node: BaseNode):
+        """
+        Attempts to load default properties and schema overrides from a JSON file.
+        """
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        config_dir = base_dir / "data" / "nodes"
+        config_file = config_dir / f"{node.name}.json"
+
+        if config_file.exists():
+            try:
+                with open(config_file, "r") as f:
+                    external_data = json.load(f)
+                    if "properties" in external_data:
+                        node.properties.update(external_data["properties"])
+                    if "property_schema" in external_data:
+                        node.property_schema = external_data["property_schema"]
+                    cls.logger.debug("node_properties_enriched", name=node.name)
+            except Exception as e:
+                cls.logger.error("failed_to_enrich_node", name=node.name, error=str(e))
 
     @classmethod
     def get_node(cls, name: str) -> Optional[BaseNode]:
@@ -75,6 +102,79 @@ class NodesRegistry:
             nodes_count=len(cls._nodes), 
             registered_nodes=list(cls._nodes.keys())
         )
+
+    @classmethod
+    async def sync_with_db(cls):
+        """
+        Syncs discovered nodes and categories from files/classes into the database.
+        This ensures the DB is populated for the API to consume.
+        """
+        from app.core.database import AsyncSessionLocal, init_db
+        from app.models.db_models import NodeDB, CategoryDB
+        from sqlalchemy import select
+        client_id = 0  # Placeholder for SaaS multi-tenancy support
+        cls.logger.info("syncing_registry_with_db")
+        await init_db()
+        
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # 1. Sync Categories from data/node_categories.json
+                base_dir = Path(__file__).resolve().parent.parent.parent
+                cat_file = base_dir / "data" / "node_categories.json"
+                if cat_file.exists():
+                    try:
+                        with open(cat_file, "r") as f:
+                            cats = json.load(f)
+                            for cat in cats:
+                                stmt = select(CategoryDB).where(CategoryDB.name == cat["name"])
+                                result = await session.execute(stmt)
+                                db_cat = result.scalar_one_or_none()
+                                if not db_cat:
+                                    session.add(CategoryDB(name=cat["name"], icon=cat.get("icon"), color=cat.get("color")))
+                                    cls.logger.info("category_created_in_db", name=cat["name"])
+                                else:
+                                    db_cat.icon = cat.get("icon")
+                                    db_cat.color = cat.get("color")
+                                    cls.logger.debug("category_updated_in_db", name=cat["name"])
+                    except Exception as e:
+                        cls.logger.error("failed_to_sync_categories", error=str(e))
+
+                # 2. Sync Discovered Nodes
+                for node_name, node in cls._nodes.items():
+                    # Prepared for SaaS: client_id filtering would happen here
+                    stmt = select(NodeDB).where(NodeDB.name == node_name)
+                    result = await session.execute(stmt)
+                    db_node = result.scalar_one_or_none()
+                    
+                    if db_node and db_node.properties:
+                        # Read the relative properties from the db and set the default properties
+                        # This ensures the catalog overrides the hardcoded class defaults
+                        node.properties.update(db_node.properties)
+                        cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
+
+                    node_data = {
+                        "name": node.name,
+                        "label": node.label,
+                        "description": node.description,
+                        "version": node.version,
+                        "category": node.category,
+                        "icon": node.icon,
+                        "color": node.color,
+                        "badge": node.badge,
+                        "sub_label": node.sub_label,
+                        "property_schema": node.property_schema,
+                        "properties": node.properties
+                    }
+                    
+                    if not db_node:
+                        session.add(NodeDB(**node_data))
+                        cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
+                    else:
+                        for key, value in node_data.items():
+                            setattr(db_node, key, value)
+                        cls.logger.debug("node_updated_in_catalog", name=node_name, client_id=client_id)
+            
+            cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
 
     @classmethod
     def _scan_package(cls, package_paths: List[str], prefix: str):
