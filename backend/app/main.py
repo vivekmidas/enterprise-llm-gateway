@@ -9,6 +9,7 @@ from app.api.workflows.router import router as workflows_router
 from app.api.observability.router import router as obs_router
 from app.api.categories.router import router as categories_router
 from app.nodes.registry import NodesRegistry
+from app.core.database import init_db
 
 load_dotenv()
 
@@ -29,6 +30,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     logger.info("starting_gateway", version="0.2.3")
+    # Ensure tables are created before syncing
+    await init_db()
     # Dynamic discovery now handles all registrations automatically
     NodesRegistry.auto_discover()
     # Initial sync with DB to load persisted property overrides into the registry

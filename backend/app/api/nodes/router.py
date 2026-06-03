@@ -35,4 +35,9 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     logger.info("node_updated", node_name=node_name)
     return {"node": node}
 
-
+@router.get("/categories/{category_id}")
+async def get_nodes_by_category(category_id: str, db: AsyncSession = Depends(get_db)):
+    """Fetches all nodes belonging to a specific category."""
+    result = await db.execute(select(NodeDB).where(NodeDB.category == category_id))
+    nodes = result.scalars().all()
+    return {"nodes": nodes}

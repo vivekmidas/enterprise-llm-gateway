@@ -109,12 +109,11 @@ class NodesRegistry:
         Syncs discovered nodes and categories from files/classes into the database.
         This ensures the DB is populated for the API to consume.
         """
-        from app.core.database import AsyncSessionLocal, init_db
+        from app.core.database import AsyncSessionLocal
         from app.models.db_models import NodeDB, CategoryDB
         from sqlalchemy import select
         client_id = 0  # Placeholder for SaaS multi-tenancy support
         cls.logger.info("syncing_registry_with_db")
-        await init_db()
         
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -132,10 +131,7 @@ class NodesRegistry:
                                 if not db_cat:
                                     session.add(CategoryDB(name=cat["name"], icon=cat.get("icon"), color=cat.get("color")))
                                     cls.logger.info("category_created_in_db", name=cat["name"])
-                                else:
-                                    db_cat.icon = cat.get("icon")
-                                    db_cat.color = cat.get("color")
-                                    cls.logger.debug("category_updated_in_db", name=cat["name"])
+                                # We skip updating categories to preserve UI edits
                     except Exception as e:
                         cls.logger.error("failed_to_sync_categories", error=str(e))
 
@@ -146,34 +142,28 @@ class NodesRegistry:
                     result = await session.execute(stmt)
                     db_node = result.scalar_one_or_none()
                     
-                    if db_node and db_node.properties:
-                        # Read the relative properties from the db and set the default properties
-                        # This ensures the catalog overrides the hardcoded class defaults
-                        node.properties.update(db_node.properties)
-                        cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
-
-                    node_data = {
-                        "name": node.name,
-                        "label": node.label,
-                        "description": node.description,
-                        "version": node.version,
-                        "category": node.category,
-                        "icon": node.icon,
-                        "color": node.color,
-                        "badge": node.badge,
-                        "sub_label": node.sub_label,
-                        "property_schema": node.property_schema,
-                        "properties": node.properties
-                    }
-                    
                     if not db_node:
-                        session.add(NodeDB(**node_data))
+                        # Only add if it doesn't exist to prevent overwriting UI customizations
+                        session.add(NodeDB(
+                            name=node.name,
+                            label=node.label,
+                            description=node.description,
+                            version=node.version,
+                            category=node.category,
+                            icon=node.icon,
+                            color=node.color,
+                            badge=node.badge,
+                            sub_label=node.sub_label,
+                            property_schema=node.property_schema,
+                            properties=node.properties
+                        ))
                         cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
                     else:
-                        for key, value in node_data.items():
-                            setattr(db_node, key, value)
-                        cls.logger.debug("node_updated_in_catalog", name=node_name, client_id=client_id)
-            
+                        # If it exists, pull properties from DB into the in-memory registry
+                        if db_node.properties:
+                            node.properties.update(db_node.properties)
+                        cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
+
             cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
 
     @classmethod
