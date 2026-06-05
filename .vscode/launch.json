@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Backend Gateway",
+            "type": "debugpy",
+            "request": "launch",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "module": "uvicorn",
+            "args": ["app.main:app", "--host", "0.0.0.0", "--port", "8000"],
+            "cwd": "${workspaceFolder}/backend",
+            "justMyCode": true
+        }
+    ]
+}
