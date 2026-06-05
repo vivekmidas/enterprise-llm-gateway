@@ -35,7 +35,7 @@ async def startup_event():
     # Dynamic discovery now handles all registrations automatically
     NodesRegistry.auto_discover()
     # Initial sync with DB to load persisted property overrides into the registry
-    await NodesRegistry.sync_with_db()
+   # await NodesRegistry.sync_with_db()
     logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))
     
 app.include_router(root_router)

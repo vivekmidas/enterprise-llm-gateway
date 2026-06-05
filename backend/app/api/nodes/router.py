@@ -16,6 +16,24 @@ async def list_nodes(db: AsyncSession = Depends(get_db)):
     nodes = result.scalars().all()
     return {"nodes": nodes}
 
+@router.get("/{node_name}")
+async def get_node(node_name: str, db: AsyncSession = Depends(get_db)):
+    """Fetches a specific node definition by name."""
+    result = await db.execute(select(NodeDB).where(NodeDB.name == node_name))
+    node = result.scalar_one_or_none()
+    if not node:
+        return {"error": "Node not found"}
+    return {"node": node}
+
+@router.get("/{id}")
+async def get_node_by_id(id: str, db: AsyncSession = Depends(get_db)):
+    """Fetches a specific node definition by ID."""
+    result = await db.execute(select(NodeDB).where(NodeDB.id == id))
+    node = result.scalar_one_or_none()
+    if not node:
+        return {"error": "Node not found"}
+    return {"node": node}
+
 @router.put("/{node_name}")
 async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depends(get_db)):
     """Updates a node definition in the registry (catalog)."""
