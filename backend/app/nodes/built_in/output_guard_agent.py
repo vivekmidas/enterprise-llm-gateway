@@ -40,6 +40,9 @@ class OutputGuardAgent(BaseNode):
             content=inp.content,
             status="success"
         )
+
+    async def init(self) -> None:
+        await super().init()
         
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start = time.time()

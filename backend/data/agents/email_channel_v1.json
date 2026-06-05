@@ -1,0 +1,205 @@
+{
+  "id": "email_channel",
+  "version": "1",
+  "name": "Email Channel",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 150,
+        "y": 150
+      },
+      "data": {
+        "label": "Start",
+        "name": "Start",
+        "description": "Entry point for every workflow run",
+        "group": "Start",
+        "category": "Start",
+        "icon": "play-circle",
+        "propertySchema": [
+          {
+            "key": "enabled",
+            "label": "Enabled",
+            "type": "boolean"
+          }
+        ],
+        "properties": {
+          "enabled": true
+        },
+        "executionStatus": "success"
+      },
+      "width": 144,
+      "height": 62,
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "generic_llm_agent_1780664418579",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 534,
+        "y": 120
+      },
+      "data": {
+        "name": "generic_llm_agent",
+        "label": "generic_llm_agent",
+        "description": "Calls an LLM via specific IP and Port using OpenAI-compatible API",
+        "category": "2",
+        "icon": "bot",
+        "version": "1.0.0",
+        "group": null,
+        "color": "#7C3AED",
+        "sub_label": null,
+        "properties": {
+          "ip": "127.0.0.1",
+          "port": "8000",
+          "model": "default-model",
+          "temperature": 0.7,
+          "systemPrompt": "You are a helpful assistant."
+        },
+        "id": 3,
+        "badge": "Node",
+        "property_schema": [
+          {
+            "key": "ip",
+            "label": "IP Address",
+            "type": "string",
+            "placeholder": "127.0.0.1"
+          },
+          {
+            "key": "port",
+            "label": "Port",
+            "type": "string",
+            "placeholder": "8000"
+          },
+          {
+            "key": "model",
+            "label": "Model Name",
+            "type": "string",
+            "placeholder": "default-model"
+          },
+          {
+            "key": "temperature",
+            "label": "Temperature",
+            "type": "number",
+            "placeholder": "0.7"
+          },
+          {
+            "key": "systemPrompt",
+            "label": "System Prompt",
+            "type": "textarea"
+          }
+        ],
+        "propertySchema": [
+          {
+            "key": "ip",
+            "label": "IP Address",
+            "type": "string",
+            "placeholder": "127.0.0.1"
+          },
+          {
+            "key": "port",
+            "label": "Port",
+            "type": "string",
+            "placeholder": "8000"
+          },
+          {
+            "key": "model",
+            "label": "Model Name",
+            "type": "string",
+            "placeholder": "default-model"
+          },
+          {
+            "key": "temperature",
+            "label": "Temperature",
+            "type": "number",
+            "placeholder": "0.7"
+          },
+          {
+            "key": "systemPrompt",
+            "label": "System Prompt",
+            "type": "textarea"
+          }
+        ],
+        "defaultProperties": {
+          "ip": "127.0.0.1",
+          "port": "8000",
+          "model": "default-model",
+          "temperature": 0.7,
+          "systemPrompt": "You are a helpful assistant."
+        },
+        "executionStatus": "idle"
+      },
+      "width": 190,
+      "height": 62,
+      "selected": false,
+      "positionAbsolute": {
+        "x": 534,
+        "y": 120
+      },
+      "dragging": false
+    },
+    {
+      "id": "api_webhook_agent_1780664458571",
+      "type": "custom",
+      "config": {},
+      "next": [],
+      "position": {
+        "x": 282,
+        "y": 238
+      },
+      "data": {
+        "name": "api_webhook_agent",
+        "label": "api_webhook_agent",
+        "description": "API Webhook Agent for external system integration",
+        "category": "2",
+        "icon": "bot",
+        "version": "1.0.0",
+        "group": null,
+        "color": "#7C3AED",
+        "sub_label": null,
+        "properties": {},
+        "id": 9,
+        "badge": "Node",
+        "property_schema": [],
+        "propertySchema": [],
+        "defaultProperties": {},
+        "executionStatus": "idle"
+      },
+      "width": 203,
+      "height": 62,
+      "selected": false
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "animated": true,
+      "source": "start",
+      "sourceHandle": null,
+      "target": "api_webhook_agent_1780664458571",
+      "targetHandle": null,
+      "id": "reactflow__edge-start-api_webhook_agent_1780664458571"
+    },
+    {
+      "type": "smoothstep",
+      "animated": true,
+      "source": "api_webhook_agent_1780664458571",
+      "sourceHandle": null,
+      "target": "generic_llm_agent_1780664418579",
+      "targetHandle": null,
+      "id": "reactflow__edge-api_webhook_agent_1780664458571-generic_llm_agent_1780664418579"
+    }
+  ],
+  "entry_point": "guard_input",
+  "updated_at": "2026-06-05T13:01:17.094786",
+  "global_rules": {},
+  "llm_config": {},
+  "metadata": {},
+  "category": "default"
+}

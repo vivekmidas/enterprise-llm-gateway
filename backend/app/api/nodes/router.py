@@ -45,7 +45,8 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     # Update node fields based on incoming data
     for key, value in node_data.items():
         if hasattr(node, key):
-            setattr(node, key, value)
+            delattr(node, key)  # Remove existing attribute to avoid SQLAlchemy state issues
+        setattr(node, key, value)
 
     db.add(node)
     await db.commit()

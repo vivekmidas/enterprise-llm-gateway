@@ -28,6 +28,9 @@ class GenericLLMAgent(BaseNode):
         "systemPrompt": "You are a helpful assistant."
     }
 
+    async def init(self) -> None:
+        await super().init()
+
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(
             trace_id=inp.trace_id,

@@ -1,5 +1,6 @@
 [project]
 name = "backend"
+requires-python = ">=3.11"
 version = "0.2.3"
 description = "Enterprise-grade LLM Gateway with LangGraph workflows, observability, and guardrails."
 dependencies = [

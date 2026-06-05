@@ -33,7 +33,7 @@ async def startup_event():
     # Ensure tables are created before syncing
     await init_db()
     # Dynamic discovery now handles all registrations automatically
-    NodesRegistry.auto_discover()
+    await NodesRegistry.auto_discover()
     # Initial sync with DB to load persisted property overrides into the registry
    # await NodesRegistry.sync_with_db()
     logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))

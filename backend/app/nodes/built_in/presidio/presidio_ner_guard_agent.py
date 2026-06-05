@@ -23,6 +23,9 @@ class PresidioNERGuardAgent(BaseNode):
             status="success"
         )
 
+    async def init(self) -> None:
+        await super().init()
+
     async def execute(self, inp: NodeInput) -> NodeOutput:
         config: Dict[str, Any] = inp.config or {}
 

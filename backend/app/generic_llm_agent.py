@@ -9,6 +9,9 @@ class GenericLLMAgent(BaseNode):
     version: str = "1.0.0"
     category: str = "LLM"
 
+    async def init(self) -> None:
+        await super().init()
+
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start_ts = time.time()
         config = inp.config or {}

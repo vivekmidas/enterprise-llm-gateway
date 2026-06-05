@@ -22,6 +22,9 @@ class ProfanityGuardAgent(BaseNode):
         self._analyzer = AnalyzerEngine()
         self._register_patterns()
 
+    async def init(self) -> None:
+        await super().init()
+
     def _register_patterns(self):
         patterns = [
             Pattern(name="strong", regex=r"\b(fuck|shit|asshole|bitch|cunt|bastard)\b", score=0.95),

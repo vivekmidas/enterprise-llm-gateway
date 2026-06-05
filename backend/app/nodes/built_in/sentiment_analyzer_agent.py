@@ -7,6 +7,9 @@ class SentimentAnalyzerAgent(BaseNode ):
     description: str = "Analyzes sentiment of user message"
     version: str = "1.0.0"
 
+    async def init(self) -> None:
+        await super().init()
+        
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(
             trace_id=inp.trace_id,

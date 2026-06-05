@@ -16,7 +16,7 @@ class NodesRegistry:
     logger = structlog.get_logger("NodesRegistry")
 
     @classmethod
-    def register(cls, agent: BaseNode):
+    async def register(cls, agent: BaseNode):
         """Registers an instantiated node."""
         if not agent.name or agent.name == "base_node":
             cls.logger.debug("skip_registration_base_agent", agent_name=agent.name)
@@ -24,6 +24,7 @@ class NodesRegistry:
 
         # Enrich node with external properties (from JSON) if they exist
         cls._enrich_node_from_storage(agent)
+        await agent.init()
 
         cls._nodes[agent.name] = agent
         cls.logger.info("node_registered", name=agent.name, category=agent.category, version=agent.version)
@@ -68,7 +69,7 @@ class NodesRegistry:
         return list(cls._nodes.values())
 
     @classmethod
-    def auto_discover(cls):
+    async def auto_discover(cls):
         """
         Dynamically discovers nodes in built-in and plugin directories.
         """
@@ -81,7 +82,7 @@ class NodesRegistry:
             package_paths = list(getattr(built_in_pkg, "__path__", []))
             if not package_paths and hasattr(built_in_pkg, "__file__") and built_in_pkg.__file__:
                 package_paths = [os.path.dirname(built_in_pkg.__file__)]
-            cls._scan_package(package_paths, package_name)
+            await cls._scan_package(package_paths, package_name)
         except ImportError:
             cls.logger.warning("built_in_agents_package_not_found")
 
@@ -92,7 +93,7 @@ class NodesRegistry:
             if plugins_dir not in sys.path:
                 sys.path.append(plugins_dir)
             cls.logger.info("scanning_plugins_directory", path=plugins_dir)
-            cls._scan_package([plugins_dir], "")
+            await cls._scan_package([plugins_dir], "")
         else:
             cls.logger.debug("plugins_directory_not_found", path=plugins_dir)
 
@@ -167,32 +168,32 @@ class NodesRegistry:
             cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
 
     @classmethod
-    def _scan_package(cls, package_paths: List[str], prefix: str):
+    async def _scan_package(cls, package_paths: List[str], prefix: str):
         """Walks through a package and its sub-packages to find agents."""
         cls.logger.info("scanning_package", paths=package_paths, prefix=prefix)
 
         # 1. Load the root package itself first (to find agents in __init__.py)
         if prefix:
-            cls._load_module(prefix)
+            await cls._load_module(prefix)
 
         # 2. Recursively find and load all sub-modules
         for _, module_name, ispkg in pkgutil.walk_packages(package_paths, prefix=f"{prefix}." if prefix else ""):
             cls.logger.debug("found_module", module=module_name, is_package=ispkg)
             if ispkg:
                 cls.logger.info("scanning_directory", module=module_name)
-            cls._load_module(module_name)
+            await cls._load_module(module_name)
 
     @classmethod
-    def _scan_directory(cls, directory: str):
+    async def _scan_directory(cls, directory: str):
         """Scans a flat directory for python files containing agents."""
         cls.logger.debug("scanning_directory", directory=directory)
         for filename in os.listdir(directory):
             if filename.endswith(".py") and not filename.startswith("__"):
                 module_name = filename[:-3]
-                cls._load_module(module_name)
+                await cls._load_module(module_name)
 
     @classmethod
-    def _load_module(cls, module_name: str):
+    async def _load_module(cls, module_name: str):
         """Loads a module and registers any BaseAgent subclasses found within."""
         cls.logger.debug("loading_module", module=module_name)
         try:
@@ -206,7 +207,7 @@ class NodesRegistry:
                     cls.logger.info("found_node_class", class_name=obj.__name__, module=module_name)
                     try:
                         instance = obj()
-                        cls.register(instance)
+                        await cls.register(instance)
                     except Exception as e:
                         cls.logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
         except Exception as e:

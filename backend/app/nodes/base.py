@@ -66,6 +66,33 @@ class BaseNode(BaseModel, abc.ABC):
         """Returns the property schema definition for the UI."""
         return getattr(self, "propertySchema", self.property_schema)
 
+    async def _get_db_properties(self) -> Dict[str, Any]:
+        """Fetches properties for this node type from the global catalog in the DB."""
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.db_models import NodeDB
+            from sqlalchemy import select
+
+            async with AsyncSessionLocal() as session:
+                stmt = select(NodeDB).where(NodeDB.name == self.name)
+                result = await session.execute(stmt)
+                db_node = result.scalar_one_or_none()
+                if db_node and db_node.properties:
+                    return db_node.properties
+        except Exception as e:
+            self.logger.warning("db_properties_fetch_failed", error=str(e))
+        return {}
+
+    @abc.abstractmethod
+    async def init(self) -> None:
+        """
+        Initializes the node. Default implementation loads properties from DB.
+        Should be called during registration/discovery.
+        """
+        db_props = await self._get_db_properties()
+        if db_props:
+            self.properties.update(db_props)
+
     @abc.abstractmethod
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
@@ -89,6 +116,9 @@ class BaseNode(BaseModel, abc.ABC):
         self.logger.info("node_run_started", trace_id=inp.trace_id, input=inp.model_dump())
         start_ts = time.time()
         try:
+            # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
+            inp.config = {**self.properties, **inp.config}
+
             # 1. Validation hook
             validation_output = await self.validate_input(inp)
             if validation_output:
