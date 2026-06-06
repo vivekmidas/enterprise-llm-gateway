@@ -13,17 +13,18 @@ logger = logging.getLogger(__name__)
 def create_node_handler(node: NodeConfig) -> Callable:
     """Factory - returns async agent node function"""
     ui_data = getattr(node, "data", {}) if hasattr(node, "data") else {}
-    
-    # Determine node type (handling UI vs Engine naming)
-    node_type = node.type.lower()
+
+    # Extract config from Engine format or UI properties format
+    config = node.config or ui_data.get("properties", {})
+
+    # Determine node type. Priority: config.node_type > node.type
+    node_type = str(config.get("node_type") or node.type).lower()
+
     if node_type == "custom":
         group = ui_data.get("group", "").lower()
         if group == "start": node_type = "context_setter"
         elif group == "trigger": node_type = "guard"
         else: node_type = "custom_agent"
-
-    # Extract config from Engine format or UI properties format
-    config = node.config or ui_data.get("properties", {})
 
     handlers = {
         "guard": create_input_guard_node,

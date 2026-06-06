@@ -1,19 +1,15 @@
 import json
-import os
 import structlog
 from opentelemetry import trace
 from typing import Optional
 from datetime import datetime
-
 from fastapi import HTTPException
-
-# Correct import - this was likely missing
 from app.models.workflow import WorkflowDefinition
 from app.core.cache import workflow_cache
-
-# Directory for filesystem storage (can be replaced with DB later)
-AGENTS_DIR = "./data/agents"
-os.makedirs(AGENTS_DIR, exist_ok=True)
+from app.core.database import AsyncSessionLocal
+from app.models.db_models import WorkflowDB, WorkflowNodeDB
+from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -21,7 +17,7 @@ tracer = trace.get_tracer(__name__)
 
 async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
     """
-    Save workflow definition to filesystem (JSON) + invalidate Redis cache.
+    Save workflow definition to database + invalidate Redis cache.
     """
     with tracer.start_as_current_span("save_agent_to_store") as span:
         span.set_attribute("agent_id", definition.id)
@@ -31,31 +27,47 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
         if not definition.id:
             raise HTTPException(status_code=400, detail="Agent id is required")
 
-        # Update timestamp
-        definition.updated_at = datetime.utcnow()
-
-        # Save as JSON
-        file_path = f"{AGENTS_DIR}/{definition.id}_v{definition.version}.json"
-        logger.info("workflow_file_path", file_path=file_path)
-        
         try:
-            data = definition.model_dump(mode="json", exclude_none=True)
-            
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    # 1. Update/Insert Workflow Metadata
+                    stmt = select(WorkflowDB).where(WorkflowDB.id == definition.id)
+                    result = await session.execute(stmt)
+                    db_workflow = result.scalar_one_or_none()
+                    
+                    if not db_workflow:
+                        db_workflow = WorkflowDB(id=definition.id)
+                        session.add(db_workflow)
+                    
+                    db_workflow.name = definition.name
+                    db_workflow.description = definition.description or ""
+                    db_workflow.version = int(definition.version) if str(definition.version).isdigit() else 1
+                    db_workflow.is_enabled = definition.is_enabled
+                    db_workflow.category = definition.category or "default"
+                    db_workflow.definition = definition.model_dump_json()
+                    db_workflow.updated_at = datetime.utcnow().isoformat()
+                    
+                    # 2. Sync Node-to-Workflow associations
+                    # Clear existing associations for this workflow ID
+                    await session.execute(delete(WorkflowNodeDB).where(WorkflowNodeDB.workflow_id == definition.id))
+                    
+                    # Map nodes from the definition into the association table
+                    now_str = db_workflow.updated_at
+                    for node in (definition.nodes or []):
+                        n_dict = node if isinstance(node, dict) else node.model_dump()
+                        node_data = n_dict.get("data", {})
+                        
+                        session.add(WorkflowNodeDB(
+                            workflow_id=definition.id,
+                            agent_node_id=n_dict.get("id"),
+                            agent_name=node_data.get("name") or n_dict.get("name"),
+                            updated_at=now_str
+                        ))
 
             # Critical: Invalidate Redis compiled graph cache
             await workflow_cache.invalidate_agent(definition.id)
-
-            logger.info("workflow_saved_to_store", workflow_id=definition.id, version=definition.version)
-
-            return {
-                "id": definition.id,
-                "version": definition.version,
-                "status": "saved",
-                "file": file_path,
-                "updated_at": definition.updated_at.isoformat()
-            }
+            logger.info("workflow_saved_to_db", workflow_id=definition.id, version=definition.version)
+            return {"id": definition.id, "version": definition.version, "status": "saved"}
             
         except Exception as e:
             logger.error("failed_to_save_agent", agent_id=definition.id, error=str(e))
@@ -64,30 +76,22 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
 
 async def load_workflow_from_store(agent_id: str, version: Optional[str] = None) -> WorkflowDefinition:
     """
-    Load workflow definition from filesystem and validate it.
+    Load workflow definition from database and validate it.
     """
     with tracer.start_as_current_span("load_workflow_from_store") as span:
         span.set_attribute("agent_id", agent_id)
         span.set_attribute("version", version or "1.0")
 
-        if version is None:
-            version = "1"  # Align with default versioning
-
-        file_path = f"{AGENTS_DIR}/{agent_id}_v{version}.json"
-
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            # Coerce integer versions to strings to satisfy Pydantic
-            if "version" in data and not isinstance(data["version"], str):
-                data["version"] = str(data["version"])
-            
-            # Strict validation using Pydantic
-            definition = WorkflowDefinition.model_validate(data)
-            logger.info("workflow_loaded_from_store", agent_id=agent_id, version=version)
-            return definition
-
+            async with AsyncSessionLocal() as session:
+                stmt = select(WorkflowDB).where(WorkflowDB.id == agent_id)
+                result = await session.execute(stmt)
+                db_workflow = result.scalar_one_or_none()
+                
+                if not db_workflow:
+                    raise FileNotFoundError
+                
+                return WorkflowDefinition.model_validate_json(db_workflow.definition)
         except FileNotFoundError:
             logger.warning("agent_not_found", agent_id=agent_id, version=version)
             raise HTTPException(
@@ -106,15 +110,10 @@ async def list_workflows_from_store() -> list:
     """List all available workflows."""
     with tracer.start_as_current_span("list_workflows_from_store"):
         try:
-            workflows = []
-            for filename in os.listdir(AGENTS_DIR):
-                if filename.endswith(".json"):
-                    try:
-                        with open(f"{AGENTS_DIR}/{filename}", "r", encoding="utf-8") as f:
-                            workflows.append(json.load(f))
-                    except:
-                        continue
-            return workflows
+            async with AsyncSessionLocal() as session:
+                stmt = select(WorkflowDB)
+                result = await session.execute(stmt)
+                return [json.loads(w.definition) for w in result.scalars().all()]
         except Exception as e:
             logger.error("failed_to_list_agents", error=str(e))
             return []
@@ -126,15 +125,14 @@ async def delete_workflow_from_store(workflow_id: str, version: Optional[str] = 
         span.set_attribute("workflow_id", workflow_id)
         span.set_attribute("version", version or "1.0")
 
-        if version is None:
-            version = "1.0"
-
-        file_path = f"{AGENTS_DIR}/{workflow_id}_v{version}.json"
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            await workflow_cache.invalidate_agent(workflow_id)
-            logger.info("workflow_deleted_from_store", workflow_id=workflow_id, version=version)
-            return True
-        
-        logger.warning("delete_workflow_failed_not_found", workflow_id=workflow_id, version=version)
-        return False
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await session.execute(delete(WorkflowNodeDB).where(WorkflowNodeDB.workflow_id == workflow_id))
+                    await session.execute(delete(WorkflowDB).where(WorkflowDB.id == workflow_id))
+                
+                await workflow_cache.invalidate_agent(workflow_id)
+                return True
+        except Exception as e:
+            logger.error("failed_to_delete_workflow", workflow_id=workflow_id, error=str(e))
+            return False

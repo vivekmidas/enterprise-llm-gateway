@@ -2,7 +2,7 @@ import abc
 import time
 from functools import cached_property
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 import structlog
 
 class NodeInput(BaseModel):
@@ -35,6 +35,7 @@ class BaseNode(BaseModel, abc.ABC):
     description: str = "Standard node base"
     version: str = "1.0.0"
     category: str = "Custom"       # Internal functional category
+    node_type: str = "default"     # trigger, tool, connector, or default
     group: str = "Custom"          # UI grouping (matches frontend 'group')
 
     # Visual properties for the UI (aligned with frontend BaseNodeData)
@@ -168,3 +169,49 @@ class BaseNode(BaseModel, abc.ABC):
                 end_time=end_ts,
                 latency_ms=round((end_ts - start_ts) * 1000, 2)
             )
+
+class TriggerNode(BaseNode, abc.ABC):
+    """
+    Abstract base for nodes that initiate workflows.
+    Triggers have 0 inputs in the UI but are responsible for 
+    starting the execution engine.
+    """
+    node_type: str = "TRIGGER" 
+
+    async def init(self) -> None:
+        """Triggers should still load their properties from the database."""
+        await super().init()
+    
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        """Default trigger execution just passes the input payload through."""
+        return NodeOutput(trace_id=inp.trace_id, content=inp.content)
+    
+    async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
+        # Triggers can choose to implement validation if needed, but by default they don't block execution
+        return None
+    
+    # Internal registry to map specific node instances to their parent workflow configs
+    _workflows: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
+
+    def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> None:
+        """
+        Activates a specific workflow instance for this trigger.
+        When the trigger fires for this specific agent_node_id, it uses this config
+        to build and execute the graph.
+        """
+        self._workflows[agent_node_id] = workflow_config
+        self.logger.info("workflow_registered_to_trigger", 
+                         agent_node_id=agent_node_id, 
+                         workflow_id=workflow_config.get("id"))
+
+    async def execute_dynamic_agent(self, workflow_config: Dict[str, Any], payload: Any, trace_id: Optional[str] = None):
+        """
+        Unified implementation for all triggers to initiate workflow execution.
+        This method builds the langgraph flow via the executor and starts it.
+        """
+        from app.workflows.executor import execute_dynamic_agent
+        # Generate a trace ID if not provided, prefixed by node name for observability
+        t_id = trace_id or f"{self.name}-{int(time.time())}"
+        
+        # Trigger the workflow execution via the central executor logic
+        return await execute_dynamic_agent(workflow_config, str(payload), t_id)

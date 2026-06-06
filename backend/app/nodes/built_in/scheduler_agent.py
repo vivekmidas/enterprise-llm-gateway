@@ -2,9 +2,9 @@ import asyncio
 import time
 import subprocess
 from typing import Any, Dict, List
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import TriggerNode, NodeInput, NodeOutput
 
-class SchedulerAgent(BaseNode):
+class SchedulerAgent(TriggerNode):
     """
     Agent that schedules a background task to run a command or another agent
     at a specific interval.
@@ -13,6 +13,7 @@ class SchedulerAgent(BaseNode):
     description:str = "Runs a command or triggers an agent recurringly in the background"
     version:str = "1.0.0"
     category:str = "Custom"
+    node_type: str = "trigger"
     property_schema: List[Dict[str, Any]] = [
         {"key": "interval", "label": "Interval", "type": "number"},
         {"key": "unit", "label": "Unit", "type": "choice", "options": ["seconds", "minutes"]},
@@ -35,74 +36,54 @@ class SchedulerAgent(BaseNode):
 
     async def init(self) -> None:
         await super().init()
-        
-    async def execute(self, inp: NodeInput) -> NodeOutput:
-        config = inp.config or {}
-        interval = float(config.get("interval", 60))
-        unit = config.get("unit", "seconds")
-        command = config.get("command")
-        target_agent = config.get("targetAgent")
-        
-        # Calculate delay in seconds
+        self._tasks: Dict[str, asyncio.Task] = {}
+
+    def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
+        """
+        Activates and starts a background timer for a specific scheduler instance.
+        """
+        super().activate(agent_node_id, workflow_config)
+
+        # Get properties for this specific instance to set the timer
+        node_data = next((n for n in workflow_config.get("nodes", []) if n["id"] == agent_node_id), None)
+        if not node_data:
+            return
+
+        props = node_data.get("properties") or node_data.get("config") or {}
+        interval = float(props.get("interval", 60))
+        unit = props.get("unit", "seconds")
         delay = interval if unit == "seconds" else interval * 60
-        
-        # Fire and forget the scheduler loop in the background
-        asyncio.create_task(self._scheduler_loop(delay, command, target_agent, inp))
 
-        msg = f"Scheduler initiated: {interval} {unit} interval."
-        if command:
-            msg += f" Mode: command ('{command}')"
-        if target_agent:
-            msg += f" Mode: agent trigger ('{target_agent}')"
+        # Clear existing task if updating
+        if agent_node_id in self._tasks:
+            self._tasks[agent_node_id].cancel()
 
-        return NodeOutput(
-            trace_id=inp.trace_id,
-            content=msg,
-            status="success",
-            metadata={
-                "interval": interval,
-                "unit": unit,
-                "target_command": command,
-                "target_agent": target_agent
-            }
+        # Create a dedicated background loop for this instance
+        self._tasks[agent_node_id] = asyncio.create_task(
+            self._instance_scheduler_loop(agent_node_id, delay, workflow_config)
         )
+        self.logger.info("scheduler_instance_activated", agent_node_id=agent_node_id, delay=delay)
 
-    async def _scheduler_loop(self, delay: float, command: str, target_agent: str, original_input: NodeInput):
-        # Deferred import to avoid circular dependency during registry auto-discovery
-        from app.nodes.registry import NodesRegistry
-        
-        log = self.logger.bind(
-            scheduler_trace_id=original_input.trace_id, 
-            delay=delay, 
-            command=command, 
-            target_agent=target_agent
-        )
-        log.info("scheduler_background_loop_started")
-        
+    async def _instance_scheduler_loop(self, agent_node_id: str, delay: float, workflow_config: Dict[str, Any]):
+        """Background loop dedicated to a specific workflow instance."""
         while True:
             await asyncio.sleep(delay)
             try:
-                if command:
-                    log.info("scheduler_executing_command")
-                    # Run shell command in a thread pool to avoid blocking the event loop
-                    await asyncio.to_thread(
-                        subprocess.run, 
-                        command, 
-                        shell=True, 
-                        capture_output=True, 
-                        text=True
-                    )
-
-                if target_agent:
-                    agent = NodesRegistry.get_node(target_agent)
-                    if agent:
-                        log.info("scheduler_triggering_agent")
-                        # Create a fresh input for the periodic execution
-                        execution_input = original_input.model_copy()
-                        execution_input.trace_id = f"{original_input.trace_id}-auto-{int(time.time())}"
-                        await agent.run(execution_input)
-                    else:
-                        log.warning("scheduler_target_agent_not_found")
-            
+                self.logger.info("scheduler_firing", agent_node_id=agent_node_id)
+                await self.execute_dynamic_agent(
+                    workflow_config=workflow_config,
+                    payload={"source": "scheduler", "fired_at": time.time()}
+                )
             except Exception as e:
-                log.error("scheduler_execution_failed", error=str(e))
+                self.logger.error("scheduler_execution_failed", agent_node_id=agent_node_id, error=str(e))
+
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        """
+        As a trigger node, when this is called inside the graph, 
+        it simply passes the triggering payload forward.
+        """
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            content=inp.content,
+            status="success"
+        )

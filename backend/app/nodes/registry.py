@@ -69,11 +69,11 @@ class NodesRegistry:
         return list(cls._nodes.values())
 
     @classmethod
-    async def auto_discover(cls):
+    async def node_auto_discover(cls):
         """
-        Dynamically discovers nodes in built-in and plugin directories.
+        Dynamically discovers node definitions in built-in and plugin directories.
         """
-        cls.logger.info("auto_discover_started")
+        cls.logger.info("node_auto_discover_started")
         # 1. Discover built-in nodes
         try:
             import app.nodes.built_in as built_in_pkg
@@ -99,10 +99,13 @@ class NodesRegistry:
 
         # Log the "output" of the discovery process
         cls.logger.info(
-            "auto_discover_completed", 
+            "node_auto_discover_completed", 
             nodes_count=len(cls._nodes), 
             registered_nodes=list(cls._nodes.keys())
         )
+
+        # Sync definitions with DB to load global properties/schema overrides
+        await cls.sync_with_db()
 
     @classmethod
     async def sync_with_db(cls):

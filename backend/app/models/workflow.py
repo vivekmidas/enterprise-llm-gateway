@@ -20,6 +20,8 @@ class WorkflowDefinition(BaseModel):
     model_config = ConfigDict(extra="allow")
     id: str
     version: str = "1.0"
+    is_enabled: bool = True
+    description: Optional[str] = None
     name: str
     nodes: List[NodeConfig]
     edges: List[Any]

@@ -10,6 +10,8 @@ from app.api.observability.router import router as obs_router
 from app.api.categories.router import router as categories_router
 from app.nodes.registry import NodesRegistry
 from app.core.database import init_db
+from app.workflows.service import workflow_auto_discover
+
 
 load_dotenv()
 
@@ -33,7 +35,8 @@ async def startup_event():
     # Ensure tables are created before syncing
     await init_db()
     # Dynamic discovery now handles all registrations automatically
-    await NodesRegistry.auto_discover()
+    await NodesRegistry.node_auto_discover()
+    await workflow_auto_discover()
     # Initial sync with DB to load persisted property overrides into the registry
    # await NodesRegistry.sync_with_db()
     logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))

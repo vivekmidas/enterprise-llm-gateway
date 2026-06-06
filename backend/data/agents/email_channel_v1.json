@@ -4,157 +4,13 @@
   "name": "Email Channel",
   "nodes": [
     {
-      "id": "start",
+      "id": "context_setter_1780742683988",
       "type": "custom",
       "config": {},
       "next": [],
       "position": {
-        "x": 115,
-        "y": 124
-      },
-      "data": {
-        "label": "Start",
-        "name": "Start",
-        "description": "Entry point for every workflow run",
-        "group": "Start",
-        "category": "Start",
-        "icon": "play-circle",
-        "propertySchema": [
-          {
-            "key": "enabled",
-            "label": "Enabled",
-            "type": "boolean"
-          }
-        ],
-        "properties": {
-          "enabled": true
-        }
-      },
-      "width": 140,
-      "height": 59,
-      "selected": false,
-      "dragging": false,
-      "positionAbsolute": {
-        "x": 115,
-        "y": 124
-      }
-    },
-    {
-      "id": "generic_llm_agent_1780738546562",
-      "type": "custom",
-      "config": {},
-      "next": [],
-      "position": {
-        "x": 333,
-        "y": 118
-      },
-      "data": {
-        "name": "generic_llm_agent",
-        "label": "generic_llm_agent",
-        "description": "Calls an LLM via specific IP and Port using OpenAI-compatible API",
-        "category": "2",
-        "icon": "bot",
-        "version": "1.0.0",
-        "group": null,
-        "color": "#7C3AED",
-        "sub_label": null,
-        "properties": {
-          "ip": "127.0.0.1",
-          "port": "8000",
-          "model": "default-model",
-          "temperature": 0.7,
-          "systemPrompt": "You are a helpful assistant."
-        },
-        "id": 3,
-        "badge": "Node",
-        "property_schema": [
-          {
-            "key": "ip",
-            "label": "IP Address",
-            "type": "string",
-            "placeholder": "127.0.0.1"
-          },
-          {
-            "key": "port",
-            "label": "Port",
-            "type": "string",
-            "placeholder": "8000"
-          },
-          {
-            "key": "model",
-            "label": "Model Name",
-            "type": "string",
-            "placeholder": "default-model"
-          },
-          {
-            "key": "temperature",
-            "label": "Temperature",
-            "type": "number",
-            "placeholder": "0.7"
-          },
-          {
-            "key": "systemPrompt",
-            "label": "System Prompt",
-            "type": "textarea"
-          }
-        ],
-        "propertySchema": [
-          {
-            "key": "ip",
-            "label": "IP Address",
-            "type": "string",
-            "placeholder": "127.0.0.1"
-          },
-          {
-            "key": "port",
-            "label": "Port",
-            "type": "string",
-            "placeholder": "8000"
-          },
-          {
-            "key": "model",
-            "label": "Model Name",
-            "type": "string",
-            "placeholder": "default-model"
-          },
-          {
-            "key": "temperature",
-            "label": "Temperature",
-            "type": "number",
-            "placeholder": "0.7"
-          },
-          {
-            "key": "systemPrompt",
-            "label": "System Prompt",
-            "type": "textarea"
-          }
-        ],
-        "defaultProperties": {
-          "ip": "127.0.0.1",
-          "port": "8000",
-          "model": "default-model",
-          "temperature": 0.7,
-          "systemPrompt": "You are a helpful assistant."
-        },
-        "executionStatus": "idle"
-      },
-      "width": 190,
-      "height": 62,
-      "selected": false,
-      "dragging": false,
-      "positionAbsolute": {
-        "x": 333,
-        "y": 118
-      }
-    },
-    {
-      "id": "context_setter_1780738772238",
-      "type": "custom",
-      "config": {},
-      "next": [],
-      "position": {
-        "x": 113,
-        "y": 291
+        "x": 116,
+        "y": 242
       },
       "data": {
         "name": "context_setter",
@@ -165,13 +21,13 @@
         "version": "1.0.0",
         "group": null,
         "color": "#7C3000",
-        "sub_label": null,
+        "sub_label": "Call any LLM",
         "properties": {
           "new property": "222",
           "test2411": "122"
         },
         "id": 1,
-        "badge": "Node",
+        "badge": "Trigger",
         "property_schema": [
           {
             "key": "test2411",
@@ -203,84 +59,6 @@
         "defaultProperties": {
           "new property": "222",
           "test2411": "122"
-        },
-        "executionStatus": "idle"
-      },
-      "width": 163,
-      "height": 62,
-      "selected": true,
-      "dragging": false
-    },
-    {
-      "id": "output_guard_1780738781251",
-      "type": "custom",
-      "config": {},
-      "next": [],
-      "position": {
-        "x": 111,
-        "y": 380
-      },
-      "data": {
-        "name": "output_guard",
-        "label": "output_guard",
-        "description": "Final safety check - PII leak, MAD, policy compliance",
-        "category": "1",
-        "icon": "bot",
-        "version": "1.0.0",
-        "group": null,
-        "color": "#7C3AED",
-        "sub_label": null,
-        "properties": {
-          "checkPII": true,
-          "checkMAD": true,
-          "checkPolicy": false
-        },
-        "id": 4,
-        "badge": "Node",
-        "property_schema": [
-          {
-            "key": "checkPII",
-            "type": "boolean",
-            "label": "Check for PII leaks",
-            "default": true
-          },
-          {
-            "key": "checkMAD",
-            "type": "boolean",
-            "label": "Check for MAD (Misogyny, Ableism, Discrimination)",
-            "default": true
-          },
-          {
-            "key": "checkPolicy",
-            "type": "boolean",
-            "label": "Check for custom policy violations",
-            "default": false
-          }
-        ],
-        "propertySchema": [
-          {
-            "key": "checkPII",
-            "type": "boolean",
-            "label": "Check for PII leaks",
-            "default": true
-          },
-          {
-            "key": "checkMAD",
-            "type": "boolean",
-            "label": "Check for MAD (Misogyny, Ableism, Discrimination)",
-            "default": true
-          },
-          {
-            "key": "checkPolicy",
-            "type": "boolean",
-            "label": "Check for custom policy violations",
-            "default": false
-          }
-        ],
-        "defaultProperties": {
-          "checkPII": true,
-          "checkMAD": true,
-          "checkPolicy": false
         },
         "executionStatus": "idle"
       }
@@ -288,7 +66,7 @@
   ],
   "edges": [],
   "entry_point": "guard_input",
-  "updated_at": "2026-06-06T09:39:41.260058",
+  "updated_at": "2026-06-06T10:44:44.016974",
   "global_rules": {},
   "llm_config": {},
   "metadata": {},

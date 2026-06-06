@@ -51,8 +51,8 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
                     metadata=state.metadata
                 )
 
-                # Call the standardized execute method instead of run
-                result = await agent.execute(agent_input)
+                # Call run() to leverage the standardized wrapper (logging, validation, timing)
+                result = await agent.run(agent_input)
 
                 logger.info("agent_execution_finished",
                              agent=agent_name,
@@ -141,33 +141,46 @@ async def execute_dynamic_agent(
         """Standard router logic for conditional branching."""
         async def router(state: AgentState) -> str:
             decision = "failure" if state.violations else "success"
-            next_node = mapping.get(decision) or list(mapping.values())[0]
-            log.info("agent_branching_decision", decision=decision, next_node=next_node, trace_id=state.trace_id)
+            log.info("agent_branching_decision", decision=decision, trace_id=state.trace_id)
             return decision
         return router
 
     # Add nodes
     for node in agent_config.get("nodes", []):
-        node_id = node["id"]
-        node_type = node.get("type")
+        agent_node_id = node["id"]
+        node_data = node.get("data", {})
+        node_props = node_data.get("properties") or node.get("config") or node_data.get("properties") or {}
+        
+        # Resolve functional type. Priority: properties.node_type > data.nodeType > top-level type
+        node_type = (
+            node_data.get("node_type") 
+        )
 
-        if node_type == "agent":
-            agent = NodesRegistry.get_nodes(node.get("name"))
+        node_type = node_type.upper()
+
+        # Handle 'agent' type (legacy) or nodes that are resolved from the registry
+        if node_type  in {"AGENT", "TRIGGER", "TOOL","NODE", "CONNECTOR", "CUSTOM_AGENT"}:
+            agent_name = node_data.get("name") or node.get("name")
+            agent = NodesRegistry.get_node(agent_name)
             if not agent:
-                raise ValueError(f"Unknown agent: {node.get('name')}")
-            log.debug("adding_agent_node", node_id=node_id, agent_name=agent.name)
-            node_config = node.get("properties") or node.get("config") or {}
-            graph.add_node(node_id, create_agent_node(agent, node_config))
+                raise ValueError(f"Unknown agent: {agent_name}")
+            
+            # Override node_type if the registry has a more specific one
+            effective_type = getattr(agent, "node_type", node_type)
+            
+            log.debug("adding_agent_node", agent_node_id=agent_node_id, agent_name=agent.name)
+            node_config = node_props or {}
+            graph.add_node(agent_node_id, create_agent_node(agent, node_config))
             agents_executed.append(agent.name)
 
         elif node_type == "llm":
-            log.debug("adding_llm_node", node_id=node_id)
-            graph.add_node(node_id, llm_node)
+            log.debug("adding_llm_node", agent_node_id=agent_node_id)
+            graph.add_node(agent_node_id, llm_node)
             agents_executed.append("main_llm")
 
         elif node_type in {"trigger", "start", "end", "condition"}:
-            graph.add_node(node_id, passthrough_node)
-            log.debug("adding_system_node", node_id=node_id, type=node_type)
+            graph.add_node(agent_node_id, passthrough_node)
+            log.debug("adding_system_node", agent_node_id=agent_node_id, type=node_type)
 
         else:
             raise ValueError(f"Unsupported node type: {node_type}")
@@ -194,16 +207,37 @@ async def execute_dynamic_agent(
             log.debug("adding_conditional_edges", source=source, paths=mapping)
             graph.add_conditional_edges(source, create_condition_router(mapping), mapping)
         else:
-            # Default to standard edge (takes the "default" or first one)
-            target = mapping.get("default") or list(mapping.values())[0]
-            log.debug("adding_standard_edge", source=source, target=target)
-            graph.add_edge(source, target)
+            # Support multiple outgoing edges (parallel execution)
+            for cond_name, target in mapping.items():
+                log.debug("adding_standard_edge", source=source, target=target, condition=cond_name)
+                graph.add_edge(source, target)
 
     # Entry / Exit
     nodes = agent_config.get("nodes", [])
+    
+    # Find the trigger node to use as entry point, else fallback to first node
+    entry_node_id = None
+    for node in nodes:
+        node_data = node.get("data", {})
+        node_props = node.get("properties") or node.get("config") or node_data.get("properties") or {}
+
+        n_type = str(node.get("type") or "").lower()
+        n_cat = str(node_data.get("category") or node_data.get("group") or "").lower()
+        # Check properties first for the functional node type to identify triggers
+        n_node_type = str(node_props.get("node_type") or node_data.get("nodeType") or "").lower()
+
+        # Prioritize node_type from properties for entry point detection
+        if n_node_type == "trigger" or n_type == "trigger" or n_cat in {"trigger", "start"}:
+            entry_node_id = node["id"]
+            break
+    
     if nodes:
-        graph.set_entry_point(nodes[0]["id"])
-        graph.add_edge(nodes[-1]["id"], END)
+        graph.set_entry_point(entry_node_id or nodes[0]["id"])
+        
+        # Automatically link leaf nodes to END
+        for node in nodes:
+            if node["id"] not in source_edges:
+                graph.add_edge(node["id"], END)
 
     compiled = graph.compile()
     
