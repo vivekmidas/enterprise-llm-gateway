@@ -16,7 +16,6 @@ router = LLMRouter()
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
-
 def message_content_to_text(content: object) -> str:
     if isinstance(content, str):
         return content

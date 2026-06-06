@@ -25,23 +25,6 @@ async def save_workflow(definition: WorkflowDefinition, db_session=None, client_
     logger.info("workflow_save_initiated", workflow_id=definition.id, client_id=client_id)
     definition.updated_at = datetime.utcnow()  # Update the timestamp
 
-    # Update global node catalog defaults based on properties saved in the workflow.
-    # This fulfills the requirement to save properties with node name (not default)
-    logger.info("syncing_workflow_node_configs_to_catalog", node_count=len(definition.nodes or []))
-    async with AsyncSessionLocal() as session:
-        async with session.begin():
-            for node_config in (definition.nodes or []):
-                # Workflow nodes carry the catalog type name in the 'type' field
-                node_type = getattr(node_config, 'type', None)
-                if node_type and hasattr(node_config, 'properties') and node_config.properties:
-                    # In SaaS mode, we would also filter by client_id/tenant_id here
-                    await session.execute(
-                        update(NodeDB)
-                        .where(NodeDB.name == node_type)
-                        .values(properties=node_config.properties)
-                    )
-                    logger.debug("node_catalog_synced", node_type=node_type, client_id=client_id)
-
     result = await save_workflow_to_store(definition)
     logger.info("workflow_save_completed", workflow_id=definition.id, client_id=client_id)
     return result
