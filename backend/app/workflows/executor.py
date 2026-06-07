@@ -3,9 +3,9 @@ import json
 import time
 import structlog
 from opentelemetry import trace
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Set
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from app.utils.state import WorkflowState as AgentState
 from app.nodes.base import NodeInput, NodeOutput
 from app.nodes.registry import NodesRegistry
@@ -33,15 +33,47 @@ def message_content_to_text(content: object) -> str:
 
     return str(content)
 
+def validate_no_cycles(nodes: List[Dict], edges: List[Dict]):
+    """Performs DFS to detect cycles in the graph definition."""
+    adj = {}
+    for edge in edges:
+        src = edge.get("source") or edge.get("from_node")
+        tgt = edge.get("target") or edge.get("to_node")
+        if src and tgt:
+            adj.setdefault(src, []).append(tgt)
+    
+    visited, rec_stack = set(), set()
+    def has_cycle(v):
+        visited.add(v)
+        rec_stack.add(v)
+        for neighbor in adj.get(v, []):
+            if neighbor not in visited:
+                if has_cycle(neighbor): return True
+            elif neighbor in rec_stack: return True
+        rec_stack.remove(v)
+        return False
 
-def create_agent_node(agent, node_config: Dict[str, Any] = None):
-    async def agent_node(state: AgentState) -> AgentState:
-        with tracer.start_as_current_span(f"agent:{getattr(agent, 'name', 'unknown')}") as span:
-            span.set_attribute("agent.name", getattr(agent, "name", "unknown"))
+    for node in nodes:
+        node_id = node["id"]
+        if node_id not in visited:
+            if has_cycle(node_id):
+                raise ValueError(f"Infinite loop detected involving node: {node_id}")
+
+def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = "unknown"):
+    """
+    Standardized node executor. 
+    Agnostic of the specific agent logic, relying on the BaseNode interface.
+    """
+    async def agent_node(state: AgentState) -> Dict[str, Any]:
+        agent_name = getattr(agent, "name", "unknown")
+        
+        with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
+            span.set_attribute("agent.name", agent_name)
+            span.set_attribute("node.id", node_id)
             span.set_attribute("trace_id", state.trace_id)
+            
             try:
-                agent_name = getattr(agent, "name", "unknown")
-                logger.info("agent_execution_started", agent=agent_name, trace_id=state.trace_id)
+                logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
 
                 agent_input = NodeInput(
                     trace_id=state.trace_id,
@@ -53,63 +85,42 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None):
 
                 # Call run() to leverage the standardized wrapper (logging, validation, timing)
                 result = await agent.run(agent_input)
-
-                logger.info("agent_execution_finished",
-                             agent=agent_name,
-                             status=result.status,
-                             violations_count=len(result.violations),
-                             latency_ms=result.latency_ms)
-
-                new_state = state.model_copy()
-                new_state.content = result.content
-                new_state.masked_content = result.content
-                new_state.metadata.update(result.metadata or {})
                 
-                if result.violations:
-                    new_state.violations.extend(result.violations)
-                
+                # Node Timings and Observability
+                node_trace = {
+                    "node_id": node_id,
+                    "agent_name": agent_name,
+                    "status": result.status,
+                    "latency_ms": result.latency_ms,
+                    "error": result.error_message
+                }
+
+                logger.info("node_execution_finished", **node_trace)
+
+                # Return ONLY the fields that changed. Returning the full state object (model_copy)
+                # causes conflicts on unchanged keys (like trace_id) during parallel execution steps.
+                updates = {
+                    "content": result.content,
+                    "masked_content": result.content,
+                }
+
+                # Return only what changed. Metadata and violations should be merged by LangGraph reducers.
+                # We stop copying the existing state keys here to avoid parallel update collisions.
+                updates["metadata"] = {
+                    "node_history": {node_id: node_trace},
+                    **(result.metadata or {})
+                }
+
+                updates["violations"] = list(result.violations or [])
                 if result.status == "failure":
-                    logger.warning("agent_execution_status_failure", agent=getattr(agent, 'name'), error=result.error)
+                    updates["violations"].append(f"node_failure:{node_id}")
 
-                return new_state
+                return updates
             except Exception as e:
                 logger.error("agent_execution_failed", agent=getattr(agent, 'name', 'unknown'), error=str(e))
-                new_state = state.model_copy()
-                new_state.violations.append(f"agent_error:{getattr(agent, 'name', 'unknown')}")
-                return new_state
+            return {"violations": [f"agent_error:{getattr(agent, 'name', 'unknown')}"]}
 
     return agent_node
-
-
-async def llm_node(state: AgentState) -> AgentState:
-    with tracer.start_as_current_span("llm_node") as span:
-        span.set_attribute("llm.provider", router.provider)
-        logger.info("llm_call_started", provider=router.provider, trace_id=state.trace_id)
-        try:
-            llm = await router.get_llm(temperature=0.7, max_tokens=1024)
-            prompt = state.masked_content or state.content
-
-            response = await llm.ainvoke(prompt)
-            logger.info("llm_call_finished", trace_id=state.trace_id)
-
-            content = message_content_to_text(response.content if hasattr(response, "content") else response)
-
-            new_state = state.model_copy()
-            new_state.llm_response = content
-            new_state.content = content
-            new_state.final_response = content
-            return new_state
-
-        except Exception as e:
-            logger.error("llm_call_failed", error=str(e))
-            new_state = state.model_copy()
-            new_state.llm_response = "Sorry, I couldn't generate a response at this time."
-            new_state.final_response = new_state.llm_response
-            return new_state
-
-
-async def passthrough_node(state: AgentState) -> AgentState:
-    return state
 
 
 async def execute_dynamic_agent(
@@ -135,110 +146,130 @@ async def execute_dynamic_agent(
     )
 
     graph = StateGraph(AgentState)
+    
+    # 0. Validate Graph Structure
+    nodes_raw = agent_config.get("nodes", [])
+    edges_raw = agent_config.get("edges", [])
+    edges_list = edges_raw.values() if isinstance(edges_raw, dict) else edges_raw
+    validate_no_cycles(nodes_raw, edges_list)
+
     agents_executed = []
+    
+    # Node-level retry configuration (dictionary based for version compatibility)
+    default_retry = {"max_attempts": 2, "backoff_factor": 2.0}
 
     def create_condition_router(mapping: Dict[str, str]):
-        """Standard router logic for conditional branching."""
+        """
+        Flexible router for CONDITIONAL nodes.
+        Evaluates branching based on state violations (success/failure) 
+        or specific boolean flags in metadata.
+        """
         async def router(state: AgentState) -> str:
-            decision = "failure" if state.violations else "success"
+            # 1. Check for explicit error/failure first
+            if state.violations:
+                decision = "failure"
+            else:
+                # 2. Check metadata for a 'condition_result' if the node set one
+                # This allows boolean nodes to set success/failure based on logic
+                decision = state.metadata.get("condition_result", "success")
+            
+            if decision not in mapping and "default" in mapping:
+                decision = "default"
+                
             log.info("agent_branching_decision", decision=decision, trace_id=state.trace_id)
             return decision
         return router
 
-    # Add nodes
-    for node in agent_config.get("nodes", []):
+    # 1. Add Nodes
+    for node in nodes_raw:
         agent_node_id = node["id"]
         node_data = node.get("data", {})
         node_props = node_data.get("properties") or node.get("config") or node_data.get("properties") or {}
         
-        # Resolve functional type. Priority: properties.node_type > data.nodeType > top-level type
-        node_type = (
-            node_data.get("node_type") 
-        )
+        # Normalize node type to: TRIGGER, CONDITIONAL, NODE
+        raw_type = str(node_data.get("node_type") or node.get("type") or "NODE").upper()
+        if raw_type in {"START", "TRIGGER"}:
+            node_type = "TRIGGER"
+        elif raw_type in {"CONDITION", "CONDITIONAL"}:
+            node_type = "CONDITIONAL"
+        else:
+            node_type = "NODE"
 
-        node_type = node_type.upper()
-
-        # Handle 'agent' type (legacy) or nodes that are resolved from the registry
-        if node_type  in {"AGENT", "TRIGGER", "TOOL","NODE", "CONNECTOR", "CUSTOM_AGENT"}:
+        # Resolve the actual functional agent from registry
+        if node_type in {"NODE", "TRIGGER", "CONDITIONAL"}:
             agent_name = node_data.get("name") or node.get("name")
+            if not agent_name and raw_type == "LLM": # Handle legacy LLM type
+                agent_name = "llm_node" 
+                
             agent = NodesRegistry.get_node(agent_name)
+            
             if not agent:
-                raise ValueError(f"Unknown agent: {agent_name}")
-            
-            # Override node_type if the registry has a more specific one
-            effective_type = getattr(agent, "node_type", node_type)
-            
-            log.debug("adding_agent_node", agent_node_id=agent_node_id, agent_name=agent.name)
+                # Fallback: if it's a structural node with no logic, use a passthrough agent
+                from app.nodes.base import BaseNode
+                class PassthroughNode(BaseNode):
+                    async def execute(self, inp): return NodeOutput(trace_id=inp.trace_id, content=inp.content)
+                    async def init(self): pass
+                    async def validate_input(self, inp): return None
+                agent = PassthroughNode(name=agent_name or "passthrough")
+
+            log.debug("adding_node", node_id=agent_node_id, type=node_type, agent=agent.name)
             node_config = node_props or {}
-            graph.add_node(agent_node_id, create_agent_node(agent, node_config))
+            graph.add_node(
+                agent_node_id, 
+                create_agent_node(agent, node_config, node_id=agent_node_id),
+                retry=default_retry
+            )
             agents_executed.append(agent.name)
 
-        elif node_type == "llm":
-            log.debug("adding_llm_node", agent_node_id=agent_node_id)
-            graph.add_node(agent_node_id, llm_node)
-            agents_executed.append("main_llm")
-
-        elif node_type in {"trigger", "start", "end", "condition"}:
-            graph.add_node(agent_node_id, passthrough_node)
-            log.debug("adding_system_node", agent_node_id=agent_node_id, type=node_type)
-
-        else:
-            raise ValueError(f"Unsupported node type: {node_type}")
-
-    # Add edges
-    edges_raw = agent_config.get("edges", [])
-    edges_list = edges_raw.values() if isinstance(edges_raw, dict) else edges_raw
-    
-    # Group edges by source to detect conditional routing
+    # 2. Add Edges
     source_edges = {}
     for edge in edges_list:
         source = edge.get("source") or edge.get("from_node")
         target = edge.get("target") or edge.get("to_node")
-        condition = edge.get("condition")
+        condition = edge.get("condition") or "default"
         
         if source and target:
-            if source not in source_edges:
-                source_edges[source] = {}
-            source_edges[source][condition or "default"] = target
+            source_edges.setdefault(source, {}).setdefault(condition, []).append(target)
 
     for source, mapping in source_edges.items():
         # If there are specific 'success'/'failure' conditions, use a router
         if any(c in mapping for c in ["success", "failure"]):
-            log.debug("adding_conditional_edges", source=source, paths=mapping)
-            graph.add_conditional_edges(source, create_condition_router(mapping), mapping)
+            # For conditional edges, we need a flat mapping for the router
+            # Note: This logic assumes one target per condition for branching
+            flat_mapping = {c: targets[0] for c, targets in mapping.items()}
+            log.debug("adding_conditional_edges", source=source, paths=flat_mapping)
+            graph.add_conditional_edges(source, create_condition_router(flat_mapping), flat_mapping)
+            
+            # If a condition has multiple targets, add extra standard edges for them
+            for cond, targets in mapping.items():
+                for extra_target in targets[1:]:
+                    graph.add_edge(source, extra_target)
         else:
-            # Support multiple outgoing edges (parallel execution)
-            for cond_name, target in mapping.items():
-                log.debug("adding_standard_edge", source=source, target=target, condition=cond_name)
-                graph.add_edge(source, target)
+            # Support true parallel execution (Fan-out)
+            for targets in mapping.values():
+                for target in targets:
+                    log.debug("adding_standard_edge", source=source, target=target)
+                    graph.add_edge(source, target)
 
-    # Entry / Exit
+    # 3. Entry Point Detection
     nodes = agent_config.get("nodes", [])
-    
-    # Find the trigger node to use as entry point, else fallback to first node
     entry_node_id = None
     for node in nodes:
-        node_data = node.get("data", {})
-        node_props = node.get("properties") or node.get("config") or node_data.get("properties") or {}
-
-        n_type = str(node.get("type") or "").lower()
-        n_cat = str(node_data.get("category") or node_data.get("group") or "").lower()
-        # Check properties first for the functional node type to identify triggers
-        n_node_type = str(node_props.get("node_type") or node_data.get("nodeType") or "").lower()
-
-        # Prioritize node_type from properties for entry point detection
-        if n_node_type == "trigger" or n_type == "trigger" or n_cat in {"trigger", "start"}:
+        raw_type = str(node.get("data", {}).get("node_type") or node.get("type") or "").upper()
+        if raw_type in {"TRIGGER", "START"}:
             entry_node_id = node["id"]
             break
     
     if nodes:
-        graph.set_entry_point(entry_node_id or nodes[0]["id"])
+        # LangGraph START constant or identified ID
+        graph.add_edge(START, entry_node_id or nodes[0]["id"])
         
-        # Automatically link leaf nodes to END
+        # 4. Automatically link leaf nodes to END for completion
         for node in nodes:
             if node["id"] not in source_edges:
                 graph.add_edge(node["id"], END)
 
+    # Compile and Execute
     compiled = graph.compile()
     
     # Execute

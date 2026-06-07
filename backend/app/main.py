@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from app.core.observability import get_logger, setup_observability, REQUEST_COUNTER, REQUEST_LATENCY, TOKEN_USAGE
 from app.api.nodes.router import router as agents_router
-from app.api.chat.router import router as chat_router
+# from app.api.chat.router import router as chat_router
 from app.api.root.router import router as root_router
 from app.api.workflows.router import router as workflows_router
 from app.api.observability.router import router as obs_router
@@ -43,7 +43,7 @@ async def startup_event():
     
 app.include_router(root_router)
 app.include_router(agents_router)
-app.include_router(chat_router)
+#app.include_router(chat_router)
 app.include_router(workflows_router)
 app.include_router(obs_router)
 app.include_router(categories_router)

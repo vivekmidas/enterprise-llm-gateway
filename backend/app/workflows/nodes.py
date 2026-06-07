@@ -42,8 +42,7 @@ def create_node_handler(node: NodeConfig) -> Callable:
 
 
 def create_input_guard_node(config: Dict[str, Any]):
-    async def guard_node(state: EnterpriseState) -> EnterpriseState:
-        trace_id = state.trace_id or str(uuid.uuid4())
+    async def guard_node(state: EnterpriseState) -> Dict[str, Any]:
         input_text = getattr(state, "input", "")
 
         violations:  List[str] = []
@@ -52,71 +51,68 @@ def create_input_guard_node(config: Dict[str, Any]):
         if len(input_text) > config.get("max_length", 10000):
             violations.append("input_too_long")
 
-        # Update state (Pydantic v2 style)
-        new_state = state.model_copy(update={
-            "trace_id": trace_id,
+        return {
             "violations": violations,
             "masked_input": masked_content,
             "guard_score": 0.95 if not violations else 0.3,
             "messages": [HumanMessage(content=masked_content)],
-        })
-        return new_state
+        }
 
     return guard_node
 
 
 def create_context_agent_node(config: Dict[str, Any]):
-    async def context_node(state: EnterpriseState) -> EnterpriseState:
+    async def context_node(state: EnterpriseState) -> Dict[str, Any]:
         context = "Retrieved enterprise context..."
-        return state.model_copy(update={
+        return {
             "context": context,
             "messages": state.messages + [AIMessage(content=f"Context added: {context[:200]}...")]
-        })
+        }
     return context_node
 
 
 def create_llm_call_node(config: Dict[str, Any]):
     model_name = config.get("model", "meta-llama/Llama-3.1-8B-Instruct")
 
-    async def llm_node(state: EnterpriseState) -> EnterpriseState:
+    async def llm_node(state: EnterpriseState) -> Dict[str, Any]:
         try:
             response_text = f"[LLM Response from {model_name}]"
 
-            return state.model_copy(update={
+            return {
                 "messages": state.messages + [AIMessage(content=response_text)],
                 "last_llm_response": response_text,
                 "llm_model_used": model_name,
-            })
+            }
         except Exception as e:
             logger.error(f"LLM failed: {e}")
-            return state.model_copy(update={"errors": state.errors + [str(e)]})
+            return {"errors": [str(e)]}
 
     return llm_node
 
 
 def create_tool_call_node(config: Dict[str, Any]):
-    async def tool_node(state: EnterpriseState) -> EnterpriseState:
-        return state.model_copy(update={"tool_results": "Tool execution completed"})
+    async def tool_node(state: EnterpriseState) -> Dict[str, Any]:
+        return {"tool_results": "Tool execution completed"}
     return tool_node
 
 
 def create_final_sanctity_node(config: Dict[str, Any]):
-    async def sanctity_node(state: EnterpriseState) -> EnterpriseState:
+    async def sanctity_node(state: EnterpriseState) -> Dict[str, Any]:
         output = state.messages[-1].content if state.messages else ""
-        violations = state.violations[:]
+        violations = []
         if "bad" in str(output).lower():
             violations.append("policy_violation")
 
-        return state.model_copy(update={
+        return {
             "final_violations": violations,
             "is_safe": len(violations) == 0,
             "sanitized_output": output,
-        })
+        }
     return sanctity_node
 
 
 def create_custom_node(config: Dict[str, Any]):
-    async def custom_node(state: EnterpriseState) -> EnterpriseState:
+    async def custom_node(state: EnterpriseState) -> Dict[str, Any]:
         logger.info(f"Custom node executed: {config.get('name')}")
-        return state
+        return {}
     return custom_node

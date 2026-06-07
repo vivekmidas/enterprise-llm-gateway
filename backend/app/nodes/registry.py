@@ -104,8 +104,9 @@ class NodesRegistry:
             registered_nodes=list(cls._nodes.keys())
         )
 
-        # Sync definitions with DB to load global properties/schema overrides
-        await cls.sync_with_db()
+        # Sync definitions with DB to load global properties/schema overrides 
+        # TODO: revisit
+        # await cls.sync_with_db()
 
     @classmethod
     async def sync_with_db(cls):
