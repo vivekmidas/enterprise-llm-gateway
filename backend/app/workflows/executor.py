@@ -232,22 +232,23 @@ async def execute_dynamic_agent(
             source_edges.setdefault(source, {}).setdefault(condition, []).append(target)
 
     for source, mapping in source_edges.items():
-        # If there are specific 'success'/'failure' conditions, use a router
+        # Determine if this source requires a conditional router (branching)
         if any(c in mapping for c in ["success", "failure"]):
-            # For conditional edges, we need a flat mapping for the router
-            # Note: This logic assumes one target per condition for branching
-            flat_mapping = {c: targets[0] for c, targets in mapping.items()}
-            log.debug("adding_conditional_edges", source=source, paths=flat_mapping)
-            graph.add_conditional_edges(source, create_condition_router(flat_mapping), flat_mapping)
+            # Map standard conditions for the router. We take the first target for each condition label.
+            router_paths = {c: targets[0] for c, targets in mapping.items()}
+            log.debug("adding_conditional_edges", source=source, paths=router_paths)
+            graph.add_conditional_edges(source, create_condition_router(router_paths), router_paths)
             
-            # If a condition has multiple targets, add extra standard edges for them
+            # If there are multiple targets for the same condition (Fan-out on a branch),
+            # we add the remaining ones as standard edges. In LangGraph, standard edges 
+            # from a node with conditional edges will always execute.
             for cond, targets in mapping.items():
                 for extra_target in targets[1:]:
                     graph.add_edge(source, extra_target)
         else:
-            # Support true parallel execution (Fan-out)
-            for targets in mapping.values():
-                for target in targets:
+            # Standard Fan-out/Fan-in logic (Default LangGraph behavior)
+            for cond_targets in mapping.values():
+                for target in cond_targets:
                     log.debug("adding_standard_edge", source=source, target=target)
                     graph.add_edge(source, target)
 
