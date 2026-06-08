@@ -74,7 +74,7 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
         agent_name = getattr(agent, "name", "unknown")
         
         # Circuit Breaker: Skip execution if a previous node failed or raised a violation
-        if state.violations or state.error_code!= 200:
+        if state.violations:
             logger.info("stopping_further_execution_on_node_failure", node_id=node_id, agent=agent_name)
             return {}
 
