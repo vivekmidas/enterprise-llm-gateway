@@ -166,6 +166,20 @@ class NodesRegistry:
                     else:
                         # If it exists, pull properties from DB into the in-memory registry
                         if db_node.properties:
+                            # Merge new properties from code definition into DB properties if they don't exist.
+                            # This ensures new system-level defaults are added to existing DB nodes,
+                            # while preserving any existing customized values in the database.
+                            updated_db_properties = {**node.properties, **db_node.properties}
+                            if updated_db_properties != db_node.properties:
+                                db_node.properties = updated_db_properties
+                                session.add(db_node) # Mark the db_node for update
+                                cls.logger.info("node_db_properties_merged", name=node_name, client_id=client_id)
+
+                            # Always update the property_schema to reflect the latest code definition.
+                            if node.property_schema != db_node.property_schema:
+                                db_node.property_schema = node.property_schema
+                                session.add(db_node) # Mark the db_node for update
+                                cls.logger.info("node_db_schema_updated", name=node_name, client_id=client_id)
                             node.properties.update(db_node.properties)
                         cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
 

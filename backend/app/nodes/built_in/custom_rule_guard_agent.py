@@ -12,7 +12,9 @@ class CustomRuleGuardAgent(BaseNode):
         return NodeOutput(
             trace_id=inp.trace_id,
             content=inp.content,
-            status="success"
+            status="success",
+            error_code=200
+            
         )
 
     async def init(self) -> None:

@@ -13,12 +13,14 @@ class ContextSetterAgent(BaseNode):
                 trace_id=inp.trace_id,
                 content=inp.content,
                 status="failure",
-                code=400,
-                error_message="Context with user_id is required"
+                error_code=400,
+                error_message=f"Context with user_id is required for ContextSetterAgent {self.name}"
             )
+            
         return NodeOutput(
             trace_id=inp.trace_id,
             content=inp.content,
+            error_code=200,
             status="success"
         )
 

@@ -17,7 +17,7 @@ class NodeOutput(BaseModel):
     content: str
     status: str = "success"  # "success" or "failure"
     error_message: Optional[str] = None
-    code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
+    error_code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
     violations: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     latency_ms: float = 0.0
@@ -40,7 +40,7 @@ class BaseNode(BaseModel, abc.ABC):
 
     # Visual properties for the UI (aligned with frontend BaseNodeData)
     icon: str = "bot"              # Name of the icon to be mapped in frontend
-    color: str = "#7C3AED"         # Brand color (hex code)
+    color: str = "#5E0CEC"         # Brand color (hex code)
     badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
     sub_label: Optional[str] = None # Optional sub-label
     property_schema: List[Dict[str, Any]] = Field(default_factory=list)  # For dynamic property rendering in UI
@@ -133,7 +133,9 @@ class BaseNode(BaseModel, abc.ABC):
                     latency_ms=validation_output.latency_ms,
                     output=validation_output.model_dump()
                 )
-                return validation_output
+                if validation_output.status == "failure" or validation_output.error_code != 200:
+                    self.logger.error("node_run_terminated_due_to_validation", trace_id=inp.trace_id)
+                    return validation_output
 
             # 2. Execution logic
             output = await self.execute(inp)
@@ -163,6 +165,7 @@ class BaseNode(BaseModel, abc.ABC):
             return NodeOutput(
                 trace_id=inp.trace_id,
                 content=inp.content,
+                error_code=500,
                 status="failure",
                 error_message=str(e),
                 start_time=start_ts,
@@ -214,4 +217,8 @@ class TriggerNode(BaseNode, abc.ABC):
         t_id = trace_id or f"{self.name}-{int(time.time())}"
         
         # Trigger the workflow execution via the central executor logic
-        return await execute_dynamic_agent(workflow_config, str(payload), t_id)
+        try:
+            return await execute_dynamic_agent(workflow_config, str(payload), t_id)
+        except Exception as e:
+            self.logger.error("dynamic_agent_execution_crashed", error=str(e), trace_id=t_id)
+            return None

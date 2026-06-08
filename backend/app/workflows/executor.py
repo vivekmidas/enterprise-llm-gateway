@@ -3,9 +3,15 @@ import json
 import time
 import structlog
 from opentelemetry import trace
-from typing import Any, Dict, Optional, List, Set
-
+from typing import Any, Dict, List, Optional, Set
+from langgraph.types import RetryPolicy
 from langgraph.graph import StateGraph, END, START
+# try:
+#     from langgraph.pregel.retry import RetryPolicy
+# except ImportError:
+#     # Fallback for versions where it's located in the private _retry module
+#     from langgraph.pregel._retry import RetryPolicy
+
 from app.utils.state import WorkflowState as AgentState
 from app.nodes.base import NodeInput, NodeOutput
 from app.nodes.registry import NodesRegistry
@@ -67,6 +73,11 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
     async def agent_node(state: AgentState) -> Dict[str, Any]:
         agent_name = getattr(agent, "name", "unknown")
         
+        # Circuit Breaker: Skip execution if a previous node failed or raised a violation
+        if state.violations:
+            logger.info("stopping_further_execution_on_node_failure", node_id=node_id, agent=agent_name)
+            return {}
+
         with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
             span.set_attribute("agent.name", agent_name)
             span.set_attribute("node.id", node_id)
@@ -117,11 +128,35 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
 
                 return updates
             except Exception as e:
-                logger.error("agent_execution_failed", agent=getattr(agent, 'name', 'unknown'), error=str(e))
-            return {"violations": [f"agent_error:{getattr(agent, 'name', 'unknown')}"]}
+                logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
+                
+                # Instead of raising, we return a violation to stop the chain gracefully
+                return {
+                    "status": "failure",
+                    "violations": [f"node_exception:{node_id}"],
+                    "metadata": {
+                        "node_history": {
+                            node_id: {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
+                        }
+                    }
+                }
+
 
     return agent_node
 
+async def nodes_failure_response(agent):
+    return {
+        "content": "",
+        "masked_content": "",
+        "error_message": f"Execution failed for agent: {getattr(agent, 'name', 'unknown')}",
+        "error_code": 500,
+        "status": "failure",
+        "latency_ms": 0,
+        "metadata": {
+            "error": f"Execution failed for agent: {getattr(agent, 'name', 'unknown')}"
+        },
+        "violations": [f"agent_execution_failure:{getattr(agent, 'name', 'unknown')}"]
+    }
 
 async def execute_dynamic_agent(
     agent_config: Dict[str, Any],
@@ -156,7 +191,7 @@ async def execute_dynamic_agent(
     agents_executed = []
     
     # Node-level retry configuration (dictionary based for version compatibility)
-    default_retry = {"max_attempts": 2, "backoff_factor": 2.0}
+    default_retry_policy = RetryPolicy(max_attempts=2, backoff_factor=2.0, retry_on=(Exception,))
 
     def create_condition_router(mapping: Dict[str, str]):
         """
@@ -217,7 +252,7 @@ async def execute_dynamic_agent(
             graph.add_node(
                 agent_node_id, 
                 create_agent_node(agent, node_config, node_id=agent_node_id),
-                retry=default_retry
+                retry=default_retry_policy
             )
             agents_executed.append(agent.name)
 
@@ -272,9 +307,26 @@ async def execute_dynamic_agent(
 
     # Compile and Execute
     compiled = graph.compile()
+    log.info("agent_graph_compiled", agent_id=agent_config.get("id"), nodes_count=len(nodes), edges_count=len(edges_list))
     
     # Execute
-    result = await compiled.ainvoke(state)
+
+    try:
+        result = await compiled.ainvoke(state)
+    except Exception as e:
+        log.error("graph_execution_failed", error=str(e))
+        # Construct a failure result for persistence
+        result_dict = state.model_dump()
+        result_dict.update({
+            "status": "failure",
+            "error_message": str(e),
+            "final_response": f"Workflow failed: {str(e)}",
+            "trace_id": trace_id,
+            "latency_ms": round((time.time() - start_time) * 1000, 2)
+        })
+        await trace_store.save_trace(trace_id, result_dict)
+        # Re-raise to ensure the caller knows the execution failed
+        raise e
 
     # Normalize result to dict safely
     if isinstance(result, AgentState):
