@@ -49,8 +49,8 @@ class SchedulerAgent(TriggerNode):
         if not node_data:
             return
 
-        props = node_data.get("properties") or node_data.get("config") or {}
-        interval = float(props.get("interval", 60))
+        props = node_data["data"].get("properties") or node_data.get("config") or {}
+        interval = float(props.get("interval", 6000))
         unit = props.get("unit", "seconds")
         delay = interval if unit == "seconds" else interval * 60
 
@@ -72,7 +72,7 @@ class SchedulerAgent(TriggerNode):
                 self.logger.info("scheduler_firing", agent_node_id=agent_node_id)
                 await self.execute_dynamic_agent(
                     workflow_config=workflow_config,
-                    payload={"source": "scheduler", "fired_at": time.time()}
+                    payload={ "message": "Hi my name is Cami, need help"}
                 )
             except Exception as e:
                 self.logger.error("scheduler_execution_failed", agent_node_id=agent_node_id, error=str(e))

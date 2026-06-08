@@ -69,9 +69,11 @@ class WebhookAgent(TriggerNode):
                     self.logger.warning("webhook_received_for_unregistered_node")
                     return {"status": "error", "message": f"No workflow registered for trigger"}
 
-                # Build and trigger the graph execution immediately
-                asyncio.create_task(self.execute_dynamic_agent(workflow_config, payload))
-                return {"status": "triggered", "agent_node_id": agent_node_id}
+                # Build and trigger the graph execution and wait for its result.
+                # The client will now receive the full workflow output.
+                workflow_result = await self.execute_dynamic_agent(workflow_config, payload)
+                # Return the workflow result to the calling system
+                return {"status": "completed", "agent_node_id": agent_node_id, "result": workflow_result}
             except Exception as e:
                 self.logger.error("webhook_processing_failed", error=str(e))
                 return {"status": "error", "message": str(e)}

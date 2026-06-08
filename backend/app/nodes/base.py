@@ -212,13 +212,14 @@ class TriggerNode(BaseNode, abc.ABC):
         Unified implementation for all triggers to initiate workflow execution.
         This method builds the langgraph flow via the executor and starts it.
         """
-        from app.workflows.executor import execute_dynamic_agent
+        from app.workflows.executor import WorkflowExecutor
         # Generate a trace ID if not provided, prefixed by node name for observability
         t_id = trace_id or f"{self.name}-{int(time.time())}"
         
         # Trigger the workflow execution via the central executor logic
         try:
-            return await execute_dynamic_agent(workflow_config, str(payload), t_id)
+            executor = WorkflowExecutor(workflow_config)
+            return await executor.execute_async(str(payload), t_id)
         except Exception as e:
             self.logger.error("dynamic_agent_execution_crashed", error=str(e), trace_id=t_id)
             return None

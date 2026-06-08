@@ -14,7 +14,6 @@ class CustomRuleGuardAgent(BaseNode):
             content=inp.content,
             status="success",
             error_code=200
-            
         )
 
     async def init(self) -> None:
