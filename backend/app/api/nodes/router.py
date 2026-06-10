@@ -54,6 +54,16 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     logger.info("node_updated", node_name=node_name)
     return {"node": node}
 
+@router.post("")
+async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
+    """Creates a new node definition in the registry (catalog)."""
+    new_node = NodeDB(**node_data)
+    db.add(new_node)
+    await db.commit()
+    await db.refresh(new_node)
+    logger.info("node_created", node_name=new_node.name)
+    return {"node": new_node}
+
 @router.get("/categories/{category_id}")
 async def get_nodes_by_category(category_id: str, db: AsyncSession = Depends(get_db)):
     """Fetches all nodes belonging to a specific category."""

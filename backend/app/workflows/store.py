@@ -4,7 +4,7 @@ from opentelemetry import trace
 from typing import Optional
 from datetime import datetime
 from fastapi import HTTPException
-from app.models.workflow import WorkflowDefinition
+from app.workflows.class_models import WorkflowDefinition
 from app.core.cache import workflow_cache
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import WorkflowDB, WorkflowNodeDB
@@ -53,7 +53,7 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
                     
                     # Map nodes from the definition into the association table
                     now_str = db_workflow.updated_at
-                    for node in (definition.nodes or []):
+                    for node in (definition.nodes_structure or []):
                         n_dict = node if isinstance(node, dict) else node.model_dump()
                         node_data = n_dict.get("data", {})
                         
@@ -91,7 +91,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
                 if not db_workflow:
                     raise FileNotFoundError
                 
-                return WorkflowDefinition.model_validate_json(db_workflow.definition)
+                return WorkflowDefinition.model_validate(json.loads(db_workflow.definition))
         except FileNotFoundError:
             logger.warning("agent_not_found", agent_id=agent_id, version=version)
             raise HTTPException(
@@ -106,14 +106,14 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
             )
 
 
-async def list_workflows_from_store() -> list:
+async def list_workflows_from_store() -> list: 
     """List all available workflows."""
     with tracer.start_as_current_span("list_workflows_from_store"):
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB)
                 result = await session.execute(stmt)
-                return [json.loads(w.definition) for w in result.scalars().all()]
+                return [WorkflowDefinition.model_validate(json.loads(w.definition)) for w in result.scalars().all()]
         except Exception as e:
             logger.error("failed_to_list_agents", error=str(e))
             return []

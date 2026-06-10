@@ -1,25 +1,27 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict, Any, Literal, Optional
 from datetime import datetime
 
 class NodeConfig(BaseModel):
     id: str
-    type: Literal["input_guard", "context_agent", "llm_call", "tool_call", "final_sanctity", "custom"]
-    name: str
+    type: str
+    name: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)  # prompt, model, rules, hf_endpoint etc.
     next: List[str] = Field(default_factory=list)
+    data: Dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra='allow')
 
 class WorkflowDefinition(BaseModel):
     id: str
     version: str = "1.0"
     name: str
     description: Optional[str] = None
-    nodes: List[NodeConfig]
+    category: Optional[str] = "default"
+    nodes_structure: List[NodeConfig]
     edges: List[Dict]  # or EdgeConfig model
     entry_point: str = "input_guard"
-    global_config: Dict[str, Any] = Field(default_factory=dict)  # profanity, PII thresholds, trace settings
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_enabled: bool = True
+    #global_config: O[Dict[str, Any] = Field(default_factory=dict)  # profanity, PII thresholds, trace settings
+    #metadata: Dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = ConfigDict(extra='allow')

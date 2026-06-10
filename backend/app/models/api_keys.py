@@ -3,7 +3,9 @@ import secrets
 
 from sqlalchemy import Column, String, Boolean, DateTime
 from sqlalchemy.sql import func
-from app.db.base import Base
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
 
 class APIKey(Base):
     __tablename__ = "api_keys"

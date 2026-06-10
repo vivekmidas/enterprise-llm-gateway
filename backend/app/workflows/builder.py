@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph   # ← Correct import
 
-from app.models.workflow import WorkflowDefinition
+from app.workflows.class_models import WorkflowDefinition
 from app.utils.state import EnterpriseState
 from app.workflows.nodes import create_node_handler
 
@@ -16,13 +16,13 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
     Build and compile LangGraph from WorkflowDefinition.
     Returns CompiledStateGraph (the executable compiled graph).
     """
-    if not definition.nodes:
+    if not definition.nodes_structure:
         raise ValueError(f"Agent {definition.id} must have at least one node")
 
     graph = StateGraph(state_schema=EnterpriseState)
 
     # === Add Nodes ===
-    for node_config in definition.nodes:
+    for node_config in definition.nodes_structure:
         try:
             node_func: Callable = create_node_handler(node_config)
             graph.add_node(node_config.id, node_func)
@@ -54,10 +54,10 @@ async def build_graph_from_definition(definition: WorkflowDefinition) -> Compile
             graph.add_edge(source, target)
 
     # === Entry Point ===
-    if definition.entry_point and definition.entry_point in [n.id for n in definition.nodes]:
+    if definition.entry_point and definition.entry_point in [n.id for n in definition.nodes_structure]:
         graph.set_entry_point(definition.entry_point)
     else:
-        graph.set_entry_point(definition.nodes[0].id)
+        graph.set_entry_point(definition.nodes_structure[0].id)
 
     # === Compile ===
     compiled: CompiledStateGraph = graph.compile(

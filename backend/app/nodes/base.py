@@ -1,4 +1,5 @@
 import abc
+import json
 import time
 from functools import cached_property
 from typing import Any, Dict, List, Optional
@@ -203,23 +204,34 @@ class TriggerNode(BaseNode, abc.ABC):
         to build and execute the graph.
         """
         self._workflows[agent_node_id] = workflow_config
-        self.logger.info("workflow_registered_to_trigger", 
+        self.logger.debug("workflow_registered_to_trigger", 
                          agent_node_id=agent_node_id, 
-                         workflow_id=workflow_config.get("id"))
+                         workflow_id=workflow_config.get("id"), config=workflow_config)
 
-    async def execute_dynamic_agent(self, workflow_config: Dict[str, Any], payload: Any, trace_id: Optional[str] = None):
+    async def execute_dynamic_agent(self, agent_node_id: str, payload: Any, trace_id: Optional[str] = None):
         """
         Unified implementation for all triggers to initiate workflow execution.
         This method builds the langgraph flow via the executor and starts it.
+        It retrieves the workflow_config from the internal _workflows registry.
         """
         from app.workflows.executor import WorkflowExecutor
         # Generate a trace ID if not provided, prefixed by node name for observability
         t_id = trace_id or f"{self.name}-{int(time.time())}"
         
+        # Retrieve the workflow config for this specific agent_node_id
+        workflow_config = self._workflows.get(agent_node_id)
+        if not workflow_config:
+            self.logger.warning("dynamic_agent_execution_failed_no_workflow_config", agent_node_id=agent_node_id, trace_id=t_id)
+            return None
+
         # Trigger the workflow execution via the central executor logic
         try:
             executor = WorkflowExecutor(workflow_config)
-            return await executor.execute_async(str(payload), t_id)
+
+            # Ensure dictionary/list payloads are correctly serialized to JSON strings
+            content = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            
+            return await executor.execute_async(content, t_id)
         except Exception as e:
             self.logger.error("dynamic_agent_execution_crashed", error=str(e), trace_id=t_id)
             return None

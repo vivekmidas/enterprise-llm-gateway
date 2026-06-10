@@ -1,32 +1,34 @@
 from fastapi import APIRouter, HTTPException, Response, status
-from typing import Optional
+from typing import Optional, List
 import structlog
 
 from app.api.workflows.schemas import WorkflowSaveRequest
-from app.models.workflow import WorkflowDefinition
+
 from app.workflows.store import (
     load_workflow_from_store,
     list_workflows_from_store,
 )
-from app.workflows.service import save_workflow, delete_workflow
+
+from app.workflows.service import save_workflow, delete_workflow, get_workflow
+from app.workflows.class_models import WorkflowDefinition
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 logger = structlog.get_logger(__name__)
 
-@router.get("")
+@router.get("", response_model=List[WorkflowDefinition])
 async def get_workflows():
     logger.info("get_workflows_request")
     workflows = await list_workflows_from_store()
-    logger.info("get_workflows_response", count=len(workflows), workflows=workflows)
+    logger.info("get_workflows_response", count=len(workflows))
     return workflows
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)
-async def get_workflow(workflow_id: str, version: Optional[str] = None):
+async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
     logger.info("get_workflow_request", params={"workflow_id": workflow_id, "version": version})
     try:
-        workflow = await load_workflow_from_store(workflow_id, version)
+        workflow = await get_workflow(workflow_id, version)
         logger.info("get_workflow_response", workflow_id=workflow_id, data=workflow.model_dump())
         return workflow
     except Exception as e:

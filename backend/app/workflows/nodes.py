@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, List
 
 from langchain_core.messages import HumanMessage, AIMessage
 
-from app.models.workflow import NodeConfig
+from app.workflows.class_models import NodeConfig
 from app.utils.state import EnterpriseState
 
 logger = logging.getLogger(__name__)

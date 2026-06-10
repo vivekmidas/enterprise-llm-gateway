@@ -64,6 +64,14 @@ class SchedulerAgent(TriggerNode):
         )
         self.logger.info("scheduler_instance_activated", agent_node_id=agent_node_id, delay=delay)
 
+    async def deactivate(self, agent_node_id: str):
+        """
+        Deactivates a specific scheduler instance by cancelling its background task.
+        """
+        if agent_node_id in self._tasks:
+            self._tasks.pop(agent_node_id).cancel()
+            self.logger.info("scheduler_instance_deactivated", agent_node_id=agent_node_id)
+
     async def _instance_scheduler_loop(self, agent_node_id: str, delay: float, workflow_config: Dict[str, Any]):
         """Background loop dedicated to a specific workflow instance."""
         while True:
@@ -71,7 +79,7 @@ class SchedulerAgent(TriggerNode):
             try:
                 self.logger.info("scheduler_firing", agent_node_id=agent_node_id)
                 await self.execute_dynamic_agent(
-                    workflow_config=workflow_config,
+                    agent_node_id=agent_node_id,
                     payload={ "message": "Hi my name is Cami, need help"}
                 )
             except Exception as e:
