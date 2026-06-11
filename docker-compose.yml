@@ -10,11 +10,11 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./enterprise-llm-frontend
+    build: ./frontend
     ports:
       - "3000:3000"
     env_file:
-      - enterprise-llm-frontend/.env.local
+      - frontend/.env.local
     restart: unless-stopped
     depends_on:
       - backend
