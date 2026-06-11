@@ -40,16 +40,16 @@ class SchedulerAgent(TriggerNode):
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
-        Activates and starts a background timer for a specific scheduler instance.
+        Starts a background asyncio task to fire the workflow at regular intervals.
         """
+        # Call the parent activate to register the workflow_config in self._workflows
         await super().activate(agent_node_id, workflow_config)
 
-        # if property is missing in the node config, load the properties from the default node configurations.
+        # Calculate delay based on interval and unit (seconds vs minutes)
         interval = float(self.properties.get("interval", self.default_node_properties.get("interval","6000")))
         unit = self.properties.get("unit", self.default_node_properties.get("unit","minutes"))
         delay = interval if unit == "seconds" else interval * 60
 
-        # Clear existing task if updating
         if agent_node_id in self._tasks:
             self._tasks[agent_node_id].cancel()
 

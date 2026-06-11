@@ -67,8 +67,10 @@ def validate_no_cycles(nodes: List[Dict], edges: List[Dict]):
 
 def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = "unknown"):
     """
-    Standardized node executor. 
-    Agnostic of the specific agent logic, relying on the BaseNode interface.
+    Factory that transforms a BaseNode instance into a LangGraph-compatible node function.
+    
+    This wrapper handles the conversion between the LangGraph State (AgentState) 
+    and the individual Node's Input/Output models.
     """
     async def agent_node(state: AgentState) -> Dict[str, Any]:
         agent_name = getattr(agent, "name", "unknown")
@@ -94,7 +96,7 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
                     metadata=state.metadata
                 )
 
-                # Call run() to leverage the standardized wrapper (logging, validation, timing)
+                # Standardized execution wrapper from base.py
                 result = await agent.run(agent_input)
                 
                 # Node Timings and Observability

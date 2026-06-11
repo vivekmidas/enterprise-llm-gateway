@@ -116,7 +116,17 @@ class BaseNode(BaseModel, abc.ABC):
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
-        Standard execution wrapper with observability, timing, and error handling.
+        The standardized execution lifecycle for every node in the system.
+        
+        Execution Steps:
+        1. Property Resolution: Merges static node properties with runtime workflow config.
+        2. Validation: Executes pre-flight checks (validate_input).
+        3. Execution: Runs the core business logic (execute).
+        4. Observability: Captures latency, start/end times, and status.
+        5. Error Handling: Gracefully catches exceptions and returns a failure NodeOutput.
+        
+        Returns:
+            NodeOutput: The standardized result containing content, status, and metadata.
         """
         self.logger.info("node_run_started", trace_id=inp.trace_id, input=inp.model_dump())
         start_ts = time.time()
@@ -197,14 +207,20 @@ class TriggerNode(BaseNode, abc.ABC):
         # Triggers can choose to implement validation if needed, but by default they don't block execution
         return None
     
-    # Internal registry to map specific node instances to their parent workflow configs
+    # Internal registry to map specific node instances (by agent_node_id) 
+    # to their parent workflow configurations.
     _workflows: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> None:
         """
-        Activates a specific workflow instance for this trigger.
-        When the trigger fires for this specific agent_node_id, it uses this config
-        to build and execute the graph.
+        Registers a specific workflow instance to this trigger agent.
+        
+        This method is critical for triggers (like Webhooks or Schedulers) to know 
+        which workflow graph to execute when an external event occurs.
+        
+        Args:
+            agent_node_id: The unique ID of the trigger node within the specific workflow.
+            workflow_config: The full JSON definition of the workflow to be executed.
         """
         self._workflows[agent_node_id] = workflow_config
         # Get properties for the nodes in the agent
