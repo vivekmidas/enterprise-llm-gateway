@@ -5,9 +5,34 @@ import structlog
 
 from app.core.database import get_db
 from app.models.db_models import NodeDB
+from app.workflows.store import propagate_node_defaults_to_workflows
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/nodes", tags=["nodes"])
+
+
+def _defaults_from_payload(node_data: dict) -> dict:
+    defaults = node_data.get("properties") if isinstance(node_data.get("properties"), dict) else {}
+    defaults = dict(defaults or {})
+    schema = node_data.get("property_schema") or node_data.get("propertySchema") or []
+    if not isinstance(schema, list):
+        return defaults
+
+    for field in schema:
+        if not isinstance(field, dict):
+            continue
+        key = field.get("key")
+        if not key or key in defaults:
+            continue
+        if "default" in field:
+            defaults[key] = field["default"]
+        elif field.get("type") == "boolean":
+            defaults[key] = False
+        elif field.get("multiple"):
+            defaults[key] = []
+        else:
+            defaults[key] = ""
+    return defaults
 
 @router.get("")
 async def list_nodes(db: AsyncSession = Depends(get_db)):
@@ -42,21 +67,30 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     if not node:
         return {"error": "Node not found"}
 
+    if "propertySchema" in node_data and "property_schema" not in node_data:
+        node_data["property_schema"] = node_data["propertySchema"]
+    node_data.pop("propertySchema", None)
+
+    defaults = _defaults_from_payload(node_data)
+
     # Update node fields based on incoming data
     for key, value in node_data.items():
         if hasattr(node, key):
-            delattr(node, key)  # Remove existing attribute to avoid SQLAlchemy state issues
-        setattr(node, key, value)
+            setattr(node, key, value)
 
     db.add(node)
     await db.commit()
     await db.refresh(node)
+    await propagate_node_defaults_to_workflows(node.name, defaults)
     logger.info("node_updated", node_name=node_name)
     return {"node": node}
 
 @router.post("")
 async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
     """Creates a new node definition in the registry (catalog)."""
+    if "propertySchema" in node_data and "property_schema" not in node_data:
+        node_data["property_schema"] = node_data["propertySchema"]
+    node_data.pop("propertySchema", None)
     new_node = NodeDB(**node_data)
     db.add(new_node)
     await db.commit()

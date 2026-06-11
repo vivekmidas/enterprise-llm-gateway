@@ -1,10 +1,6 @@
-from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, String, JSON, Integer, Boolean
 from app.core.database import Base
-from sqlalchemy.dialects.postgresql import JSONB
 
-Base = declarative_base()
 class CategoryDB(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
@@ -39,7 +35,6 @@ class WorkflowNodeDB(Base):
     description = Column(String)
     agent_name = Column(String)
     updated_at = Column(String)
-    properties = Column(JSON)
     
 class WorkflowDB(Base):
     __tablename__ = "workflows"
@@ -60,7 +55,9 @@ class WorkflowDB(Base):
 class WorkflowNodePropertyDB(Base):
     __tablename__ = "workflow_node_properties"
     id = Column(Integer, primary_key=True, index=True)
-    workflow_node_id = Column(Integer, ForeignKey("workflow_nodes.id"))
+    workflow_id = Column(String, nullable=False, index=True)
+    agent_node_id = Column(String, nullable=False, index=True)
+    agent_name = Column(String, nullable=True, index=True)
     key = Column(String, index=True)
     value = Column(String)
     
