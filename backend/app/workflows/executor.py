@@ -169,7 +169,7 @@ class WorkflowExecutor:
     def __init__(self, agent_config: Dict[str, Any]):
         self.agent_config = agent_config
         self.agent_id = agent_config.get("id")
-        self.nodes_raw = agent_config.get("nodes", [])
+        self.nodes_raw = agent_config.get("nodes_structure", [])
         self.edges_raw = agent_config.get("edges", [])
         self.edges_list = self.edges_raw.values() if isinstance(self.edges_raw, dict) else self.edges_raw
         self.agents_executed = []

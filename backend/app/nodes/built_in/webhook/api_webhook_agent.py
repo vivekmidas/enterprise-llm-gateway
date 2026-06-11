@@ -17,18 +17,6 @@ class WebhookAgent(TriggerNode):
     category: str = "Integration"
     node_type: str = "trigger"
 
-    property_schema: List[Dict[str, Any]] = [
-        {"key": "port", "label": "Listening Port", "type": "number", "placeholder": "8080"},
-        {"key": "host", "label": "Host", "type": "string", "placeholder": "0.0.0.0"},
-        {"key": "path", "label": "Webhook Path (e.g., /my-webhook)", "type": "string", "placeholder": "/webhook"},
-    ]
-
-    properties: Dict[str, Any] = {
-        "port": 8080,
-        "host": "0.0.0.0",
-        "path": "/webhook"
-    }
-
     # Store server tasks keyed by (host, port)
     _server_tasks: Dict[Tuple[str, int], asyncio.Task] = PrivateAttr(default_factory=dict)
     # Store FastAPI app instances keyed by (host, port)
@@ -42,32 +30,16 @@ class WebhookAgent(TriggerNode):
         The server is no longer started automatically on discovery.
         """
         await super().init()
-    def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
+        
+    async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
         Activates the workflow and ensures the Webhook listener server is running.
         """
-        super().activate(agent_node_id, workflow_config)
+        await super().activate(agent_node_id, workflow_config)
 
-        # Extract properties for this specific node instance
-        # Align with DB schema 'nodes_structure' while maintaining compatibility with frontend 'nodes'
-        nodes_list = workflow_config.get("nodes") or workflow_config.get("nodes_structure", [])
-        
-        # Handle stringified JSON from Varchar columns
-        if isinstance(nodes_list, str):
-            nodes_list = json.loads(nodes_list)
-
-        node_data = next((n for n in nodes_list if n["id"] == agent_node_id), None)
-        if not node_data:
-            self.logger.error("webhook_activation_failed", reason="node_data_not_found", agent_node_id=agent_node_id)
-            return
-
-        # Properties are now expected to be re-hydrated into node_data["data"]["properties"]
-        # by the WorkflowService.
-        props = node_data.get("data", {}).get("properties", {})
-
-        port = int(props.get("port", self.properties["port"]))
-        host = props.get("host", self.properties["host"])
-        base_path = props.get("path", self.properties["path"]).strip('/') # Remove leading/trailing slashes
+        port = int(self.properties.get("port", self.properties["port"]))
+        host = self.properties.get("host",self.default_node_properties.get("host", "0.0.0.0"))
+        base_path = self.properties.get("path", self.default_node_properties.get("path", "")).strip('/') # Remove leading/trailing slashes
 
         server_key = (host, port)
         full_path = f"/{base_path}/{agent_node_id}" # Unique path for this agent_node_id
@@ -84,7 +56,7 @@ class WebhookAgent(TriggerNode):
 
         # Register the specific endpoint for this agent_node_id on the FastAPI app
         # Use a closure to capture agent_node_id for the endpoint handler
-        @app.post("/")
+        @app.post("/") # TODO: replace with full_path later on 
         async def webhook_endpoint(request: Request):
             try:
                 payload = await request.json()

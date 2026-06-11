@@ -43,7 +43,7 @@ async def activate_workflow(workflow: WorkflowDefinition):
     workflow_config = workflow.model_dump()
     for node in workflow_config.get("nodes_structure", []):
         node_data = node.get("data", {})
-        node_props = node.get("properties") or node.get("config") or node_data.get("properties") or {}
+        node_props =  node_data.get("properties") or {}
         n_type = node.get("type", "agent") or "agent"
         
         # Identify functional node type (Trigger/Start)
@@ -58,7 +58,7 @@ async def activate_workflow(workflow: WorkflowDefinition):
             agent_name = node_data.get("name") or node.get("name")
             agent = NodesRegistry.get_node(agent_name)
             if agent and hasattr(agent, "activate"):
-                agent.activate(node["id"], workflow_config)
+                await agent.activate(node["id"], workflow_config)
 
 async def workflow_auto_discover():
     """

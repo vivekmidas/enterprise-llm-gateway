@@ -38,20 +38,15 @@ class SchedulerAgent(TriggerNode):
         await super().init()
         self._tasks: Dict[str, asyncio.Task] = {}
 
-    def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
+    async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
         Activates and starts a background timer for a specific scheduler instance.
         """
-        super().activate(agent_node_id, workflow_config)
+        await super().activate(agent_node_id, workflow_config)
 
-        # Get properties for this specific instance to set the timer
-        node_data = next((n for n in workflow_config.get("nodes", []) if n["id"] == agent_node_id), None)
-        if not node_data:
-            return
-
-        props = node_data["data"].get("properties") or node_data.get("config") or {}
-        interval = float(props.get("interval", 6000))
-        unit = props.get("unit", "seconds")
+        # if property is missing in the node config, load the properties from the default node configurations.
+        interval = float(self.properties.get("interval", self.default_node_properties.get("interval","6000")))
+        unit = self.properties.get("unit", self.default_node_properties.get("unit","minutes"))
         delay = interval if unit == "seconds" else interval * 60
 
         # Clear existing task if updating

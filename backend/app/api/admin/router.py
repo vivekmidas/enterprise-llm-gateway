@@ -66,7 +66,7 @@ async def activate_trigger_instance(node_name: str, agent_node_id: str, workflow
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trigger node '{node_name}' not found or is not a trigger.")
     
     try:
-        node_instance.activate(agent_node_id, workflow_config)
+        await node_instance.activate(agent_node_id, workflow_config)
         return {"status": "success", "message": f"Trigger instance '{agent_node_id}' activated for node '{node_name}'."}
     except Exception as e:
         logger.error("failed_to_activate_trigger", node_name=node_name, agent_node_id=agent_node_id, error=str(e))

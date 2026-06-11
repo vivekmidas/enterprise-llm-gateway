@@ -46,6 +46,9 @@ class BaseNode(BaseModel, abc.ABC):
     sub_label: Optional[str] = None # Optional sub-label
     property_schema: List[Dict[str, Any]] = Field(default_factory=list)  # For dynamic property rendering in UI
     properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
+    node_data: Dict[str, Any] = Field(default_factory=dict)
+    default_node_properties: Dict[str, Any] = Field(default_factory=dict)
+
 
     @cached_property
     def logger(self):
@@ -197,13 +200,28 @@ class TriggerNode(BaseNode, abc.ABC):
     # Internal registry to map specific node instances to their parent workflow configs
     _workflows: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
 
-    def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> None:
+    async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> None:
         """
         Activates a specific workflow instance for this trigger.
         When the trigger fires for this specific agent_node_id, it uses this config
         to build and execute the graph.
         """
         self._workflows[agent_node_id] = workflow_config
+        # Get properties for the nodes in the agent
+        node_data = next((n for n in workflow_config.get("nodes_structure", []) 
+                if n["id"] == agent_node_id), None)
+        if not node_data:
+            self.logger.debug("workflow_not_registered_to_trigger", violations="node_data_not_found",
+                         agent_node_id=agent_node_id, 
+                         workflow_id=workflow_config.get("id"), config=workflow_config)
+            return
+        # Properties are now expected to be re-hydrated into node_data["data"]["properties"]
+        # by the WorkflowService.
+        properties = node_data["data"].get("properties", {})
+        # Load default preoperties for the node from the db nodes table
+        self.default_node_properties = await self._get_db_properties()
+       
+
         self.logger.debug("workflow_registered_to_trigger", 
                          agent_node_id=agent_node_id, 
                          workflow_id=workflow_config.get("id"), config=workflow_config)
