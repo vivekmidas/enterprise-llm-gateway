@@ -240,7 +240,7 @@ class TriggerNode(BaseNode, abc.ABC):
 
         self.logger.debug("workflow_registered_to_trigger", 
                          agent_node_id=agent_node_id, 
-                         workflow_id=workflow_config.get("id"), config=workflow_config)
+                         workflow_id=workflow_config.get("id"))
 
     async def execute_dynamic_agent(self, agent_node_id: str, payload: Any, trace_id: Optional[str] = None):
         """

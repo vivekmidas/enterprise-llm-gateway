@@ -40,6 +40,7 @@ async def activate_workflow(workflow: WorkflowDefinition):
     respective Agent instances to activate background listeners.
     """
     from app.nodes.registry import NodesRegistry
+    from app.nodes.base import TriggerNode
     workflow_config = workflow.model_dump()
     for node in workflow_config.get("nodes_structure", []):
         node_data = node.get("data", {})
@@ -53,10 +54,11 @@ async def activate_workflow(workflow: WorkflowDefinition):
             node_data.get("node_type") or
             n_type
         ).lower()
+        agent_name = node_data.get("name") or node.get("name")
+        agent = NodesRegistry.get_node(agent_name)
         
-        if node_type.upper() in {"TRIGGER"}:
-            agent_name = node_data.get("name") or node.get("name")
-            agent = NodesRegistry.get_node(agent_name)
+        # Activate if explicitly defined as a trigger or if the instance inherits from TriggerNode
+        if node_type.upper() in {"TRIGGER"} or isinstance(agent, TriggerNode):
             if agent and hasattr(agent, "activate"):
                 await agent.activate(node["id"], workflow_config)
 

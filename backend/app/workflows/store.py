@@ -234,6 +234,58 @@ async def _hydrate_workflow_definition(
     hydrated.nodes_structure = hydrated_nodes
     return hydrated
 
+async def update_node_tokens_in_db(
+    workflow_id: str,
+    node_id: str,
+    access_token: str,
+    refresh_token: Optional[str] = None,
+) -> None:
+    """
+    Updates the 'access_token' and 'refresh_token' properties for a specific
+    workflow node in the database.
+    """
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            # 1. Verify the workflow node exists
+            workflow_node = await _get_workflow_node(session, workflow_id, node_id)
+            if not workflow_node:
+                raise HTTPException(status_code=404, detail=f"Workflow node '{node_id}' not found in workflow '{workflow_id}'")
+
+            # 2. Delete existing access_token and refresh_token properties for this node
+            await session.execute(
+                delete(WorkflowNodePropertyDB).where(
+                    WorkflowNodePropertyDB.workflow_id == workflow_id,
+                    WorkflowNodePropertyDB.agent_node_id == node_id,
+                    WorkflowNodePropertyDB.key.in_(["access_token", "refresh_token"])
+                )
+            )
+
+            # 3. Add new access_token
+            session.add(
+                WorkflowNodePropertyDB(
+                    workflow_id=workflow_id,
+                    agent_node_id=node_id,
+                    agent_name=workflow_node.agent_name,
+                    key="access_token",
+                    value=_property_value_to_db(access_token),
+                )
+            )
+
+            # 4. Add new refresh_token if provided
+            if refresh_token:
+                session.add(
+                    WorkflowNodePropertyDB(
+                        workflow_id=workflow_id,
+                        agent_node_id=node_id,
+                        agent_name=workflow_node.agent_name,
+                        key="refresh_token",
+                        value=_property_value_to_db(refresh_token),
+                    )
+                )
+        
+        # 5. Invalidate the workflow cache to ensure the executor picks up new tokens
+        await workflow_cache.invalidate_agent(workflow_id)
+        logger.info("node_tokens_updated", workflow_id=workflow_id, node_id=node_id)
 
 async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
     """

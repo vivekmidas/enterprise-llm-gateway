@@ -2,6 +2,7 @@ import time
 from fastapi import APIRouter, Query
 from typing import List, Optional
 from app.core.cache import trace_store
+from app.api.webhooks import email as email_webhooks
 
 router = APIRouter(prefix="/api/observability")
 
@@ -35,3 +36,4 @@ async def get_traces(minutes: int = Query(default=30)):
         "traces": traces,
         "workflow_distribution": [{"name": k, "value": v} for k, v in workflow_distribution.items()]
     }
+
