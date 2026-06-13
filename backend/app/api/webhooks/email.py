@@ -12,19 +12,6 @@ from app.nodes.built_in.mails.pull_mail_trigger_node import ImapEmailPullTrigger
 router = APIRouter(prefix="/webhooks/email", tags=["Email Webhooks"])
 logger = structlog.get_logger(__name__)
 
-gmail_key = {"web":{"client_id":"766633200484-v42quiqo5o3evg81ulrcud4np356o7be.apps.googleusercontent.com",
-                    "project_id":"agent-gateway-499207","auth_uri":"https://accounts.google.com/o/oauth2/auth",
-                    "token_uri":"https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
-                    "client_secret":"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"}}
-
-email_desktop_key={"installed":{"client_id":"766633200484-g5c573doj1op33fkir7p64b1uih6ast1.apps.googleusercontent.com",
-                    "project_id":"agent-gateway-499207",
-                    "auth_uri":"https://accounts.google.com/o/oauth2/auth",
-                    "token_uri":"https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
-                    "client_secret":"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",
-                    "redirect_uris":["http://localhost"]}}
 @router.post("/{agent_node_id}")
 async def receive_email_webhook(agent_node_id: str = Path(..., description="The ID of the agent node"), request: Request = None):
     """
