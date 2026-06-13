@@ -4,6 +4,9 @@ import datetime
 import abc
 from app.nodes.base import TriggerNode
 from pydantic import PrivateAttr, Field
+from app.core.database import AsyncSessionLocal
+from app.models.db_models import CredentialDB
+from sqlalchemy import select
 
 class EmailTriggerNode(TriggerNode, abc.ABC):
     """
@@ -20,16 +23,16 @@ class EmailTriggerNode(TriggerNode, abc.ABC):
     _oauth_tokens: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     async def init(self) -> None:
+        """Loads global node properties from the central store via BaseNode."""
         await super().init()
 
-    def _get_node_config(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Extracts and merges instance-specific properties from the workflow config."""
-        node_data = next(
-            (n for n in workflow_config.get("nodes_structure", []) if n["id"] == agent_node_id), 
-            None
-        )
-        props = node_data.get("data", {}).get("properties", {}) if node_data else {}
-        return {**self.properties, **props}
+    async def _get_credential(self, credential_id: Any) -> Optional[CredentialDB]:
+        """Fetches a credential from the central store."""
+        if not credential_id:
+            return None
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(CredentialDB).where(CredentialDB.id == int(credential_id)))
+            return result.scalar_one_or_none()
 
     @abc.abstractmethod
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
@@ -43,6 +46,16 @@ class EmailTriggerNode(TriggerNode, abc.ABC):
     async def _authenticate(self, agent_node_id: str, config: Dict[str, Any]) -> Any:
         """Standardized method to resolve/refresh credentials for the provider."""
         pass
+
+    @abc.abstractmethod
+    async def _handle_api_notification(self, agent_node_id: str, payload: Dict[str, Any]):
+        """Handles incoming webhook notifications from the provider."""
+        pass
+
+    def _get_webhook_url(self, agent_node_id: str) -> str:
+        """Constructs the public webhook URL for this node instance."""
+        base_url = "https://your-gateway-domain.com" # Should come from config/env
+        return f"{base_url}/api/webhooks/email/{agent_node_id}"
 
     async def deactivate(self, agent_node_id: str):
         """Stops the polling loop and cleans up."""

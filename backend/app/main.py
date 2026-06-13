@@ -7,6 +7,7 @@ from app.api.nodes.router import router as agents_router
 from app.api.root.router import router as root_router
 from app.api.workflows.router import router as workflows_router
 from app.api.admin.router import router as admin_router
+from app.api.admin.auth import router as auth_router
 from app.api.observability.router import router as obs_router
 from app.api.categories.router import router as categories_router
 from app.api.webhooks import email as email_webhooks
@@ -52,6 +53,7 @@ app.include_router(admin_router)
 app.include_router(workflows_router)
 app.include_router(obs_router)
 app.include_router(categories_router)
+app.include_router(auth_router)
 app.include_router(email_webhooks.router)
 
 if __name__ == "__main__":

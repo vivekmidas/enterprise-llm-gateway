@@ -4,8 +4,7 @@ import structlog
 from typing import Dict, Any
 from pydantic import BaseModel, Field
 from typing import Optional
-from fastapi import APIRouter, Request, HTTPException, status
-from app.nodes.base import TriggerNode, NodeInput, NodeOutput, BaseModel
+from fastapi import APIRouter, Request, HTTPException, status, Path
 from  app.workflows.store import update_node_tokens_in_db
 from app.nodes.registry import NodesRegistry
 from app.nodes.built_in.mails.pull_mail_trigger_node import ImapEmailPullTriggerNode # Assuming this is the correct path
@@ -26,8 +25,8 @@ email_desktop_key={"installed":{"client_id":"766633200484-g5c573doj1op33fkir7p64
                     "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
                     "client_secret":"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",
                     "redirect_uris":["http://localhost"]}}
-@router.post("/") # TODO - add agent id later 
-async def receive_email_webhook(agent_node_id: str, request: Request):
+@router.post("/{agent_node_id}")
+async def receive_email_webhook(agent_node_id: str = Path(..., description="The ID of the agent node"), request: Request = None):
     """
     Receives email notifications from providers (e.g., Gmail Pub/Sub, Microsoft Graph).
     Dispatches the notification to the appropriate ImapEmailTriggerNode instance.

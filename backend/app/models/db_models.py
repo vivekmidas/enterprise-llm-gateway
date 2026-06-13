@@ -1,5 +1,8 @@
 from sqlalchemy import Column, String, JSON, Integer, Boolean
 from app.core.database import Base
+from datetime import datetime
+
+
 
 class CategoryDB(Base):
     __tablename__ = "categories"
@@ -61,3 +64,25 @@ class WorkflowNodePropertyDB(Base):
     key = Column(String, index=True)
     value = Column(String)
     
+class CredentialDB(Base):
+    __tablename__ = "credentials"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    type = Column(String, nullable=False)
+    config = Column(JSON, nullable=False)
+    auth_data = Column(JSON, nullable=True)
+    created_at = Column(String, default=datetime.utcnow)
+    updated_at = Column(String, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class OAuthProviderDB(Base):
+    __tablename__ = "oauth_providers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True) # Machine key, e.g., 'okta', 'linkedin'
+    label = Column(String) # UI display name, e.g., 'Okta'
+    description = Column(String, nullable=True)
+    auth_url = Column(String, nullable=False)
+    token_url = Column(String, nullable=False)
+    default_scopes = Column(String, nullable=True)
+    callback_url = Column(String, nullable=False)
+    icon = Column(String, nullable=True)
+                        

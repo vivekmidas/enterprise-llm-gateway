@@ -67,6 +67,22 @@ class GmailClient:
 
         return self._service
 
+    def watch(self, topic_name: str, label_ids: List[str] = None) -> Dict[str, Any]:
+        """
+        Starts watching the mailbox. 
+        Notifications are sent to the provided Google Cloud Pub/Sub topic.
+        """
+        service = self.service()
+        body = {
+            'topicName': topic_name,
+            'labelIds': label_ids or ['INBOX']
+        }
+        return (
+            service.users()
+            .watch(userId='me', body=body)
+            .execute()
+        )
+
     # -------------------------------------------------------------------------
     # Profile
     # -------------------------------------------------------------------------

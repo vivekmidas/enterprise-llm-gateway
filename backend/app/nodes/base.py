@@ -88,6 +88,18 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.warning("db_properties_fetch_failed", error=str(e))
         return {}
 
+    def _get_node_config(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Extracts and merges instance-specific properties from the workflow configuration."""
+        nodes = workflow_config.get("nodes_structure") or workflow_config.get("nodes") or []
+        node_data = next((n for n in nodes if n.get("id") == agent_node_id), None)
+        
+        props = {}
+        if node_data:
+            data = node_data.get("data", {})
+            props = data.get("properties") or node_data.get("properties") or node_data.get("config") or {}
+            
+        return {**self.properties, **props}
+
     @abc.abstractmethod
     async def init(self) -> None:
         """
@@ -223,22 +235,10 @@ class TriggerNode(BaseNode, abc.ABC):
             workflow_config: The full JSON definition of the workflow to be executed.
         """
         self._workflows[agent_node_id] = workflow_config
-        # Get properties for the nodes in the agent
-        node_data = next((n for n in workflow_config.get("nodes_structure", []) 
-                if n["id"] == agent_node_id), None)
-        if not node_data:
-            self.logger.debug("workflow_not_registered_to_trigger", violations="node_data_not_found",
-                         agent_node_id=agent_node_id, 
-                         workflow_id=workflow_config.get("id"), config=workflow_config)
-            return
-        # Properties are now expected to be re-hydrated into node_data["data"]["properties"]
-        # by the WorkflowService.
-        properties = node_data["data"].get("properties", {})
-        # Load default preoperties for the node from the db nodes table
-        self.default_node_properties = await self._get_db_properties()
-       
-
-        self.logger.debug("workflow_registered_to_trigger", 
+        
+        # Global node properties are loaded in init()
+        # Instance properties should be resolved using _get_node_config() when needed
+        self.logger.debug("workflow_registered_to_trigger",
                          agent_node_id=agent_node_id, 
                          workflow_id=workflow_config.get("id"))
 

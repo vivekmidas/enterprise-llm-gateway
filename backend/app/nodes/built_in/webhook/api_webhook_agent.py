@@ -37,9 +37,11 @@ class WebhookAgent(TriggerNode):
         """
         await super().activate(agent_node_id, workflow_config)
 
-        port = int(self.properties.get("port", self.properties["port"]))
-        host = self.properties.get("host",self.default_node_properties.get("host", "0.0.0.0"))
-        base_path = self.properties.get("path", self.default_node_properties.get("path", "")).strip('/') # Remove leading/trailing slashes
+        # Resolve merged configuration (Global Defaults + Workflow Instance)
+        config = self._get_node_config(agent_node_id, workflow_config)
+        port = int(config.get("port", 8000))
+        host = config.get("host", "0.0.0.0")
+        base_path = config.get("path", "").strip('/')
 
         server_key = (host, port)
         full_path = f"/{base_path}/{agent_node_id}" # Unique path for this agent_node_id
