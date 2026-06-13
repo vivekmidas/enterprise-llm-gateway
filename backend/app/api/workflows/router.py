@@ -29,10 +29,10 @@ async def get_workflows():
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)
 async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
-    logger.info("get_workflow_request", params={"workflow_id": workflow_id, "version": version})
+    logger.info("get_workflow_request", workflow_id=workflow_id, version=version)
     try:
         workflow = await get_workflow(workflow_id, version)
-        logger.info("get_workflow_response", workflow_id=workflow_id, data=workflow.model_dump())
+        logger.info("get_workflow_response_success", workflow_id=workflow_id)
         return workflow
     except Exception as e:
         logger.error("get_workflow_error", workflow_id=workflow_id, version=version, error=str(e))
@@ -53,7 +53,7 @@ async def update_node_properties(workflow_id: str, agent_node_id: str, propertie
 
 @router.post("", response_model=dict)
 async def create_workflow(request: WorkflowSaveRequest):
-    logger.info("create_workflow_request", input_data=request.model_dump())
+    logger.info("create_workflow_request", workflow_id=request.id, name=request.name)
     # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
     workflow = WorkflowDefinition(
         **request.model_dump(),
@@ -61,8 +61,8 @@ async def create_workflow(request: WorkflowSaveRequest):
     )
     try:
         saved_workflow = await save_workflow(workflow)
-        logger.info("create_workflow_response", result=saved_workflow)
-        return saved_workflow
+        logger.info("create_workflow_success", workflow_id=request.id)
+        return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
     except Exception as e:
         logger.error("create_workflow_error", workflow_id=request.id, name=request.name, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")

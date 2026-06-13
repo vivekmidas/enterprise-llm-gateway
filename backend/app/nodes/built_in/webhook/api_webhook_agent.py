@@ -62,7 +62,7 @@ class WebhookAgent(TriggerNode):
         async def webhook_endpoint(request: Request):
             try:
                 payload = await request.json()
-                self.logger.info("webhook_received", payload=payload, endpoint=full_path, agent_node_id=agent_node_id)
+                self.logger.info("webhook_received", endpoint=full_path, agent_node_id=agent_node_id)
                 
                 json_payload = json.dumps(payload)
                 workflow_result = await self.execute_dynamic_agent(agent_node_id, json_payload)
