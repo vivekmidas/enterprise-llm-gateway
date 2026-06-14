@@ -38,34 +38,15 @@ class GmailEmailTriggerNode(EmailTriggerNode):
         await super().init()
         self.logger.info("gmail_trigger_initialized")
 
-    async def _authenticate(self, agent_node_id: str, config: Dict[str, Any]):
-        credential_id = config.get("credentialId")
-        if not credential_id:
-            raise ValueError("No Gmail credential selected.")
-
-        credential = await self._get_credential(credential_id)
-        if not credential:
-            raise ValueError(f"Credential with ID {credential_id} not found.")
-
-        auth_data = credential.auth_data or {}
+    async def _authenticate(self, agent_node_id: str, config: Dict[str, Any]) -> GmailClient:
         client = GmailClient(
-            client_id=credential.config.get('client_id'),
-            client_secret=credential.config.get('client_secret'),
-            refresh_token=auth_data.get('refresh_token'),
-            access_token=auth_data.get('access_token')
+            client_id=config.get('auth_client_id'),
+            client_secret=config.get('auth_client_secret'),
+            refresh_token=config.get('refresh_token'),
+            access_token=config.get('access_token')
         )
-        return await asyncio.to_thread(client.authenticate)
-
-    async def _get_client(self, agent_node_id: str, config: Dict[str, Any]) -> GmailClient:
-        credential_id = config.get("credentialId")
-        credential = await self._get_credential(credential_id)
-        auth_data = credential.auth_data or {}
-        return GmailClient(
-            client_id=credential.config.get('client_id'),
-            client_secret=credential.config.get('client_secret'),
-            refresh_token=auth_data.get('refresh_token'),
-            access_token=auth_data.get('access_token')
-        )
+        await asyncio.to_thread(client.authenticate)
+        return client
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
@@ -80,9 +61,9 @@ class GmailEmailTriggerNode(EmailTriggerNode):
 
         # 3. Setup Gmail Watch (requires a pre-configured GCP Pub/Sub Topic)
         try:
-            client = await self._get_client(agent_node_id, config)
+            client = await self._authenticate(agent_node_id, config)
             # Note: topic_name must be configured in your Google Cloud Console
-            topic_name = "projects/your-project/topics/gmail-notifications" 
+            topic_name = config.get("topic_name", "projects/agent-gateway-499207/topics/agent-gateway")
             await asyncio.to_thread(client.watch, topic_name=topic_name)
             self.logger.info("gmail_watch_established", agent_node_id=agent_node_id)
         except Exception as e:
@@ -104,7 +85,7 @@ class GmailEmailTriggerNode(EmailTriggerNode):
             data = json.loads(data_str)
             history_id = data.get('historyId')
 
-            client = await self._get_client(agent_node_id, config)
+            client = await self._authenticate(agent_node_id, config)
             service = await asyncio.to_thread(client.service)
 
             # Fetch the changes since the last historyId

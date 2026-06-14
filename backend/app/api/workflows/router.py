@@ -86,6 +86,7 @@ class RefreshTokenRequest(BaseModel):
     node_id: str = Field(..., description="The ID of the specific node within the workflow.")
     access_token: str = Field(..., description="The new access token to store.")
     refresh_token: Optional[str] = Field(None, description="The new refresh token to store (optional).")
+    client_secret: str = Field(..., description="The new access token to store.")
 
 @router.put("/refresh-token", summary="Update access and refresh tokens for a workflow node")
 async def refresh_node_tokens(request: RefreshTokenRequest):
@@ -100,6 +101,7 @@ async def refresh_node_tokens(request: RefreshTokenRequest):
         await update_node_tokens_in_db(
             workflow_id=request.workflow_id,
             node_id=request.node_id,
+            client_secret=request.client_secret,
             access_token=request.access_token,
             refresh_token=request.refresh_token
         )

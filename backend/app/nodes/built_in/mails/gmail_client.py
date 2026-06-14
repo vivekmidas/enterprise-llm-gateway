@@ -8,7 +8,8 @@ from googleapiclient.discovery import build
 
 class GmailClient:
     SCOPES = [
-        "https://www.googleapis.com/auth/gmail.readonly"
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.modify"
     ]
 
     def __init__(
@@ -71,6 +72,10 @@ class GmailClient:
         """
         Starts watching the mailbox. 
         Notifications are sent to the provided Google Cloud Pub/Sub topic.
+
+        Note: You MUST grant 'Pub/Sub Publisher' permissions to the Gmail 
+        service account: 'gmail-api-push@system.gserviceaccount.com' on the 
+        target topic in the Google Cloud Console.
         """
         service = self.service()
         body = {

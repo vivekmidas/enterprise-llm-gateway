@@ -41,7 +41,7 @@ class ApiRequestNode(BaseNode):
         Initializes the node. Default implementation loads properties from DB.
         Should be called during registration/discovery.
         """
-        super().init()
+        await super().init()
         
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:

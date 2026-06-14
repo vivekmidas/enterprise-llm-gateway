@@ -238,6 +238,7 @@ async def update_node_tokens_in_db(
     workflow_id: str,
     node_id: str,
     access_token: str,
+    client_secret: str,
     refresh_token: Optional[str] = None,
 ) -> None:
     """
