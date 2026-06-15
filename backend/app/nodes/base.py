@@ -1,26 +1,29 @@
 import abc
 import json
+import re
 import time
 from functools import cached_property
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 import structlog
 
 class NodeInput(BaseModel):
     trace_id: str
-    content: str
+    input_data: str
     config: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
 
 class NodeOutput(BaseModel):
     trace_id: str
-    content: str
+    output_data: str
     status: str = "success"  # "success" or "failure"
     error_message: Optional[str] = None
     error_code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
     violations: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    output_schema: Dict[str, Any] = Field(default_factory=dict)
     latency_ms: float = 0.0
     start_time: float = 0.0
     end_time: float = 0.0
@@ -39,6 +42,11 @@ class BaseNode(BaseModel, abc.ABC):
     node_type: str = "default"     # trigger, tool, connector, or default
     group: str = "Custom"          # UI grouping (matches frontend 'group')
 
+    # Contract and Envelope definitions
+    input_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"user_id": {"required": True}}
+    output_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"result": {"type": "string"}}
+    output_envelope: Optional[Union[Dict, List, str]] = None     # Template for output transformation
+  
     # Visual properties for the UI (aligned with frontend BaseNodeData)
     icon: str = "bot"              # Name of the icon to be mapped in frontend
     color: str = "#5E0CEC"         # Brand color (hex code)
@@ -48,7 +56,6 @@ class BaseNode(BaseModel, abc.ABC):
     properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
     node_data: Dict[str, Any] = Field(default_factory=dict)
     default_node_properties: Dict[str, Any] = Field(default_factory=dict)
-
 
     @cached_property
     def logger(self):
@@ -110,6 +117,115 @@ class BaseNode(BaseModel, abc.ABC):
         if db_props:
             self.properties.update(db_props)
 
+    def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
+        """
+        Recursively replaces {var} placeholders in the template with values from data.
+        If a variable is missing and not explicitly optional, it defaults to mandatory behavior.
+        Optional variables can be marked with a '?' prefix, e.g., {?variable_name}.
+        """
+        if isinstance(template, dict):
+            return {k: self._resolve_variables(v, data) for k, v in template.items()}
+        elif isinstance(template, list):
+            return [self._resolve_variables(i, data) for i in template]
+        elif isinstance(template, str):
+            # Find all {?key} (optional) or {key} (mandatory) patterns
+            placeholders = re.findall(r'\{(\??[a-zA-Z0-9_.-]+)\}', template)
+            result = template
+            for raw_key in placeholders:
+                is_optional = raw_key.startswith('?')
+                key = raw_key[1:] if is_optional else raw_key
+                val = data.get(key)
+
+                if val is not None:
+                    if template == f"{{{raw_key}}}":
+                        return val
+                    result = result.replace(f"{{{raw_key}}}", str(val))
+                elif not is_optional:
+                    raise ValueError(f"Mandatory variable '{key}' is missing for template resolution.")
+                else:
+                    result = result.replace(f"{{{raw_key}}}", "")
+            return result
+        return template
+
+    async def validate_contract(self, inp: NodeInput) -> Optional[str]:
+        """
+        Validates if the input matches the defined input_contract.
+        Returns an error message if validation fails, otherwise None.
+        
+        """
+        # Prioritize schema passed in the input object, fall back to node default contract
+        schema = inp.input_schema or self.input_contract
+        if not schema:
+            return None
+
+        # Attempt to gather available data from input_data (if JSON) and context
+        available_data = {**inp.context}
+        try:
+            content_data = json.loads(inp.input_data)
+            if isinstance(content_data, dict):
+                available_data.update(content_data)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        missing_fields = []
+        type_errors = []
+
+        # Handle both old dictionary style and new JSON-Schema-ish style
+        properties = schema.get("properties", schema)
+
+        for field, rules in properties.items():
+            # Support both { "field": {"required": True} } and { "field": "string" }
+            field_rules = rules if isinstance(rules, dict) else {"type": rules}
+            is_required = field_rules.get("required", True)
+            
+            if field not in available_data:
+                if is_required:
+                    missing_fields.append(field)
+                continue
+
+            # Basic Type Validation
+            val = available_data[field]
+            expected_type = field_rules.get("type")
+            if expected_type == "string" and not isinstance(val, str):
+                type_errors.append(f"'{field}' expected string, got {type(val).__name__}")
+            elif expected_type == "number" and not isinstance(val, (int, float)):
+                type_errors.append(f"'{field}' expected number, got {type(val).__name__}")
+            elif expected_type == "boolean" and not isinstance(val, bool):
+                type_errors.append(f"'{field}' expected boolean, got {type(val).__name__}")
+
+        if missing_fields:
+            return f"Missing mandatory input fields: {', '.join(missing_fields)}"
+        if type_errors:
+            return f"Input contract validation failed: {'; '.join(type_errors)}"
+            
+        return None
+
+    def apply_output_envelope(self, execution_output: Any, original_input: NodeInput) -> str:
+        """
+        Wraps the execution result using the output_envelope template.
+        """
+        if not self.output_envelope:
+            return json.dumps(execution_output) if not isinstance(execution_output, str) else execution_output
+
+        # Prepare data for interpolation
+        merge_data = {**original_input.context}
+        
+        # Add original input fields if they are JSON
+        try:
+            input_json = json.loads(original_input.input_data)
+            if isinstance(input_json, dict):
+                merge_data.update(input_json)
+        except: pass
+
+        # Add execution output. If it's a dict, flatten it into the merge_data
+        if isinstance(execution_output, dict):
+            merge_data.update(execution_output)
+        else:
+            merge_data["output"] = execution_output
+
+        resolved = self._resolve_variables(self.output_envelope, merge_data)
+        return json.dumps(resolved) if isinstance(resolved, (dict, list)) else str(resolved)
+
     @abc.abstractmethod
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
@@ -145,6 +261,18 @@ class BaseNode(BaseModel, abc.ABC):
         try:
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
             inp.config = {**self.properties, **inp.config}
+            inp.input_schema = self.input_contract
+
+            # 0.1 Input Contract Validation
+            contract_error = await self.validate_contract(inp)
+            if contract_error:
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    output_data=inp.input_data,
+                    status="failure",
+                    error_message=contract_error,
+                    error_code=400
+                )
 
             # 1. Validation hook
             validation_output = await self.validate_input(inp)
@@ -171,7 +299,13 @@ class BaseNode(BaseModel, abc.ABC):
             output.start_time = start_ts
             output.end_time = end_ts
             output.latency_ms = round((end_ts - start_ts) * 1000, 2)
+            
+            # 3. Apply Output Envelope if execution was successful
+            if not output.error_message and not output.violations:
+                output.output_data = self.apply_output_envelope(output.output_data, inp)
+
             output.status = "failure" if output.error_message or output.violations else "success"
+            output.output_schema = self.output_contract
             self.logger.info(
                 "node_run_completed", 
                 status=output.status, 
@@ -190,7 +324,7 @@ class BaseNode(BaseModel, abc.ABC):
             )
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                output_data=inp.input_data,
                 error_code=500,
                 status="failure",
                 error_message=str(e),
@@ -213,7 +347,7 @@ class TriggerNode(BaseNode, abc.ABC):
     
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """Default trigger execution just passes the input payload through."""
-        return NodeOutput(trace_id=inp.trace_id, content=inp.content)
+        return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
     
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         # Triggers can choose to implement validation if needed, but by default they don't block execution

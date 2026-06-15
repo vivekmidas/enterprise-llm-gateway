@@ -46,6 +46,7 @@ class GenericLLMAgent(BaseNode):
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """Validates that input content is present before execution."""
+        await super().validate_input(inp)
         if not inp.content or not inp.content.strip():
             return NodeOutput(
                 trace_id=inp.trace_id,

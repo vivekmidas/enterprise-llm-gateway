@@ -90,10 +90,11 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
 
                 agent_input = NodeInput(
                     trace_id=state.trace_id,
-                    content=state.masked_content or state.content,
+                    input_data=state.masked_content or state.content,
                     config=node_config or {},
                     context=state.context,
-                    metadata=state.metadata
+                    metadata=state.metadata,
+                    input_schema=getattr(agent, "input_contract", {})
                 )
 
                 # Standardized execution wrapper from base.py
@@ -113,8 +114,8 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
                 # Return ONLY the fields that changed. Returning the full state object (model_copy)
                 # causes conflicts on unchanged keys (like trace_id) during parallel execution steps.
                 updates = {
-                    "content": result.content,
-                    "masked_content": result.content,
+                    "content": result.output_data,
+                    "masked_content": result.output_data,
                 }
 
                 # Return only what changed. Metadata and violations should be merged by LangGraph reducers.
@@ -219,7 +220,7 @@ class WorkflowExecutor:
             if not agent:
                 from app.nodes.base import BaseNode
                 class PassthroughNode(BaseNode):
-                    async def execute(self, inp): return NodeOutput(trace_id=inp.trace_id, content=inp.content)
+                    async def execute(self, inp): return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
                     async def init(self): pass
                     async def validate_input(self, inp): return None
                 agent = PassthroughNode(name=agent_name or "passthrough")
@@ -292,10 +293,11 @@ class WorkflowExecutor:
 
                     agent_input = NodeInput(
                         trace_id=state.trace_id,
-                        content=state.masked_content or state.content,
+                        input_data=state.masked_content or state.content,
                         config=node_config or {},
                         context=state.context,
-                        metadata=state.metadata
+                        metadata=state.metadata,
+                        input_schema=getattr(agent, "input_contract", {})
                     )
 
                     # Call run() to leverage the standardized wrapper (logging, validation, timing)
@@ -314,8 +316,8 @@ class WorkflowExecutor:
 
                     # Return ONLY the fields that changed.
                     updates = {
-                        "content": result.content,
-                        "masked_content": result.content,
+                        "content": result.output_data,
+                        "masked_content": result.output_data,
                     }
 
                     # Return only what changed. Metadata and violations are merged by LangGraph reducers.

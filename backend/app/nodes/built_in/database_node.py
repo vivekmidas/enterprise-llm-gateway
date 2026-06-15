@@ -49,6 +49,7 @@ class DatabaseNode(BaseNode):
         await super().init()
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
+        await super().validate_input(inp)
         config = inp.config
         if not config.get("query"):
             return NodeOutput(

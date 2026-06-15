@@ -8,6 +8,8 @@ class ContextSetterAgent(BaseNode):
     category: str = "Context Enrichment"
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        await super().validate_input(inp)
+        
         if not inp.context or "user_id" not in inp.context:
             return NodeOutput(
                 trace_id=inp.trace_id,

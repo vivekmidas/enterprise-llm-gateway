@@ -53,6 +53,9 @@ class NodeDB(Base):
     sub_label = Column(String, nullable=True)
     property_schema = Column(JSON)
     properties = Column(JSON)
+    input_contract=Column(JSON)
+    output_contract=Column(JSON)
+
     
 class WorkflowNodeDB(Base):
     __tablename__ = "workflow_nodes"
@@ -78,7 +81,7 @@ class WorkflowDB(Base):
     updated_at = Column(String)
     is_enabled = Column(Boolean, default=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True, index=True)
-    created_by = Column(String, nullable=True, index=True) # User ID of the creator
+    user_id = Column(String, nullable=True, index=True) # User ID of the creator
     
 
 class WorkflowNodePropertyDB(Base):

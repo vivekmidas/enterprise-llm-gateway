@@ -46,6 +46,10 @@ class NodesRegistry:
                         node.properties.update(external_data["properties"])
                     if "property_schema" in external_data:
                         node.property_schema = external_data["property_schema"]
+                    if "input_contract" in external_data:
+                        node.input_contract = external_data["input_contract"]
+                    if "output_contract" in external_data:
+                        node.output_contract = external_data["output_contract"]
                     cls.logger.debug("node_properties_enriched", name=node.name)
             except Exception as e:
                 cls.logger.error("failed_to_enrich_node", name=node.name, error=str(e))
@@ -160,7 +164,9 @@ class NodesRegistry:
                             badge=node.badge,
                             sub_label=node.sub_label,
                             property_schema=node.property_schema,
-                            properties=node.properties
+                            properties=node.properties,
+                            input_contract=node.input_contract,
+                            output_contract=node.output_contract
                         ))
                         cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
                     else:
@@ -180,6 +186,17 @@ class NodesRegistry:
                                 db_node.property_schema = node.property_schema
                                 session.add(db_node) # Mark the db_node for update
                                 cls.logger.info("node_db_schema_updated", name=node_name, client_id=client_id)
+
+                            if node.input_contract != db_node.input_contract:
+                                db_node.input_contract = node.input_contract
+                                session.add(db_node)
+                                cls.logger.info("node_db_input_contract_updated", name=node_name)
+
+                            if node.output_contract != db_node.output_contract:
+                                db_node.output_contract = node.output_contract
+                                session.add(db_node)
+                                cls.logger.info("node_db_output_contract_updated", name=node_name)
+
                             node.properties.update(db_node.properties)
                         cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
 

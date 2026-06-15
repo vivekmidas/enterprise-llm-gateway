@@ -3,6 +3,7 @@ from typing import Optional, List
 import structlog
 
 from app.api.workflows.schemas import WorkflowSaveRequest
+from app.nodes.registry import NodesRegistry
 from app.workflows.store import update_node_tokens_in_db
 from pydantic import BaseModel, Field
 from app.workflows.store import (
@@ -43,7 +44,41 @@ async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
 @router.get("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
 async def get_node_properties(workflow_id: str, agent_node_id: str):
     logger.info("get_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
-    return await get_workflow_node_properties(workflow_id, agent_node_id)
+    
+    # Fetch the instance-specific property values (e.g., API keys, IPs)
+    properties = await get_workflow_node_properties(workflow_id, agent_node_id)
+    
+    # Fetch the workflow definition to identify the node's type for schema retrieval
+    workflow = await load_workflow_from_store(workflow_id)
+    property_schema = []
+    
+    if workflow:
+        # Safely extract the list of nodes regardless of whether workflow is a dict or Pydantic model
+        if isinstance(workflow, dict):
+            nodes = workflow.get("nodes_structure") or workflow.get("nodes") or []
+        else:
+            nodes = getattr(workflow, "nodes_structure", []) or getattr(workflow, "nodes", [])
+            
+        # Find the node using attribute access for Pydantic models or .get() for dictionaries
+        node_entry = next(
+            (n for n in nodes if (getattr(n, "id", None) if not isinstance(n, dict) else n.get("id")) == agent_node_id), 
+            None
+        )
+
+        if node_entry:
+            # Extract node data and type name (the registry key)
+            node_data = getattr(node_entry, "data", {}) if not isinstance(node_entry, dict) else node_entry.get("data", {})
+            node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
+            if not node_type:
+                node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
+
+            if node_type:
+                # Look up the static definition in the registry to get the field schema
+                registry_agent = NodesRegistry.get_node(node_type)
+                if registry_agent:
+                    property_schema = registry_agent.get_properties()
+
+    return {"properties": properties, "property_schema": property_schema}
 
 
 @router.put("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
@@ -53,7 +88,7 @@ async def update_node_properties(workflow_id: str, agent_node_id: str, propertie
 
 
 # Note: In a real implementation, 'get_current_user' would be imported from your auth module
-async def get_current_user(): return {"id": "user_123", "role": "admin"}
+async def get_current_user(): return {"id": "1", "role": "admin"}
 
 @router.patch("/{workflow_id}/toggle", response_model=dict)
 async def toggle_workflow_status(workflow_id: str):
@@ -70,7 +105,9 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: dict = Dep
     # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
     workflow = WorkflowDefinition(
         **request.model_dump(),
-        version="1"
+        version="1",
+        user_id=current_user.get("id"),
+        
     )
     try:
         saved_workflow = await save_workflow(workflow, user_id=current_user.get("id"))

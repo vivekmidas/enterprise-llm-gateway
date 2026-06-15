@@ -50,6 +50,7 @@ class ApiRequestNode(BaseNode):
         pre-execution checks.
         """
         self.logger.debug("Validating input", trace_id=inp.trace_id)
+        await super().validate_input(inp)
         if not inp.content:
             return NodeOutput(
                 trace_id=inp.trace_id,

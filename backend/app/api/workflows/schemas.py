@@ -10,6 +10,7 @@ class WorkflowSaveRequest(BaseModel):
     is_enabled: bool = True
     
     nodes_structure: List[Dict[str, Any]] = Field(default_factory=list, alias="nodes")
+    properties: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     category: Optional[str] = "default"
 

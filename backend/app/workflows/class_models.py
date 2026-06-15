@@ -18,6 +18,7 @@ class WorkflowDefinition(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = "default"
     nodes_structure: List[NodeConfig]
+    properties: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     edges: List[Dict]  # or EdgeConfig model
     entry_point: str = "input_guard"
     is_enabled: bool = True
@@ -25,3 +26,4 @@ class WorkflowDefinition(BaseModel):
     #metadata: Dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     model_config = ConfigDict(extra='allow')
+    user_id: str

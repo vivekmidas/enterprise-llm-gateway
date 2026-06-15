@@ -9,6 +9,8 @@ class CustomRuleGuardAgent(BaseNode):
     category: str = "Guardrails"
     
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
+        await super().validate_input(inp)
+        
         return NodeOutput(
             trace_id=inp.trace_id,
             content=inp.content,

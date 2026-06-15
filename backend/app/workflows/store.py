@@ -125,6 +125,34 @@ async def _load_workflow_node_properties(
     }
 
 
+def _build_workflow_definition_from_db(db_workflow: WorkflowDB) -> WorkflowDefinition:
+    """
+    Reconstructs a WorkflowDefinition by merging column-level metadata 
+    with the ReactFlow-specific graph data in the definition JSON.
+    """
+    raw_ui_data = _safe_json_loads(db_workflow.definition, {})
+    
+    # ReactFlow nodes and edges might be stored under specific keys
+    nodes = raw_ui_data.get("nodes") or raw_ui_data.get("nodes_structure") or []
+    edges = raw_ui_data.get("edges") or []
+
+    # Reconstruct the definition object using DB columns for metadata
+    definition_dict = {
+        **raw_ui_data,  # Preserves extra UI state like viewport
+        "id": db_workflow.id,
+        "name": db_workflow.name,
+        "description": db_workflow.description,
+        "version": str(db_workflow.version),
+        "category": db_workflow.category,
+        "is_enabled": db_workflow.is_enabled,
+        "user_id": db_workflow.user_id,
+        "updated_at": db_workflow.updated_at,
+        "nodes_structure": nodes,
+        "edges": edges
+    }
+    return WorkflowDefinition.model_validate(definition_dict)
+
+
 async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> dict:
     async with AsyncSessionLocal() as session:
         workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
@@ -304,15 +332,10 @@ async def toggle_workflow_in_store(workflow_id: str) -> dict:
             db_workflow.is_enabled = not db_workflow.is_enabled
             db_workflow.updated_at = datetime.utcnow().isoformat()
             
-            # Update the JSON definition as well to stay in sync
-            definition = _safe_json_loads(db_workflow.definition, {})
-            definition["is_enabled"] = db_workflow.is_enabled
-            db_workflow.definition = definition
-            
             await workflow_cache.invalidate_agent(workflow_id)
             return {"id": workflow_id, "is_enabled": db_workflow.is_enabled}
 
-async def save_workflow_to_store(definition: WorkflowDefinition, user_id: Optional[str] = None) -> dict:
+async def save_workflow_to_store(definition: WorkflowDefinition, user_id: str = None) -> dict:
     """
     Save workflow definition to database + invalidate Redis cache.
     """
@@ -343,9 +366,15 @@ async def save_workflow_to_store(definition: WorkflowDefinition, user_id: Option
                     db_workflow.version = int(sanitized_definition.version) if str(sanitized_definition.version).isdigit() else 1
                     db_workflow.is_enabled = sanitized_definition.is_enabled
                     db_workflow.category = sanitized_definition.category or "default"
-                    db_workflow.definition = sanitized_definition.model_dump(mode="json")
+                    
+                    # Only store ReactFlow/UI specific data in the definition column
+                    db_workflow.definition = {
+                        "nodes": [n.model_dump(mode="json") for n in sanitized_definition.nodes_structure],
+                        "edges": sanitized_definition.edges,
+                        "entry_point": sanitized_definition.entry_point
+                    }
                     if user_id:
-                        db_workflow.created_by = user_id
+                        db_workflow.user_id = user_id
                     db_workflow.updated_at = datetime.utcnow().isoformat()
                     
                     # 2. Sync Node-to-Workflow associations
@@ -367,6 +396,7 @@ async def save_workflow_to_store(definition: WorkflowDefinition, user_id: Option
                         catalog_node = catalog_result.scalar_one_or_none()
                         instance_properties = {
                             **_default_properties_from_node_definition(catalog_node),
+                            **definition.properties.get(n_dict.get("id"), {}),
                             **_extract_node_properties(n_dict),
                         }
                         
@@ -417,8 +447,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
                 if not db_workflow:
                     raise FileNotFoundError
                 
-                raw_definition = _safe_json_loads(db_workflow.definition, {})
-                definition = WorkflowDefinition.model_validate(raw_definition)
+                definition = _build_workflow_definition_from_db(db_workflow)
                 return await _hydrate_workflow_definition(session, definition)
         except FileNotFoundError:
             logger.warning("agent_not_found", agent_id=agent_id, version=version)
@@ -443,13 +472,12 @@ async def list_workflows_from_store() -> list:
                 result = await session.execute(stmt)
                 workflows = []
                 for workflow in result.scalars().all():
-                    raw_definition = _safe_json_loads(workflow.definition, {})
-                    definition = WorkflowDefinition.model_validate(raw_definition)
+                    definition = _build_workflow_definition_from_db(workflow)
                     workflows.append(await _hydrate_workflow_definition(session, definition))
                 return workflows
         except Exception as e:
             logger.error("failed_to_list_agents", error=str(e))
-            return []
+            return workflows
 
 
 async def delete_workflow_from_store(workflow_id: str, version: Optional[str] = None) -> bool:
