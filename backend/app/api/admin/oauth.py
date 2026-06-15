@@ -7,7 +7,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.db_models import CredentialDB, OAuthProviderDB
 from sqlalchemy import select
 
-router = APIRouter(prefix="/admin/auth", tags=["Authentication"])
+router = APIRouter(prefix="/admin/oauth", tags=["Authentication"])
 logger = structlog.get_logger(__name__)
 
 @router.get("/providers", response_model=List[Dict[str, Any]])
@@ -107,7 +107,7 @@ async def auth_callback(provider: str, code: str, state: str):
                 # Return a script that closes the window and sends a message to the opener
                 # This allows the frontend to update its state with the new credential ID
                 return RedirectResponse(
-                    url=f"/admin/auth/callback/success?credentialId={credential.id}&credentialName={name}",
+                    url=f"/admin/oauth/callback/success?credentialId={credential.id}&credentialName={name}",
                     status_code=302
                 )
             except httpx.HTTPStatusError as e:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Response, status, Depends
 from typing import Optional, List
 import structlog
 
@@ -10,6 +10,7 @@ from app.workflows.store import (
     load_workflow_from_store,
     list_workflows_from_store,
     update_workflow_node_properties,
+    toggle_workflow_in_store,
 )
 
 from app.workflows.service import save_workflow, delete_workflow, get_workflow
@@ -51,8 +52,20 @@ async def update_node_properties(workflow_id: str, agent_node_id: str, propertie
     return await update_workflow_node_properties(workflow_id, agent_node_id, properties)
 
 
+# Note: In a real implementation, 'get_current_user' would be imported from your auth module
+async def get_current_user(): return {"id": "user_123", "role": "admin"}
+
+@router.patch("/{workflow_id}/toggle", response_model=dict)
+async def toggle_workflow_status(workflow_id: str):
+    logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
+    try:
+        return await toggle_workflow_in_store(workflow_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("", response_model=dict)
-async def create_workflow(request: WorkflowSaveRequest):
+async def create_workflow(request: WorkflowSaveRequest, current_user: dict = Depends(get_current_user)):
     logger.info("create_workflow_request", workflow_id=request.id, name=request.name)
     # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
     workflow = WorkflowDefinition(
@@ -60,7 +73,7 @@ async def create_workflow(request: WorkflowSaveRequest):
         version="1"
     )
     try:
-        saved_workflow = await save_workflow(workflow)
+        saved_workflow = await save_workflow(workflow, user_id=current_user.get("id"))
         logger.info("create_workflow_success", workflow_id=request.id)
         return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
     except Exception as e:
@@ -69,8 +82,13 @@ async def create_workflow(request: WorkflowSaveRequest):
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(workflow_id: str, version: Optional[str] = None):
+async def remove_workflow(workflow_id: str, version: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     logger.info("remove_workflow_request", workflow_id=workflow_id, version=version)
+    
+    if current_user.get("role") == "admin":
+        logger.warning("admin_delete_restricted", workflow_id=workflow_id)
+        raise HTTPException(status_code=403, detail="Admins can disable workflows but are restricted from deleting them.")
+
     success = await delete_workflow(workflow_id, version)
     if not success:
         logger.warning("remove_workflow_not_found", workflow_id=workflow_id, version=version)

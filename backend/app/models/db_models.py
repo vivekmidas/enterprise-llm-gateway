@@ -1,7 +1,31 @@
 from sqlalchemy import Column, String, JSON, Integer, Boolean
+from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey
 from app.core.database import Base
 from datetime import datetime
 
+
+class CompanyDB(Base):
+    __tablename__ = "companies"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    domain = Column(String, unique=True, index=True, nullable=True)  # Useful for auto-assigning users via SSO
+    status = Column(String, default="active")  # active, suspended
+    dateadded = Column(String, default=lambda: datetime.utcnow().isoformat())
+    dateupdated = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
+class UserDB(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email_id = Column(String, unique=True, index=True)
+    password = Column(String, nullable=False)  # Store bcrypt hashed password
+    name = Column(String, nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    status = Column(String, default="active")  # active, deactivated, suspended
+    role = Column(String, default="user")     # admin, user
+    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
 
 class CategoryDB(Base):
@@ -53,6 +77,8 @@ class WorkflowDB(Base):
     definition = Column(JSON, nullable=True)
     updated_at = Column(String)
     is_enabled = Column(Boolean, default=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True, index=True)
+    created_by = Column(String, nullable=True, index=True) # User ID of the creator
     
 
 class WorkflowNodePropertyDB(Base):

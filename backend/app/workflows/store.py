@@ -288,7 +288,31 @@ async def update_node_tokens_in_db(
         await workflow_cache.invalidate_agent(workflow_id)
         logger.info("node_tokens_updated", workflow_id=workflow_id, node_id=node_id)
 
-async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
+async def toggle_workflow_in_store(workflow_id: str) -> dict:
+    """
+    Toggles the is_enabled flag for a workflow.
+    """
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            stmt = select(WorkflowDB).where(WorkflowDB.id == workflow_id)
+            result = await session.execute(stmt)
+            db_workflow = result.scalar_one_or_none()
+            
+            if not db_workflow:
+                raise HTTPException(status_code=404, detail="Workflow not found")
+            
+            db_workflow.is_enabled = not db_workflow.is_enabled
+            db_workflow.updated_at = datetime.utcnow().isoformat()
+            
+            # Update the JSON definition as well to stay in sync
+            definition = _safe_json_loads(db_workflow.definition, {})
+            definition["is_enabled"] = db_workflow.is_enabled
+            db_workflow.definition = definition
+            
+            await workflow_cache.invalidate_agent(workflow_id)
+            return {"id": workflow_id, "is_enabled": db_workflow.is_enabled}
+
+async def save_workflow_to_store(definition: WorkflowDefinition, user_id: Optional[str] = None) -> dict:
     """
     Save workflow definition to database + invalidate Redis cache.
     """
@@ -320,6 +344,8 @@ async def save_workflow_to_store(definition: WorkflowDefinition) -> dict:
                     db_workflow.is_enabled = sanitized_definition.is_enabled
                     db_workflow.category = sanitized_definition.category or "default"
                     db_workflow.definition = sanitized_definition.model_dump(mode="json")
+                    if user_id:
+                        db_workflow.created_by = user_id
                     db_workflow.updated_at = datetime.utcnow().isoformat()
                     
                     # 2. Sync Node-to-Workflow associations
