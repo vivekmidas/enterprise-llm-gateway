@@ -202,6 +202,8 @@ class NodesRegistry:
                                 node.input_contract = db_node.input_contract
                             if db_node.output_contract:
                                 node.output_contract = db_node.output_contract
+                            if db_node.property_schema:
+                                node.property_schema = db_node.property_schema
                         cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
 
             cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)

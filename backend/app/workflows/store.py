@@ -254,6 +254,8 @@ async def _hydrate_workflow_definition(
         if catalog_node:
             data["property_schema"] = catalog_node.property_schema or []
             data["propertySchema"] = catalog_node.property_schema or []
+            data["input_contract"] = catalog_node.input_contract or {}
+            data["output_contract"] = catalog_node.output_contract or {}
 
         data["properties"] = properties
         n_dict["data"] = data
@@ -373,8 +375,12 @@ async def save_workflow_to_store(definition: WorkflowDefinition, user_id: str = 
                         "edges": sanitized_definition.edges,
                         "entry_point": sanitized_definition.entry_point
                     }
-                    if user_id:
-                        db_workflow.user_id = user_id
+                    
+                    # Priority: 1. Explicit user_id argument, 2. user_id from definition
+                    target_user_id =  sanitized_definition.user_id
+                    if target_user_id:
+                        db_workflow.user_id = target_user_id
+                        
                     db_workflow.updated_at = datetime.utcnow().isoformat()
                     
                     # 2. Sync Node-to-Workflow associations

@@ -70,17 +70,25 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
         if node_entry:
             # Extract node data and type name (the registry key)
             node_data = getattr(node_entry, "data", {}) if not isinstance(node_entry, dict) else node_entry.get("data", {})
-            node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
-            if not node_type:
-                node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
+            
+            # Prioritize data hydrated from NodeDB (the catalog) during load_workflow_from_store
+            property_schema = node_data.get("property_schema") or node_data.get("propertySchema") or []
+            input_contract = node_data.get("input_contract") or {}
+            output_contract = node_data.get("output_contract") or {}
 
-            if node_type:
-                # Look up the static definition in the registry to get the field schema
-                registry_agent = NodesRegistry.get_node(node_type)
-                if registry_agent:
-                    property_schema = registry_agent.get_properties()
-                    input_contract = registry_agent.input_contract
-                    output_contract = registry_agent.output_contract
+            # Fallback to registry only if hydration didn't provide schema/contracts
+            if not property_schema:
+                node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
+                if not node_type:
+                    node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
+
+                if node_type:
+                    # Look up the static definition in the registry as a fallback
+                    registry_agent = NodesRegistry.get_node(node_type)
+                    if registry_agent:
+                        property_schema = registry_agent.get_properties()
+                        if not input_contract: input_contract = registry_agent.input_contract
+                        if not output_contract: output_contract = registry_agent.output_contract
 
     return {
         "properties": properties, 
@@ -108,21 +116,35 @@ async def toggle_workflow_status(workflow_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("", response_model=dict)
+@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_workflow(request: WorkflowSaveRequest):
-    logger.info("create_workflow_request", workflow_id=request.id, name=request.name)
-    # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
-    workflow = WorkflowDefinition(
-        **request.model_dump(),
-        version="1",
+    user_id = request.user_id
+    logger.info("create_workflow_request", workflow_id=request.id, name=request.name, user_id=user_id)
+    
+    request_data = request.model_dump()
+    
+    # Fix 1: Clean up input_contract, output_contract, and property_schema from nodes before saving
+    # These are part of the node definition, not the workflow instance configuration.
+    if "nodes_structure" in request_data and isinstance(request_data["nodes_structure"], list):
+        for node in request_data["nodes_structure"]:
+            if "data" in node and isinstance(node["data"], dict):
+                node["data"].pop("input_contract", None)
+                node["data"].pop("output_contract", None)
+                node["data"].pop("property_schema", None)
+                node["data"].pop("propertySchema", None)
 
+    # Create definition; user_id is automatically picked up from request_data
+    workflow = WorkflowDefinition(
+        **request_data,
+        version="1"
     )
+
     try:
         saved_workflow = await save_workflow(workflow)
         logger.info("create_workflow_success", workflow_id=request.id)
         return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
     except Exception as e:
-        logger.error("create_workflow_error", workflow_id=request.id, name=request.name, error=str(e))
+        logger.error("create_workflow_error", workflow_id=request.id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")
 
 

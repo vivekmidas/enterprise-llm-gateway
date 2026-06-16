@@ -18,7 +18,6 @@ class NodeInput(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    input_schema: Dict[str, Any] = Field(default_factory=dict)
 
 class NodeOutput(BaseModel):
     trace_id: str
@@ -28,7 +27,6 @@ class NodeOutput(BaseModel):
     error_code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
     violations: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    output_schema: Dict[str, Any] = Field(default_factory=dict)
     latency_ms: float = 0.0
     start_time: float = 0.0
     end_time: float = 0.0
@@ -60,8 +58,7 @@ class BaseNode(BaseModel, abc.ABC):
     # Contract and Envelope definitions
     input_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"user_id": {"required": True}}
     output_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"result": {"type": "string"}}
-    output_envelope: Optional[Union[Dict, List, str]] = None     # Template for output transformation
-  
+   
     # Visual properties for the UI (aligned with frontend BaseNodeData)
     icon: str = "bot"              # Name of the icon to be mapped in frontend
     color: str = "#5E0CEC"         # Brand color (hex code)
@@ -108,7 +105,8 @@ class BaseNode(BaseModel, abc.ABC):
                     return {
                         "properties": db_node.properties or {},
                         "input_contract": db_node.input_contract or {},
-                        "output_contract": db_node.output_contract or {}
+                        "output_contract": db_node.output_contract or {},
+                        "property_schema": db_node.property_schema or []
                     }
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
@@ -139,6 +137,8 @@ class BaseNode(BaseModel, abc.ABC):
                 self.input_contract = db_data.get("input_contract")
             if db_data.get("output_contract"):
                 self.output_contract = db_data.get("output_contract")
+            if db_data.get("property_schema"):
+                self.property_schema = db_data.get("property_schema")
 
     def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
         """
@@ -155,14 +155,14 @@ class BaseNode(BaseModel, abc.ABC):
             return t.render(**data)
         return template
 
-    async def validate_contract(self, inp: NodeInput) -> Optional[str]:
+    async def validate_input_contract(self, inp: NodeInput) -> Optional[str]:
         """
         Validates if the input matches the defined input_contract.
         Returns an error message if validation fails, otherwise None.
         
         """
         # Prioritize schema passed in the input object, fall back to node default contract
-        schema = inp.input_schema or self.input_contract
+        schema = self.input_contract
         if not schema:
             return None
 
@@ -283,7 +283,7 @@ class BaseNode(BaseModel, abc.ABC):
                 )
 
             # 1. Validation hook
-            validation_output = await self.validate_input(inp)
+            validation_output = await self.validate_input_contract(inp)
             if validation_output:
                 end_ts = time.time()
                 validation_output.start_time = start_ts

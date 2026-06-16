@@ -31,7 +31,7 @@ async def save_workflow(definition: WorkflowDefinition ) -> dict:
     # if definition.is_enabled:
     #     await activate_workflow(definition)
     
-    logger.info("workflow_save_completed", workflow_id=definition.id, user_id=user_id)
+    logger.info("workflow_save_completed", workflow_id=definition.id, user_id=definition.user_id)
     return result
 
 async def activate_workflow(workflow: WorkflowDefinition):
