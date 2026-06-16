@@ -17,6 +17,19 @@ class WebhookAgent(TriggerNode):
     category: str = "Integration"
     node_type: str = "trigger"
 
+    # Input Contract defines the expected JSON structure for incoming requests
+    input_contract: Dict[str, Any] = {
+        "properties": {
+            "data": {"message": {"type": "string", "required": True}},
+            "time_sent": {"type": "number", "required": True},
+            "auth_token": {"type": "string", "required": False},
+            "source_system": {"type": "string", "required": True},
+            "event_type": {"type": "string", "required": False},
+            "request_id": {"type": "string", "required": False},
+            "environment": {"type": "string", "required": False},
+        }
+    }
+
     # Store server tasks keyed by (host, port)
     _server_tasks: Dict[Tuple[str, int], asyncio.Task] = PrivateAttr(default_factory=dict)
     # Store FastAPI app instances keyed by (host, port)

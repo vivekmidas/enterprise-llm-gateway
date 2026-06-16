@@ -5,6 +5,11 @@ import time
 from functools import cached_property
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
+try:
+    from jinja2.nativetypes import NativeTemplate
+except ImportError:
+    # Fallback to standard Template if nativetypes is unavailable
+    from jinja2 import Template as NativeTemplate
 import structlog
 
 class NodeInput(BaseModel):
@@ -31,6 +36,16 @@ class NodeOutput(BaseModel):
 class BaseNode(BaseModel, abc.ABC):
     """
     Standardized Base Class for all Enterprise LLM Gateway nodes.
+
+    --- DISTINCTION BETWEEN PROPERTIES AND CONTRACTS ---
+    1. Properties (properties & property_schema): 
+       These are CONFIGURATION settings for the node (Design-time). 
+       Example: 'model_name', 'api_endpoint', 'system_prompt'. 
+       The 'property_schema' provides metadata for the UI to render input fields.
+
+    2. Contracts (input_contract & output_contract): 
+       These define the DATA PAYLOAD structure (Run-time). 
+       Example: 'user_query', 'document_text', 'extracted_entities'.
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
@@ -78,7 +93,7 @@ class BaseNode(BaseModel, abc.ABC):
         """Returns the property schema definition for the UI."""
         return getattr(self, "propertySchema", self.property_schema)
 
-    async def _get_db_properties(self) -> Dict[str, Any]:
+    async def _get_db_node_data(self) -> Dict[str, Any]:
         """Fetches properties for this node type from the global catalog in the DB."""
         try:
             from app.core.database import AsyncSessionLocal
@@ -89,8 +104,12 @@ class BaseNode(BaseModel, abc.ABC):
                 stmt = select(NodeDB).where(NodeDB.name == self.name)
                 result = await session.execute(stmt)
                 db_node = result.scalar_one_or_none()
-                if db_node and db_node.properties:
-                    return db_node.properties
+                if db_node:
+                    return {
+                        "properties": db_node.properties or {},
+                        "input_contract": db_node.input_contract or {},
+                        "output_contract": db_node.output_contract or {}
+                    }
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
         return {}
@@ -113,38 +132,27 @@ class BaseNode(BaseModel, abc.ABC):
         Initializes the node. Default implementation loads properties from DB.
         Should be called during registration/discovery.
         """
-        db_props = await self._get_db_properties()
-        if db_props:
-            self.properties.update(db_props)
+        db_data = await self._get_db_node_data()
+        if db_data:
+            self.properties.update(db_data.get("properties", {}))
+            if db_data.get("input_contract"):
+                self.input_contract = db_data.get("input_contract")
+            if db_data.get("output_contract"):
+                self.output_contract = db_data.get("output_contract")
 
     def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
         """
-        Recursively replaces {var} placeholders in the template with values from data.
-        If a variable is missing and not explicitly optional, it defaults to mandatory behavior.
-        Optional variables can be marked with a '?' prefix, e.g., {?variable_name}.
+        Recursively resolves variables using Jinja2 syntax (e.g., {{ variable_name }}).
+        Uses NativeTemplate to preserve Python types (dict, list, int) when possible.
         """
         if isinstance(template, dict):
             return {k: self._resolve_variables(v, data) for k, v in template.items()}
         elif isinstance(template, list):
             return [self._resolve_variables(i, data) for i in template]
         elif isinstance(template, str):
-            # Find all {?key} (optional) or {key} (mandatory) patterns
-            placeholders = re.findall(r'\{(\??[a-zA-Z0-9_.-]+)\}', template)
-            result = template
-            for raw_key in placeholders:
-                is_optional = raw_key.startswith('?')
-                key = raw_key[1:] if is_optional else raw_key
-                val = data.get(key)
-
-                if val is not None:
-                    if template == f"{{{raw_key}}}":
-                        return val
-                    result = result.replace(f"{{{raw_key}}}", str(val))
-                elif not is_optional:
-                    raise ValueError(f"Mandatory variable '{key}' is missing for template resolution.")
-                else:
-                    result = result.replace(f"{{{raw_key}}}", "")
-            return result
+            # Use Jinja2 for powerful templating support
+            t = NativeTemplate(template)
+            return t.render(**data)
         return template
 
     async def validate_contract(self, inp: NodeInput) -> Optional[str]:

@@ -51,6 +51,8 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
     # Fetch the workflow definition to identify the node's type for schema retrieval
     workflow = await load_workflow_from_store(workflow_id)
     property_schema = []
+    input_contract = {}
+    output_contract = {}
     
     if workflow:
         # Safely extract the list of nodes regardless of whether workflow is a dict or Pydantic model
@@ -77,8 +79,15 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
                 registry_agent = NodesRegistry.get_node(node_type)
                 if registry_agent:
                     property_schema = registry_agent.get_properties()
+                    input_contract = registry_agent.input_contract
+                    output_contract = registry_agent.output_contract
 
-    return {"properties": properties, "property_schema": property_schema}
+    return {
+        "properties": properties, 
+        "property_schema": property_schema,
+        "input_contract": input_contract,
+        "output_contract": output_contract
+    }
 
 
 @router.put("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
@@ -100,17 +109,16 @@ async def toggle_workflow_status(workflow_id: str):
 
 
 @router.post("", response_model=dict)
-async def create_workflow(request: WorkflowSaveRequest, current_user: dict = Depends(get_current_user)):
+async def create_workflow(request: WorkflowSaveRequest):
     logger.info("create_workflow_request", workflow_id=request.id, name=request.name)
     # Save the UI JSON as-is. Pydantic will now allow extra fields like 'position' or 'data'.
     workflow = WorkflowDefinition(
         **request.model_dump(),
         version="1",
-        user_id=current_user.get("id"),
-        
+
     )
     try:
-        saved_workflow = await save_workflow(workflow, user_id=current_user.get("id"))
+        saved_workflow = await save_workflow(workflow)
         logger.info("create_workflow_success", workflow_id=request.id)
         return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
     except Exception as e:
