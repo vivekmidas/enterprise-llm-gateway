@@ -81,6 +81,7 @@ async def login(request: LoginRequest):
             )
 
         return {
+            "user_id": str(user.id), # Assuming user.id is an integer, convert to string for consistency
             "token": "demo_token_123", # Placeholder for real JWT logic
             "role": user.role,
             "email": user.email_id

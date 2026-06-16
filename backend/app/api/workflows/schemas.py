@@ -8,7 +8,7 @@ class WorkflowSaveRequest(BaseModel):
     name: str = "Untitled Workflow"
     description: Optional[str] = None
     is_enabled: bool = True
-    
+    user_id: str
     nodes_structure: List[Dict[str, Any]] = Field(default_factory=list, alias="nodes")
     properties: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
