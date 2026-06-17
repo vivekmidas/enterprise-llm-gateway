@@ -218,9 +218,11 @@ class WorkflowExecutor:
                 
             agent = NodesRegistry.get_node(agent_name)
             if not agent:
+                logger.warning("agent_not_found in nodes_registry, passing thru as empty agent",workflow_id="", agent_name=agent_name)
                 from app.nodes.base import BaseNode
                 class PassthroughNode(BaseNode):
-                    async def execute(self, inp): return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
+                    async def execute(self, inp): 
+                        return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
                     async def init(self): pass
                     async def validate_input(self, inp): return None
                 agent = PassthroughNode(name=agent_name or "passthrough")

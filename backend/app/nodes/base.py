@@ -155,84 +155,111 @@ class BaseNode(BaseModel, abc.ABC):
             return t.render(**data)
         return template
 
-    async def validate_input_contract(self, inp: NodeInput) -> Optional[str]:
+    async def validate_input_contract(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
         Validates if the input matches the defined input_contract.
-        Returns an error message if validation fails, otherwise None.
-        
+        Checks for mandatory fields and validates data types across context, config, and input data.
+        Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
-        # Prioritize schema passed in the input object, fall back to node default contract
         schema = self.input_contract
         if not schema:
             return None
 
-        # Attempt to gather available data from input_data (if JSON) and context
-        available_data = {**inp.context}
-        try:
-            content_data = json.loads(inp.input_data)
-            if isinstance(content_data, dict):
-                available_data.update(content_data)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # 1. Merge all available input sources for field matching
+        available_data = inp.input_data
+   
+    
+        if inp.input_data:
+            try:
+                content_data = json.loads(inp.input_data)
+                if isinstance(content_data, dict):
+                    available_data= content_data
+            except (json.JSONDecodeError, TypeError):
+                # If input_data is not JSON, we don't treat it as key-value pairs
+                # and it won't contribute to named field matching.
+                pass
 
-        missing_fields = []
-        type_errors = []
-
-        # Handle both old dictionary style and new JSON-Schema-ish style
+        errors = []
         properties = schema.get("properties", schema)
 
         for field, rules in properties.items():
-            # Support both { "field": {"required": True} } and { "field": "string" }
             field_rules = rules if isinstance(rules, dict) else {"type": rules}
-            is_required = field_rules.get("required", True)
-            
+            is_required_str = field_rules.get("required", "True")
+            if is_required_str.lower() == "false":
+                is_required = False
+            if is_required_str.lower() == "true":
+                is_required = True
+
+            # 1. Mandatory Check
             if field not in available_data:
                 if is_required:
-                    missing_fields.append(field)
+                    errors.append(f"Missing mandatory field: '{field}'")
                 continue
 
-            # Basic Type Validation
             val = available_data[field]
-            expected_type = field_rules.get("type")
-            if expected_type == "string" and not isinstance(val, str):
-                type_errors.append(f"'{field}' expected string, got {type(val).__name__}")
-            elif expected_type == "number" and not isinstance(val, (int, float)):
-                type_errors.append(f"'{field}' expected number, got {type(val).__name__}")
-            elif expected_type == "boolean" and not isinstance(val, bool):
-                type_errors.append(f"'{field}' expected boolean, got {type(val).__name__}")
+            expected_type = str(field_rules.get("type", "")).lower()
 
-        if missing_fields:
-            return f"Missing mandatory input fields: {', '.join(missing_fields)}"
-        if type_errors:
-            return f"Input contract validation failed: {'; '.join(type_errors)}"
-            
+            # 2. Type Validation
+            if expected_type == "string" and not isinstance(val, str):
+                errors.append(f"Field '{field}' expected string, got {type(val).__name__}")
+            elif expected_type == "number" and not isinstance(val, (int, float)):
+                errors.append(f"Field '{field}' expected number, got {type(val).__name__}")
+            elif expected_type == "boolean" and not isinstance(val, bool):
+                errors.append(f"Field '{field}' expected boolean, got {type(val).__name__}")
+            elif expected_type in ("dict", "object") and not isinstance(val, dict):
+                errors.append(f"Field '{field}' expected object/dict, got {type(val).__name__}")
+            elif expected_type in ("list", "array") and not isinstance(val, list):
+                errors.append(f"Field '{field}' expected list/array, got {type(val).__name__}")
+            elif expected_type == "json":
+                valid_json = False
+                if isinstance(val, (dict, list)):
+                    valid_json = True
+                elif isinstance(val, str):
+                    try:
+                        json.loads(val)
+                        valid_json = True
+                    except json.JSONDecodeError:
+                        pass
+                if not valid_json:
+                    errors.append(f"Field '{field}' expected valid JSON structure or string, but validation failed.")
+
+        if errors:
+            return NodeOutput(
+                trace_id=inp.trace_id,
+                output_data=inp.input_data,
+                status="failure",
+                error_message="; ".join(errors),
+                error_code=400,
+                violations=["contract_violation"]
+            )
+               
         return None
 
-    def apply_output_envelope(self, execution_output: Any, original_input: NodeInput) -> str:
-        """
-        Wraps the execution result using the output_envelope template.
-        """
-        if not self.output_envelope:
-            return json.dumps(execution_output) if not isinstance(execution_output, str) else execution_output
+    # def apply_output_envelope(self, execution_output: Any, original_input: NodeInput) -> str:
+    #     """
+    #     Wraps the execution result using the output_envelope template.
+    #     """
+    #     if not self.output_envelope:
+    #         return json.dumps(execution_output) if not isinstance(execution_output, str) else execution_output
 
-        # Prepare data for interpolation
-        merge_data = {**original_input.context}
+    #     # Prepare data for interpolation
+    #     merge_data = {**original_input.context}
         
-        # Add original input fields if they are JSON
-        try:
-            input_json = json.loads(original_input.input_data)
-            if isinstance(input_json, dict):
-                merge_data.update(input_json)
-        except: pass
+    #     # Add original input fields if they are JSON
+    #     try:
+    #         input_json = json.loads(original_input.input_data)
+    #         if isinstance(input_json, dict):
+    #             merge_data.update(input_json)
+    #     except: pass
 
-        # Add execution output. If it's a dict, flatten it into the merge_data
-        if isinstance(execution_output, dict):
-            merge_data.update(execution_output)
-        else:
-            merge_data["output"] = execution_output
+    #     # Add execution output. If it's a dict, flatten it into the merge_data
+    #     if isinstance(execution_output, dict):
+    #         merge_data.update(execution_output)
+    #     else:
+    #         merge_data["output"] = execution_output
 
-        resolved = self._resolve_variables(self.output_envelope, merge_data)
-        return json.dumps(resolved) if isinstance(resolved, (dict, list)) else str(resolved)
+    #     resolved = self._resolve_variables(self.output_envelope, merge_data)
+    #     return json.dumps(resolved) if isinstance(resolved, (dict, list)) else str(resolved)
 
     @abc.abstractmethod
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
@@ -268,36 +295,29 @@ class BaseNode(BaseModel, abc.ABC):
         start_ts = time.time()
         try:
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
-            inp.config = {**self.properties, **inp.config}
-            inp.input_schema = self.input_contract
-
+            #inp.config = {**self.properties, **inp.config}
+    
             # 0.1 Input Contract Validation
-            contract_error = await self.validate_contract(inp)
-            if contract_error:
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    output_data=inp.input_data,
-                    status="failure",
-                    error_message=contract_error,
-                    error_code=400
-                )
+            contract_output = await self.validate_input_contract(inp)
+            if contract_output:
+                return contract_output
 
-            # 1. Validation hook
-            validation_output = await self.validate_input_contract(inp)
-            if validation_output:
-                end_ts = time.time()
-                validation_output.start_time = start_ts
-                validation_output.end_time = end_ts
-                validation_output.latency_ms = round((end_ts - start_ts) * 1000, 2)
-                self.logger.warning(
-                    "node_validation_failed", 
-                    trace_id=inp.trace_id, 
-                    latency_ms=validation_output.latency_ms,
-                    output=validation_output.model_dump()
-                )
-                if validation_output.status == "failure" or validation_output.error_code != 200:
-                    self.logger.error("node_run_terminated_due_to_validation", trace_id=inp.trace_id)
-                    return validation_output
+            # 1. Validation hook, we dont need this now as validate_input_contract does that 
+            # # validation_output = await self.validate_input(inp)
+            # if validation_output:
+            #     end_ts = time.time()
+            #     validation_output.start_time = start_ts
+            #     validation_output.end_time = end_ts
+            #     validation_output.latency_ms = round((end_ts - start_ts) * 1000, 2)
+            #     self.logger.warning(
+            #         "node_validation_failed", 
+            #         trace_id=inp.trace_id, 
+            #         latency_ms=validation_output.latency_ms,
+            #         output=validation_output.model_dump()
+            #     )
+            #     if validation_output.status == "failure" or validation_output.error_code != 200:
+            #         self.logger.error("node_run_terminated_due_to_validation", trace_id=inp.trace_id)
+            #         return validation_output
 
             # 2. Execution logic
             output = await self.execute(inp)
@@ -308,12 +328,12 @@ class BaseNode(BaseModel, abc.ABC):
             output.end_time = end_ts
             output.latency_ms = round((end_ts - start_ts) * 1000, 2)
             
-            # 3. Apply Output Envelope if execution was successful
-            if not output.error_message and not output.violations:
-                output.output_data = self.apply_output_envelope(output.output_data, inp)
+            # # 3. Apply Output Envelope if execution was successful
+            # if not output.error_message and not output.violations:
+            #     output.output_data = self.apply_output_envelope(output.output_data, inp)
 
             output.status = "failure" if output.error_message or output.violations else "success"
-            output.output_schema = self.output_contract
+            
             self.logger.info(
                 "node_run_completed", 
                 status=output.status, 

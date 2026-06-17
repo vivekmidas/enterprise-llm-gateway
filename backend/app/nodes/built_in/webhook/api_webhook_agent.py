@@ -159,6 +159,7 @@ class WebhookAgent(TriggerNode):
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         # Basic validation - can be extended with schema checks
+        self.logger.info("webhook_validation_started")
         if not inp.content:
             return NodeOutput(
                 trace_id=inp.trace_id,
@@ -193,7 +194,7 @@ class WebhookAgent(TriggerNode):
         """
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            output_data=inp.input_data,
             status="success",
             metadata={"source": "api_webhook"}
         )
