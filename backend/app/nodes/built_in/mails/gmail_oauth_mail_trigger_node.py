@@ -21,18 +21,6 @@ class GmailEmailTriggerNode(EmailTriggerNode):
     label: str = "Gmail OAuth Trigger"
     description: str = "Polls Gmail via OAuth2 API for new messages."
 
-    property_schema: List[Dict[str, Any]] = [
-        {
-            "key": "credentialId",
-            "label": "Gmail Account",
-            "type": "credential",
-            "credentialType": "gmail_oauth2",
-            "description": "Select an existing connection or create a new one."
-        },
-        {"key": "folder", "label": "Label/Folder", "type": "string", "default": "INBOX"},
-        {"key": "check_interval", "label": "Poll Interval (sec)", "type": "number", "default": 60},
-        {"key": "mark_as_read", "label": "Mark as Read", "type": "boolean", "default": True},
-    ]
     
     async def init(self) -> None:
         await super().init()

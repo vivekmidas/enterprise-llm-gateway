@@ -14,24 +14,6 @@ router = APIRouter(prefix="/nodes", tags=["nodes"])
 def _defaults_from_payload(node_data: dict) -> dict:
     defaults = node_data.get("user_properties") if isinstance(node_data.get("user_properties"), dict) else {}
     defaults = dict(defaults or {})
-    schema = node_data.get("property_schema") or node_data.get("propertySchema") or []
-    if not isinstance(schema, list):
-        return defaults
-
-    for field in schema:
-        if not isinstance(field, dict):
-            continue
-        key = field.get("key")
-        if not key or key in defaults:
-            continue
-        if "default" in field:
-            defaults[key] = field["default"]
-        elif field.get("type") == "boolean":
-            defaults[key] = False
-        elif field.get("multiple"):
-            defaults[key] = []
-        else:
-            defaults[key] = ""
     return defaults
 
 @router.get("")
@@ -67,10 +49,6 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     if not node:
         return {"error": "Node not found"}
 
-    if "propertySchema" in node_data and "property_schema" not in node_data:
-        node_data["property_schema"] = node_data["propertySchema"]
-    node_data.pop("propertySchema", None)
-
     defaults = _defaults_from_payload(node_data)
 
     # Update node fields based on incoming data
@@ -88,10 +66,6 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
 @router.post("")
 async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
     """Creates a new node definition in the registry (catalog)."""
-    if "propertySchema" in node_data and "property_schema" not in node_data:
-        node_data["property_schema"] = node_data["propertySchema"]
-    node_data.pop("propertySchema", None)
-    new_node = NodeDB(**node_data)
     db.add(new_node)
     await db.commit()
     await db.refresh(new_node)

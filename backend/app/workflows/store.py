@@ -14,9 +14,6 @@ from sqlalchemy import select, delete
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
-PROPERTY_SCHEMA_KEYS = ("property_schema", "propertySchema", "properties_schema")
-PROPERTY_KEYS = ("properties",)
-
 
 def _safe_json_loads(value: Any, fallback: Any = None) -> Any:
     if value is None:
@@ -49,13 +46,13 @@ def _extract_node_properties(node: dict) -> dict:
 
 def _strip_node_property_payload(node: dict) -> dict:
     stripped = copy.deepcopy(node)
-    for key in (*PROPERTY_KEYS, *PROPERTY_SCHEMA_KEYS):
-        stripped.pop(key, None)
+    # for key in PROPERTY_KEYS:
+    #     stripped.pop(key, None)
 
     data = stripped.get("data")
-    if isinstance(data, dict):
-        for key in (*PROPERTY_KEYS, *PROPERTY_SCHEMA_KEYS):
-            data.pop(key, None)
+    # if isinstance(data, dict):
+        # for key in PROPERTY_KEYS:
+        #     data.pop(key, None)
 
     return stripped
 
@@ -74,23 +71,6 @@ def _default_properties_from_node_definition(node_definition: NodeDB | None) -> 
         return {}
 
     defaults = dict(node_definition.user_properties) if isinstance(node_definition.user_properties, dict) else {}
-    schema = node_definition.property_schema if isinstance(node_definition.property_schema, list) else []
-
-    for field in schema:
-        if not isinstance(field, dict):
-            continue
-        key = field.get("key")
-        if not key or key in defaults:
-            continue
-        if "default" in field:
-            defaults[key] = field["default"]
-        elif field.get("type") == "boolean":
-            defaults[key] = False
-        elif field.get("multiple"):
-            defaults[key] = []
-        else:
-            defaults[key] = ""
-
     return defaults
 
 
@@ -251,11 +231,9 @@ async def _hydrate_workflow_definition(
         user_properties.update(instance_overrides)
 
         if catalog_node:
-            data["property_schema"] = catalog_node.property_schema or []
-            data["propertySchema"] = catalog_node.property_schema or []
+           
             data["input_contract"] = catalog_node.input_contract or {}
             data["output_contract"] = catalog_node.output_contract or {}
-
         data["user_properties"] = user_properties
         data["system_properties"] = system_properties
 

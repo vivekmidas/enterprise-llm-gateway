@@ -202,7 +202,7 @@ class WorkflowExecutor:
         for node in self.nodes_raw:
             agent_node_id = node["id"]
             node_data = node.get("data", {})
-            node_props = node_data.get("properties") or node.get("config") or node_data.get("properties") or {}
+            node_props = node_data.get("user_properties") or node_data.get("properties") or node.get("config") or {}
             
             raw_type = str(node_data.get("node_type") or node.get("type") or "NODE").upper()
             if raw_type in {"START", "TRIGGER"}:

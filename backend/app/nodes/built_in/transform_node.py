@@ -10,24 +10,6 @@ class TransformNode(BaseNode):
     icon: str = "shuffle" # or "exchange", "code"
     color: str = "#FFD700" # Gold color
 
-    property_schema: List[Dict[str, Any]] = [
-        {
-            "key": "mapping_template",
-            "label": "Data Mapping",
-            "type": "textarea",
-            "default": "{}",
-            "description": "Jinja2 template to transform the incoming data. The previous node's output is available as 'input_data'. Example: {'new_key': '{{ input_data.old_key }}'}"
-        },
-        {
-            "key": "output_format",
-            "label": "Output Format",
-            "type": "choice",
-            "options": ["json", "string"],
-            "default": "json",
-            "description": "The expected format of the resulting data."
-        }
-    ]
-
     async def init(self) -> None:
         await super().init()
 

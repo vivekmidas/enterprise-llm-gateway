@@ -44,8 +44,7 @@ class NodesRegistry:
                     external_data = json.load(f)
                     if "properties" in external_data:
                         node.properties.update(external_data["properties"])
-                    if "property_schema" in external_data:
-                        node.property_schema = external_data["property_schema"]
+                   
                     if "input_contract" in external_data:
                         node.input_contract = external_data["input_contract"]
                     if "output_contract" in external_data:
@@ -112,101 +111,94 @@ class NodesRegistry:
         # TODO: revisit
         # await cls.sync_with_db()
 
-    @classmethod
-    async def sync_with_db(cls):
-        """
-        Syncs discovered nodes and categories from files/classes into the database.
-        This ensures the DB is populated for the API to consume.
-        """
-        from app.core.database import AsyncSessionLocal
-        from app.models.db_models import NodeDB, CategoryDB
-        from sqlalchemy import select
-        client_id = 0  # Placeholder for SaaS multi-tenancy support
-        cls.logger.info("syncing_registry_with_db")
+    # @classmethod
+    # async def sync_with_db(cls):
+    #     """
+    #     Syncs discovered nodes and categories from files/classes into the database.
+    #     This ensures the DB is populated for the API to consume.
+    #     """
+    #     from app.core.database import AsyncSessionLocal
+    #     from app.models.db_models import NodeDB, CategoryDB
+    #     from sqlalchemy import select
+    #     client_id = 0  # Placeholder for SaaS multi-tenancy support
+    #     cls.logger.info("syncing_registry_with_db")
         
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                # 1. Sync Categories from data/node_categories.json
-                base_dir = Path(__file__).resolve().parent.parent.parent
-                cat_file = base_dir / "data" / "node_categories.json"
-                if cat_file.exists():
-                    try:
-                        with open(cat_file, "r") as f:
-                            cats = json.load(f)
-                            for cat in cats:
-                                stmt = select(CategoryDB).where(CategoryDB.name == cat["name"])
-                                result = await session.execute(stmt)
-                                db_cat = result.scalar_one_or_none()
-                                if not db_cat:
-                                    session.add(CategoryDB(name=cat["name"], icon=cat.get("icon"), color=cat.get("color")))
-                                    cls.logger.info("category_created_in_db", name=cat["name"])
-                                # We skip updating categories to preserve UI edits
-                    except Exception as e:
-                        cls.logger.error("failed_to_sync_categories", error=str(e))
+    #     async with AsyncSessionLocal() as session:
+    #         async with session.begin():
+    #             # 1. Sync Categories from data/node_categories.json
+    #             base_dir = Path(__file__).resolve().parent.parent.parent
+    #             cat_file = base_dir / "data" / "node_categories.json"
+    #             if cat_file.exists():
+    #                 try:
+    #                     with open(cat_file, "r") as f:
+    #                         cats = json.load(f)
+    #                         for cat in cats:
+    #                             stmt = select(CategoryDB).where(CategoryDB.name == cat["name"])
+    #                             result = await session.execute(stmt)
+    #                             db_cat = result.scalar_one_or_none()
+    #                             if not db_cat:
+    #                                 session.add(CategoryDB(name=cat["name"], icon=cat.get("icon"), color=cat.get("color")))
+    #                                 cls.logger.info("category_created_in_db", name=cat["name"])
+    #                             # We skip updating categories to preserve UI edits
+    #                 except Exception as e:
+    #                     cls.logger.error("failed_to_sync_categories", error=str(e))
 
-                # 2. Sync Discovered Nodes
-                for node_name, node in cls._nodes.items():
-                    # Prepared for SaaS: client_id filtering would happen here
-                    stmt = select(NodeDB).where(NodeDB.name == node_name)
-                    result = await session.execute(stmt)
-                    db_node = result.scalar_one_or_none()
+    #             # 2. Sync Discovered Nodes
+    #             for node_name, node in cls._nodes.items():
+    #                 # Prepared for SaaS: client_id filtering would happen here
+    #                 stmt = select(NodeDB).where(NodeDB.name == node_name)
+    #                 result = await session.execute(stmt)
+    #                 db_node = result.scalar_one_or_none()
                     
-                    if not db_node:
-                        # Only add if it doesn't exist to prevent overwriting UI customizations
-                        session.add(NodeDB(
-                            name=node.name,
-                            label=node.label,
-                            description=node.description,
-                            version=node.version,
-                            category=node.category,
-                            icon=node.icon,
-                            color=node.color,
-                            badge=node.badge,
-                            sub_label=node.sub_label,
-                            property_schema=node.property_schema,
-                            properties=node.properties,
-                            input_contract=node.input_contract,
-                            output_contract=node.output_contract
-                        ))
-                        cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
-                    else:
-                        # If it exists, pull properties from DB into the in-memory registry
-                        if db_node.properties:
-                            # Merge new properties from code definition into DB properties if they don't exist.
-                            # This ensures new system-level defaults are added to existing DB nodes,
-                            # while preserving any existing customized values in the database.
-                            updated_db_properties = {**node.properties, **db_node.properties}
-                            if updated_db_properties != db_node.properties:
-                                db_node.properties = updated_db_properties
-                                session.add(db_node) # Mark the db_node for update
-                                cls.logger.info("node_db_properties_merged", name=node_name, client_id=client_id)
+    #                 if not db_node:
+    #                     # Only add if it doesn't exist to prevent overwriting UI customizations
+    #                     session.add(NodeDB(
+    #                         name=node.name,
+    #                         label=node.label,
+    #                         description=node.description,
+    #                         version=node.version,
+    #                         category=node.category,
+    #                         icon=node.icon,
+    #                         color=node.color,
+    #                         badge=node.badge,
+    #                         sub_label=node.sub_label,
+                            
+    #                         properties=node.properties,
+    #                         input_contract=node.input_contract,
+    #                         output_contract=node.output_contract
+    #                     ))
+    #                     cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
+    #                 else:
+    #                     # If it exists, pull properties from DB into the in-memory registry
+    #                     if db_node.properties:
+    #                         # Merge new properties from code definition into DB properties if they don't exist.
+    #                         # This ensures new system-level defaults are added to existing DB nodes,
+    #                         # while preserving any existing customized values in the database.
+    #                         updated_db_properties = {**node.properties, **db_node.properties}
+    #                         if updated_db_properties != db_node.properties:
+    #                             db_node.properties = updated_db_properties
+    #                             session.add(db_node) # Mark the db_node for update
+    #                             cls.logger.info("node_db_properties_merged", name=node_name, client_id=client_id)
 
-                            # Always update the property_schema to reflect the latest code definition.
-                            if node.property_schema != db_node.property_schema:
-                                db_node.property_schema = node.property_schema
-                                session.add(db_node) # Mark the db_node for update
-                                cls.logger.info("node_db_schema_updated", name=node_name, client_id=client_id)
 
-                            if node.input_contract != db_node.input_contract:
-                                db_node.input_contract = node.input_contract
-                                session.add(db_node)
-                                cls.logger.info("node_db_input_contract_updated", name=node_name)
+    #                         if node.input_contract != db_node.input_contract:
+    #                             db_node.input_contract = node.input_contract
+    #                             session.add(db_node)
+    #                             cls.logger.info("node_db_input_contract_updated", name=node_name)
 
-                            if node.output_contract != db_node.output_contract:
-                                db_node.output_contract = node.output_contract
-                                session.add(db_node)
-                                cls.logger.info("node_db_output_contract_updated", name=node_name)
+    #                         if node.output_contract != db_node.output_contract:
+    #                             db_node.output_contract = node.output_contract
+    #                             session.add(db_node)
+    #                             cls.logger.info("node_db_output_contract_updated", name=node_name)
 
-                            node.properties.update(db_node.properties)
-                            if db_node.input_contract:
-                                node.input_contract = db_node.input_contract
-                            if db_node.output_contract:
-                                node.output_contract = db_node.output_contract
-                            if db_node.property_schema:
-                                node.property_schema = db_node.property_schema
-                        cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
+    #                         node.properties.update(db_node.properties)
+    #                         if db_node.input_contract:
+    #                             node.input_contract = db_node.input_contract
+    #                         if db_node.output_contract:
+    #                             node.output_contract = db_node.output_contract
+    #                     cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
 
-            cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
+    #         cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
 
     @classmethod
     async def _scan_package(cls, package_paths: List[str], prefix: str):

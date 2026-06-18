@@ -12,16 +12,6 @@ class GenericLLMAgent(BaseNode):
     group: str = "LLM"
     icon: str = "bot"
 
-    # Defines the fields available for this node in the UI and NodeDB
-    property_schema: List[Dict[str, Any]] = [
-        {"key": "ip", "label": "IP Address", "type": "string", "placeholder": "127.0.0.1"},
-        {"key": "port", "label": "Port", "type": "string", "placeholder": "8000"},
-        {"key": "model", "label": "Model Name", "type": "string", "placeholder": "default-model"},
-        {"key": "temperature", "label": "Temperature", "type": "number", "placeholder": "0.7"},
-        {"key": "system_prompt", "label": "System Prompt", "type": "textarea", "placeholder": "You are a helpful assistant."},
-        {"key": "path", "label": "API Path", "type": "string", "placeholder": "/v1/chat/completions"},
-    ]
-
     # Hardcoded fallback defaults (Level 0)
     # Level 1 (NodeDB) will override these during init()
     # Level 2 (Workflow Instance) will override everything during run()

@@ -16,34 +16,6 @@ class DatabaseNode(BaseNode):
     icon: str = "database"
     color: str = "#336791" # Database Blue
 
-    # Default property schema for the UI builder
-    property_schema: List[Dict[str, Any]] = [
-        {
-            "key": "db_type", 
-            "label": "Database Type", 
-            "type": "choice", 
-            "options": ["postgresql", "mysql", "oracle", "sqlite"], 
-            "default": "postgresql"
-        },
-        {"key": "host", "label": "Host", "type": "string", "default": "localhost"},
-        {"key": "port", "label": "Port", "type": "number", "default": 5432},
-        {"key": "database", "label": "Database Name", "type": "string", "default": ""},
-        {"key": "username", "label": "Username", "type": "string", "default": ""},
-        {
-            "key": "password", 
-            "label": "Password", 
-            "type": "string", 
-            "default": "", 
-            "secret": True
-        },
-        {
-            "key": "query", 
-            "label": "SQL Query", 
-            "type": "textarea", 
-            "default": "SELECT * FROM table LIMIT 10;"
-        }
-    ]
-
     async def init(self) -> None:
         """Load global properties from DB if they exist."""
         await super().init()

@@ -51,7 +51,6 @@ class NodeDB(Base):
     color = Column(String)
     badge = Column(String, nullable=True)
     sub_label = Column(String, nullable=True)
-    property_schema = Column(JSON)
     user_properties = Column(JSON)
     system_properties = Column(JSON)
     input_contract=Column(JSON)

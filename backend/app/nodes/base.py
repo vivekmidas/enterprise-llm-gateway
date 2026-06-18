@@ -38,7 +38,7 @@ class BaseNode(BaseModel, abc.ABC):
     Standardized Base Class for all Enterprise LLM Gateway nodes.
 
     --- DISTINCTION BETWEEN PROPERTIES AND CONTRACTS ---
-    1. User Properties (properties & property_schema): 
+    1. User Properties (properties ): 
        Business logic settings configured by users in the Workflow Builder.
        Example: 'system_prompt', 'temperature', 'table_name'.
 
@@ -69,7 +69,6 @@ class BaseNode(BaseModel, abc.ABC):
     color: str = "#5E0CEC"         # Brand color (hex code)
     badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
     sub_label: Optional[str] = None # Optional sub-label
-    property_schema: List[Dict[str, Any]] = Field(default_factory=list)  # For dynamic property rendering in UI
     user_properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
     system_properties: Dict[str, Any] = Field(default_factory=dict) # Admin-only infra settings
     properties: Dict[str, Any] = Field(default_factory=dict) # Unified properties list
@@ -93,7 +92,7 @@ class BaseNode(BaseModel, abc.ABC):
 
     def get_properties(self) -> List[Dict[str, Any]]:
         """Returns the property schema definition for the UI."""
-        return getattr(self, "propertySchema", self.property_schema)
+        return getattr(self, "user_properties")
 
     async def _get_db_node_data(self) -> Dict[str, Any]:
         """Fetches properties for this node type from the global catalog in the DB."""
@@ -112,7 +111,7 @@ class BaseNode(BaseModel, abc.ABC):
                         "system_properties": db_node.system_properties or {},
                         "input_contract": db_node.input_contract or {},
                         "output_contract": db_node.output_contract or {},
-                        "property_schema": db_node.property_schema or []
+                        
                     }
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
@@ -134,8 +133,6 @@ class BaseNode(BaseModel, abc.ABC):
                 self.input_contract = db_data.get("input_contract")
             if db_data.get("output_contract"):
                 self.output_contract = db_data.get("output_contract")
-            # if db_data.get("property_schema"):
-            #     self.property_schema = db_data.get("property_schema")
 
         # Unified merge: User properties override System properties
         self.properties = {**self.system_properties, **self.user_properties}

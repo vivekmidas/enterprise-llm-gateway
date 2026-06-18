@@ -14,18 +14,7 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
     label: str = "Outlook OAuth Trigger"
     description: str = "Polls Outlook via Microsoft Graph API for new messages."
 
-    property_schema: List[Dict[str, Any]] = [
-        {
-            "key": "credentialId",
-            "label": "Outlook Account",
-            "type": "credential",
-            "credentialType": "outlook_oauth2",
-            "description": "Connect your Microsoft Outlook account."
-        },
-        {"key": "folder", "label": "Mail Folder", "type": "string", "default": "Inbox"},
-        {"key": "check_interval", "label": "Poll Interval (sec)", "type": "number", "default": 60},
-        {"key": "mark_as_read", "label": "Mark as Read", "type": "boolean", "default": True},
-    ]
+
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """

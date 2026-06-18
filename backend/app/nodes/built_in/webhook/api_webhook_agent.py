@@ -60,7 +60,7 @@ class WebhookAgent(TriggerNode):
         # Resolve instance configuration manually for the background server
         nodes = workflow_config.get("nodes_structure", [])
         node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
-        overrides = node_data.get("data", {}).get("properties") or node_data.get("config") or {}
+        overrides = node_data.get("data", {}).get("user_properties") or node_data.get("data", {}).get("properties") or node_data.get("config") or {}
         config = {**self.properties, **overrides}
 
         port = int(config.get("port", 8000))

@@ -50,7 +50,6 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
     
     # Fetch the workflow definition to identify the node's type for schema retrieval
     workflow = await load_workflow_from_store(workflow_id)
-    property_schema = []
     input_contract = {}
     output_contract = {}
     
@@ -72,27 +71,23 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
             node_data = getattr(node_entry, "data", {}) if not isinstance(node_entry, dict) else node_entry.get("data", {})
             
             # Prioritize data hydrated from NodeDB (the catalog) during load_workflow_from_store
-            property_schema = node_data.get("property_schema") or node_data.get("propertySchema") or []
             input_contract = node_data.get("input_contract") or {}
             output_contract = node_data.get("output_contract") or {}
 
             # Fallback to registry only if hydration didn't provide schema/contracts
-            if not property_schema:
-                node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
-                if not node_type:
-                    node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
+            node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
+            if not node_type:
+                node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
 
-                if node_type:
-                    # Look up the static definition in the registry as a fallback
-                    registry_agent = NodesRegistry.get_node(node_type)
-                    if registry_agent:
-                        property_schema = registry_agent.get_properties()
-                        if not input_contract: input_contract = registry_agent.input_contract
-                        if not output_contract: output_contract = registry_agent.output_contract
+            if node_type:
+                # Look up the static definition in the registry as a fallback
+                registry_agent = NodesRegistry.get_node(node_type)
+                if registry_agent:
+                    if not input_contract: input_contract = registry_agent.input_contract
+                    if not output_contract: output_contract = registry_agent.output_contract
 
     return {
         "user_properties": properties, 
-        "property_schema": property_schema,
         "input_contract": input_contract,
         "output_contract": output_contract
     }
@@ -120,15 +115,13 @@ async def create_workflow(request: WorkflowSaveRequest):
     
     request_data = request.model_dump()
     
-    # Fix 1: Clean up input_contract, output_contract, and property_schema from nodes before saving
+    # Fix 1: Clean up input_contract and output_contract from nodes before saving
     # These are part of the node definition, not the workflow instance configuration.
     if "nodes_structure" in request_data and isinstance(request_data["nodes_structure"], list):
         for node in request_data["nodes_structure"]:
             if "data" in node and isinstance(node["data"], dict):
                 node["data"].pop("input_contract", None)
                 node["data"].pop("output_contract", None)
-                node["data"].pop("property_schema", None)
-                node["data"].pop("propertySchema", None)
 
     # Create definition; user_id is automatically picked up from request_data
     workflow = WorkflowDefinition(

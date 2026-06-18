@@ -14,12 +14,7 @@ class SchedulerAgent(TriggerNode):
     version:str = "1.0.0"
     category:str = "Custom"
     node_type: str = "trigger"
-    property_schema: List[Dict[str, Any]] = [
-        {"key": "interval", "label": "Interval", "type": "number"},
-        {"key": "unit", "label": "Unit", "type": "choice", "options": ["seconds", "minutes"]},
-        {"key": "command", "label": "Shell Command", "type": "string"},
-        {"key": "targetAgent", "label": "Target Agent", "type": "choice", "options": []}
-    ]
+
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)
@@ -44,7 +39,7 @@ class SchedulerAgent(TriggerNode):
         # Resolve instance properties for the background loop
         nodes = workflow_config.get("nodes_structure", [])
         node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
-        overrides = node_data.get("data", {}).get("properties") or node_data.get("config") or {}
+        overrides = node_data.get("data", {}).get("user_properties") or node_data.get("data", {}).get("properties") or node_data.get("config") or {}
         config = {**self.properties, **overrides}
 
         # Calculate delay based on interval and unit (seconds vs minutes)

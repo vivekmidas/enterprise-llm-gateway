@@ -11,15 +11,6 @@ class ImapEmailPullTriggerNode(EmailTriggerNode):
     label: str = "IMAP Pull Trigger"
     description: str = "Polls an IMAP server using username/password."
 
-    property_schema: List[Dict[str, Any]] = [
-        {"key": "imap_host", "label": "IMAP Server", "type": "string", "placeholder": "imap.gmail.com"},
-        {"key": "imap_port", "label": "Port", "type": "number", "default": 993},
-        {"key": "username", "label": "Email/Username", "type": "string"},
-        {"key": "password", "label": "Password / App Password", "type": "password"},
-        {"key": "folder", "label": "Folder", "type": "string", "default": "INBOX"},
-        {"key": "check_interval", "label": "Poll Interval (sec)", "type": "number", "default": 60},
-    ]
-
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
         Registers the workflow and starts the IMAP background polling task.

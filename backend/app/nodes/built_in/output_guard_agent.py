@@ -8,26 +8,7 @@ class OutputGuardAgent(BaseNode):
     description: str = "Final safety check - PII leak, MAD, policy compliance"
     version: str = "1.0.0"
     category: str = "Guardrails"
-    property_schema: List[Dict[str, Any]] = [
-        {
-            "key": "checkPII",
-            "type": "boolean",
-            "label": "Check for PII leaks",
-            "default": True
-        },
-        {
-            "key": "checkMAD",
-            "type": "boolean",
-            "label": "Check for MAD (Misogyny, Ableism, Discrimination)",
-            "default": True
-        },
-        {
-            "key": "checkPolicy",
-            "type": "boolean",
-            "label": "Check for custom policy violations",
-            "default": False
-        }
-    ]
+    
     user_properties: Dict[str, Any] = {
         "checkPII": True,
         "checkMAD": True,
