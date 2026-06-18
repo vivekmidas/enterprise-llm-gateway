@@ -314,8 +314,6 @@ class WorkflowExecutor:
                         "error": result.error_message
                     }
 
-                    logger.info("node_execution_finished", **node_trace)
-
                     # Return ONLY the fields that changed.
                     updates = {
                         "content": result.output_data,
@@ -331,7 +329,8 @@ class WorkflowExecutor:
                     updates["violations"] = list(result.violations or [])
                     if result.status == "failure":
                         updates["violations"].append(f"node_failure:{node_id}")
-
+                        logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
+                   
                     return updates
                 except Exception as e:
                     logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
