@@ -13,6 +13,7 @@ except ImportError:
 import structlog
 
 class NodeInput(BaseModel):
+    """Standardized input envelope passed to every node's execution method."""
     trace_id: str
     input_data: str
     config: Dict[str, Any] = Field(default_factory=dict)
@@ -20,6 +21,7 @@ class NodeInput(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class NodeOutput(BaseModel):
+    """Standardized output envelope returned by every node after execution."""
     trace_id: str
     output_data: str
     status: str = "success"  # "success" or "failure"
@@ -36,12 +38,15 @@ class BaseNode(BaseModel, abc.ABC):
     Standardized Base Class for all Enterprise LLM Gateway nodes.
 
     --- DISTINCTION BETWEEN PROPERTIES AND CONTRACTS ---
-    1. Properties (properties & property_schema): 
-       These are CONFIGURATION settings for the node (Design-time). 
-       Example: 'model_name', 'api_endpoint', 'system_prompt'. 
-       The 'property_schema' provides metadata for the UI to render input fields.
+    1. User Properties (properties & property_schema): 
+       Business logic settings configured by users in the Workflow Builder.
+       Example: 'system_prompt', 'temperature', 'table_name'.
 
-    2. Contracts (input_contract & output_contract): 
+    2. System Properties (system_properties):
+       Infrastructure settings configured by Admins in the Node Registry.
+       Example: 'port', 'host', 'worker_count', 'timeout_ms'.
+
+    3. Contracts (input_contract & output_contract): 
        These define the DATA PAYLOAD structure (Run-time). 
        Example: 'user_query', 'document_text', 'extracted_entities'.
     """
@@ -65,9 +70,9 @@ class BaseNode(BaseModel, abc.ABC):
     badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
     sub_label: Optional[str] = None # Optional sub-label
     property_schema: List[Dict[str, Any]] = Field(default_factory=list)  # For dynamic property rendering in UI
-    properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
-    node_data: Dict[str, Any] = Field(default_factory=dict)
-    default_node_properties: Dict[str, Any] = Field(default_factory=dict)
+    user_properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
+    system_properties: Dict[str, Any] = Field(default_factory=dict) # Admin-only infra settings
+    properties: Dict[str, Any] = Field(default_factory=dict) # Unified properties list
 
     @cached_property
     def logger(self):
@@ -103,7 +108,8 @@ class BaseNode(BaseModel, abc.ABC):
                 db_node = result.scalar_one_or_none()
                 if db_node:
                     return {
-                        "properties": db_node.properties or {},
+                        "user_properties": db_node.user_properties or {},
+                        "system_properties": db_node.system_properties or {},
                         "input_contract": db_node.input_contract or {},
                         "output_contract": db_node.output_contract or {},
                         "property_schema": db_node.property_schema or []
@@ -111,18 +117,6 @@ class BaseNode(BaseModel, abc.ABC):
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
         return {}
-
-    def _get_node_config(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Extracts and merges instance-specific properties from the workflow configuration."""
-        nodes = workflow_config.get("nodes_structure") or workflow_config.get("nodes") or []
-        node_data = next((n for n in nodes if n.get("id") == agent_node_id), None)
-        
-        props = {}
-        if node_data:
-            data = node_data.get("data", {})
-            props = data.get("properties") or node_data.get("properties") or node_data.get("config") or {}
-            
-        return {**self.properties, **props}
 
     @abc.abstractmethod
     async def init(self) -> None:
@@ -132,13 +126,19 @@ class BaseNode(BaseModel, abc.ABC):
         """
         db_data = await self._get_db_node_data()
         if db_data:
-            self.properties.update(db_data.get("properties", {}))
+            if db_data.get("user_properties"):
+                self.user_properties.update(db_data.get("user_properties", {}))
+            if db_data.get("system_properties"):
+                self.system_properties = db_data.get("system_properties")
             if db_data.get("input_contract"):
                 self.input_contract = db_data.get("input_contract")
             if db_data.get("output_contract"):
                 self.output_contract = db_data.get("output_contract")
-            if db_data.get("property_schema"):
-                self.property_schema = db_data.get("property_schema")
+            # if db_data.get("property_schema"):
+            #     self.property_schema = db_data.get("property_schema")
+
+        # Unified merge: User properties override System properties
+        self.properties = {**self.system_properties, **self.user_properties}
 
     def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
         """
@@ -295,7 +295,7 @@ class BaseNode(BaseModel, abc.ABC):
         start_ts = time.time()
         try:
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
-            #inp.config = {**self.properties, **inp.config}
+            inp.config = {**self.properties, **inp.config}
     
             # 0.1 Input Contract Validation
             contract_output = await self.validate_input_contract(inp)
@@ -363,9 +363,12 @@ class BaseNode(BaseModel, abc.ABC):
 
 class TriggerNode(BaseNode, abc.ABC):
     """
-    Abstract base for nodes that initiate workflows.
-    Triggers have 0 inputs in the UI but are responsible for 
-    starting the execution engine.
+    A specialized node type that sits at the start of a workflow graph.
+    
+    Unlike standard nodes, TriggerNodes:
+    1. Are "activated" on system startup to listen for external events.
+    2. Can initiate the WorkflowExecutor when an event (Webhook/Timer/Email) occurs.
+    3. Manage an internal registry of workflow configurations they are responsible for.
     """
     node_type: str = "TRIGGER" 
 

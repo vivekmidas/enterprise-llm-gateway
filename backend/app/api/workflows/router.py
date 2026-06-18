@@ -91,7 +91,7 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
                         if not output_contract: output_contract = registry_agent.output_contract
 
     return {
-        "properties": properties, 
+        "user_properties": properties, 
         "property_schema": property_schema,
         "input_contract": input_contract,
         "output_contract": output_contract

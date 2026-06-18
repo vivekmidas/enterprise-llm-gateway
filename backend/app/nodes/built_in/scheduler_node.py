@@ -20,12 +20,6 @@ class SchedulerAgent(TriggerNode):
         {"key": "command", "label": "Shell Command", "type": "string"},
         {"key": "targetAgent", "label": "Target Agent", "type": "choice", "options": []}
     ]
-    properties: Dict[str, Any] = {
-        "interval": 60,
-        "unit": "seconds",
-        "command": "",
-        "targetAgent": ""
-    }
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)
@@ -37,6 +31,7 @@ class SchedulerAgent(TriggerNode):
 
     async def init(self) -> None:
         await super().init()
+        
         self._tasks: Dict[str, asyncio.Task] = {}
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
@@ -46,9 +41,15 @@ class SchedulerAgent(TriggerNode):
         # Call the parent activate to register the workflow_config in self._workflows
         await super().activate(agent_node_id, workflow_config)
 
+        # Resolve instance properties for the background loop
+        nodes = workflow_config.get("nodes_structure", [])
+        node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
+        overrides = node_data.get("data", {}).get("properties") or node_data.get("config") or {}
+        config = {**self.properties, **overrides}
+
         # Calculate delay based on interval and unit (seconds vs minutes)
-        interval = float(self.properties.get("interval", self.default_node_properties.get("interval","6000")))
-        unit = self.properties.get("unit", self.default_node_properties.get("unit","minutes"))
+        interval = float(config.get("interval", 60))
+        unit = config.get("unit", "seconds")
         delay = interval if unit == "seconds" else interval * 60
 
         if agent_node_id in self._tasks:

@@ -48,12 +48,7 @@ async def activate_workflow(workflow: WorkflowDefinition):
         n_type = node.get("type", "agent") or "agent"
         
         # Identify functional node type (Trigger/Start)
-        node_type = (
-            node_props.get("node_type") or 
-            node_data.get("nodeType") or 
-            node_data.get("node_type") or
-            n_type
-        ).lower()
+        node_type = str(node_props.get("node_type") or node.get("type") or "").lower()
         agent_name = node_data.get("name") or node.get("name")
         agent = NodesRegistry.get_node(agent_name)
         

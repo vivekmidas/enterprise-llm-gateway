@@ -12,7 +12,7 @@ router = APIRouter(prefix="/nodes", tags=["nodes"])
 
 
 def _defaults_from_payload(node_data: dict) -> dict:
-    defaults = node_data.get("properties") if isinstance(node_data.get("properties"), dict) else {}
+    defaults = node_data.get("user_properties") if isinstance(node_data.get("user_properties"), dict) else {}
     defaults = dict(defaults or {})
     schema = node_data.get("property_schema") or node_data.get("propertySchema") or []
     if not isinstance(schema, list):

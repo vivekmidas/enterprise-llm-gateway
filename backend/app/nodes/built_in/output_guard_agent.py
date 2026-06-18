@@ -28,7 +28,7 @@ class OutputGuardAgent(BaseNode):
             "default": False
         }
     ]
-    properties: Dict[str, Any] = {
+    user_properties: Dict[str, Any] = {
         "checkPII": True,
         "checkMAD": True,
         "checkPolicy": False

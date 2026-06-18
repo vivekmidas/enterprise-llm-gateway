@@ -62,10 +62,9 @@ class TransformNode(BaseNode):
                 "metadata": inp.metadata # Workflow metadata
             }
 
-            # 2. Get the mapping template and output format from node properties
-            props = self._get_node_config(inp.trace_id, inp.config) # Ensure we get instance properties
-            mapping_template = props.get("mapping_template", "{{ input_data }}")
-            output_format = props.get("output_format", "json")
+            # 2. Use the already merged config from input
+            mapping_template = inp.config.get("mapping_template", "{{ input_data }}")
+            output_format = inp.config.get("output_format", "json")
 
             # 3. Resolve variables using the Jinja2 template
             # If it's a string that looks like a JSON template, try parsing it to a dict first

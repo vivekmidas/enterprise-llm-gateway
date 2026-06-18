@@ -5,7 +5,7 @@ import structlog
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
 from app.nodes.built_in.webhook.api_webhook_agent import WebhookAgent
-from app.nodes.built_in.scheduler_agent import SchedulerAgent
+from app.nodes.built_in.scheduler_node import SchedulerAgent
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 logger = structlog.get_logger(__name__)

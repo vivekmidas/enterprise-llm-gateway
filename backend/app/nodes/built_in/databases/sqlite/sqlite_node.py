@@ -132,7 +132,7 @@ class SQLiteDBExecutor(DBExecutor):
         self.logger.info("sqlite_node_execution_started", trace_id=trace_id)
 
         # Merge runtime config with node's default properties
-        config = {**self.properties, **(inp.config or {})}
+        #config = self._get_node_config(trace_id, inp.config)
 
         # Parse input_data to JSON and extract required fields
         try:
@@ -151,7 +151,7 @@ class SQLiteDBExecutor(DBExecutor):
         data = payload.get("data", {})
         field_names = data.get("field_names", [])
         field_values = data.get("field_values", [])
-        table_name = data.get("table_name", config.get("table_name")) # Use config for default table_name
+        table_name = data.get("table_name", inp.config.get("table_name")) # Use config for default table_name
         query_type = data.get("query_type", "select") # Default to select if not specified
         condition = data.get("condition") # For UPDATE/DELETE/SELECT WHERE clauses
 
@@ -166,23 +166,23 @@ class SQLiteDBExecutor(DBExecutor):
             )
 
         try:
-            conn = await self.get_connection(self,config)
+            conn = await self.get_connection(self, inp.config)
             sql_query, sql_params = await self._generate_sql_query(field_names, field_values, table_name, query_type, condition)
             self.logger.info("sqlite_query_generated", query_type=query_type, query=sql_query, params=sql_params)
             
             result = await self.execute_query(conn, sql_query, query_type, sql_params)
 
             #duration = round((time.time() - start_time) * 1000, 2)
-            self.logger.info("sqlite_node_execution_success", trace_id=trace_id, duration_ms=duration)
+            self.logger.info("sqlite_node_execution_success", trace_id=trace_id)
             return NodeOutput(
                 trace_id=trace_id,
                 output_data=json.dumps(result, default=str), # Ensure result is JSON serializable
                 status="success",
                 metadata={"query_type": query_type, "table_name": table_name},
-                latency_ms=duration
+                #latency_ms=duration
             )
         except Exception as e:
-            duration = round((time.time() - start_time) * 1000, 2)
+            # duration = round((time.time() - start_time) * 1000, 2)
             self.logger.error("sqlite_node_execution_failed", trace_id=trace_id, error=str(e), exc_info=True)
             return NodeOutput(
                 trace_id=trace_id,
@@ -190,5 +190,5 @@ class SQLiteDBExecutor(DBExecutor):
                 status="failure",
                 error_message=f"SQLite execution failed: {e}",
                 error_code=500,
-                latency_ms=duration
+                # latency_ms=duration
             )

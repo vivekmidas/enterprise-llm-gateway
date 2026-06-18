@@ -37,14 +37,24 @@ app.add_middleware(
 # ====================== Startup - Register Nodes ======================
 @app.on_event("startup")
 async def startup_event():
+    """
+    Handles the application startup lifecycle.
+    1. Initializes the database schema.
+    2. Automatically discovers all available nodes (built-in and plugins).
+    3. Activates triggers for all enabled workflows to start background listeners.
+    """
     logger.info("starting_gateway", version="0.2.3")
-    # Ensure tables are created before syncing
+    
+    # Initialize the database and ensure all tables exist
     await init_db()
-    # Dynamic discovery now handles all registrations automatically
+    
+    # Scan the project for node definitions and register them in memory
     await NodesRegistry.node_auto_discover()
+    
+    # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
+    # (e.g., starting webhook servers or cron tasks).
     await workflow_auto_discover()
-    # Initial sync with DB to load persisted property overrides into the registry
-   # await NodesRegistry.sync_with_db()
+    
     logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))
     
 app.include_router(root_router)

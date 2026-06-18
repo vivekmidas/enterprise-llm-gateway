@@ -11,6 +11,13 @@ from fastapi import FastAPI, Request
 from pydantic import PrivateAttr
 
 class WebhookAgent(TriggerNode):
+    """
+    Dynamic Webhook Trigger. 
+    
+    This node spins up Uvicorn/FastAPI instances based on user configuration.
+    When a POST request is received at the designated endpoint, it triggers 
+    the execution of the associated LangGraph workflow.
+    """
     name: str = "api_webhook_agent"
     description: str = "API Webhook Agent for external system integration"
     version: str = "1.0.0"
@@ -50,8 +57,12 @@ class WebhookAgent(TriggerNode):
         """
         await super().activate(agent_node_id, workflow_config)
 
-        # Resolve merged configuration (Global Defaults + Workflow Instance)
-        config = self._get_node_config(agent_node_id, workflow_config)
+        # Resolve instance configuration manually for the background server
+        nodes = workflow_config.get("nodes_structure", [])
+        node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
+        overrides = node_data.get("data", {}).get("properties") or node_data.get("config") or {}
+        config = {**self.properties, **overrides}
+
         port = int(config.get("port", 8000))
         host = config.get("host", "0.0.0.0")
         base_path = config.get("path", "").strip('/')

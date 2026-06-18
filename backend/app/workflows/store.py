@@ -73,7 +73,7 @@ def _default_properties_from_node_definition(node_definition: NodeDB | None) -> 
     if not node_definition:
         return {}
 
-    defaults = dict(node_definition.properties) if isinstance(node_definition.properties, dict) else {}
+    defaults = dict(node_definition.user_properties) if isinstance(node_definition.user_properties, dict) else {}
     schema = node_definition.property_schema if isinstance(node_definition.property_schema, list) else []
 
     for field in schema:
@@ -243,13 +243,12 @@ async def _hydrate_workflow_definition(
         catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
         catalog_node = catalog_result.scalar_one_or_none()
         defaults = _default_properties_from_node_definition(catalog_node)
-        properties = dict(defaults)
+        user_properties = dict(defaults)
+        system_properties = catalog_node.system_properties if catalog_node and catalog_node.system_properties else {}
 
-        workflow_node = await _get_workflow_node(session, definition.id, n_dict.get("id"))
-        if workflow_node:
-            properties.update(
-                await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))
-            )
+        # Load instance-specific overrides for user properties from the store
+        instance_overrides = await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))
+        user_properties.update(instance_overrides)
 
         if catalog_node:
             data["property_schema"] = catalog_node.property_schema or []
@@ -257,7 +256,9 @@ async def _hydrate_workflow_definition(
             data["input_contract"] = catalog_node.input_contract or {}
             data["output_contract"] = catalog_node.output_contract or {}
 
-        data["properties"] = properties
+        data["user_properties"] = user_properties
+        data["system_properties"] = system_properties
+
         n_dict["data"] = data
         hydrated_nodes.append(NodeConfig.model_validate(n_dict))
 

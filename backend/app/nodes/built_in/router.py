@@ -5,7 +5,7 @@ import structlog
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
 from app.nodes.built_in.webhook.api_webhook_agent import WebhookAgent
-from app.nodes.built_in.scheduler_agent import SchedulerAgent
+from app.nodes.built_in.scheduler_node import SchedulerAgent
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 logger = structlog.get_logger(__name__)
@@ -17,43 +17,43 @@ async def list_triggers():
     """
     triggers_info = []
     for node_name, node_instance in NodesRegistry._nodes.items():
-        if isinstance(node_instance, TriggerNode):
-            info = {
-                "name": node_instance.name,
-                "description": node_instance.description,
-                "version": node_instance.version,
-                "category": node_instance.category,
-                "node_type": node_instance.node_type,
-                "properties": node_instance.properties,
-                "active_instances": []
-            }
+        # if isinstance(node_instance, TriggerNode):
+        #     info = {
+        #         "name": node_instance.name,
+        #         "description": node_instance.description,
+        #         "version": node_instance.version,
+        #         "category": node_instance.category,
+        #         "node_type": node_instance.node_type,
+        #         "properties": node_instance.properties,
+        #         "active_instances": []
+        #     }
 
-            if isinstance(node_instance, WebhookAgent):
-                # For WebhookAgent, list active endpoints and their server status
-                for agent_node_id, server_key in node_instance._endpoint_to_server_map.items():
-                    host, port = server_key
-                    is_running = server_key in node_instance._server_tasks and not node_instance._server_tasks[server_key].done()
-                    info["active_instances"].append({
-                        "agent_node_id": agent_node_id,
-                        "type": "webhook",
-                        "host": host,
-                        "port": port,
-                        "path": f"/{node_instance.properties['path'].strip('/')}/{agent_node_id}",
-                        "status": "running" if is_running else "stopped",
-                        "workflow_id": node_instance._workflows.get(agent_node_id, {}).get("id")
-                    })
-            elif isinstance(node_instance, SchedulerAgent):
-                # For SchedulerAgent, list active tasks
-                for agent_node_id, task in node_instance._tasks.items():
-                    is_running = not task.done()
-                    info["active_instances"].append({
-                        "agent_node_id": agent_node_id,
-                        "type": "scheduler",
-                        "status": "running" if is_running else "stopped",
-                        "workflow_id": node_instance._workflows.get(agent_node_id, {}).get("id")
-                    })
+        #     if isinstance(node_instance, WebhookAgent):
+        #         # For WebhookAgent, list active endpoints and their server status
+        #         for agent_node_id, server_key in node_instance._endpoint_to_server_map.items():
+        #             host, port = server_key
+        #             is_running = server_key in node_instance._server_tasks and not node_instance._server_tasks[server_key].done()
+        #             info["active_instances"].append({
+        #                 "agent_node_id": agent_node_id,
+        #                 "type": "webhook",
+        #                 "host": host,
+        #                 "port": port,
+        #                 "path": f"/{node_instance.properties['path'].strip('/')}/{agent_node_id}",
+        #                 "status": "running" if is_running else "stopped",
+        #                 "workflow_id": node_instance._workflows.get(agent_node_id, {}).get("id")
+        #             })
+        #     elif isinstance(node_instance, SchedulerAgent):
+        #         # For SchedulerAgent, list active tasks
+        #         for agent_node_id, task in node_instance._tasks.items():
+        #             is_running = not task.done()
+        #             info["active_instances"].append({
+        #                 "agent_node_id": agent_node_id,
+        #                 "type": "scheduler",
+        #                 "status": "running" if is_running else "stopped",
+        #                 "workflow_id": node_instance._workflows.get(agent_node_id, {}).get("id")
+        #             })
             
-            triggers_info.append(info)
+            triggers_info.append(node_name)
     return triggers_info
 
 @router.post("/triggers/{node_name}/activate")

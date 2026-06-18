@@ -35,7 +35,10 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
         await super().activate(agent_node_id, workflow_config)
 
         # 2. Resolve instance configuration
-        config = self._get_node_config(agent_node_id, workflow_config)
+        nodes = workflow_config.get("nodes_structure", [])
+        node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
+        overrides = node_data.get("data", {}).get("properties") or {}
+        config = {**self.properties, **overrides}
 
         # 3. Create Subscription
         try:

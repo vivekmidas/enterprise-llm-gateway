@@ -25,10 +25,10 @@ class GenericLLMAgent(BaseNode):
     # Hardcoded fallback defaults (Level 0)
     # Level 1 (NodeDB) will override these during init()
     # Level 2 (Workflow Instance) will override everything during run()
-    properties: Dict[str, Any] = {
+    user_properties: Dict[str, Any] = {
         "ip": "127.0.0.1",
         "port": "8000",
-        "model": "qwen:0.5b",
+        "model_name": "qwen:0.5b",
         "temperature": 0.7, 
         "system_prompt": "You are a helpful assistant.",
         "path": "/v1/chat/completions"
@@ -66,7 +66,7 @@ class GenericLLMAgent(BaseNode):
         
         ip = config.get("ip")
         port = config.get("port")
-        model = config.get("model")
+        model_name = config.get("model_name")
         temperature = float(config.get("temperature")) # Ensure temperature is a float
         system_prompt = config.get("system_prompt")
 
@@ -82,10 +82,11 @@ class GenericLLMAgent(BaseNode):
             pass
         
         # OpenAI-compatible chat completion endpoint
-        endpoint = f"http://{ip}:{port}{self.properties['path']}"
+        path = config.get("path", "/v1/chat/completions")
+        endpoint = f"http://{ip}:{port}{path}"
         
         payload = {
-            "model": model,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message_to_llm}
@@ -108,7 +109,7 @@ class GenericLLMAgent(BaseNode):
                     content=ai_message,
                     metadata={
                         "endpoint": endpoint,
-                        "model": model,
+                        "model": model_name,
                         "usage": usage
                     },
                     status="success"
