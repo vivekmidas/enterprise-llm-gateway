@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Response, status, Depends
 from typing import Optional, List
 import structlog
-
+from app.core.types.users import User
 from app.api.workflows.schemas import WorkflowSaveRequest
 from app.nodes.registry import NodesRegistry
 from app.workflows.store import update_node_tokens_in_db
@@ -104,9 +104,6 @@ async def update_node_properties(workflow_id: str, agent_node_id: str, propertie
     return await update_workflow_node_properties(workflow_id, agent_node_id, properties)
 
 
-# Note: In a real implementation, 'get_current_user' would be imported from your auth module
-async def get_current_user(): return {"id": "1", "role": "admin"}
-
 @router.patch("/{workflow_id}/toggle", response_model=dict)
 async def toggle_workflow_status(workflow_id: str):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
@@ -149,12 +146,22 @@ async def create_workflow(request: WorkflowSaveRequest):
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(workflow_id: str, version: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def remove_workflow(workflow_id: str, user: User, version: Optional[str] = None):
     logger.info("remove_workflow_request", workflow_id=workflow_id, version=version)
     
-    if current_user.get("role") == "admin":
-        logger.warning("admin_delete_restricted", workflow_id=workflow_id)
-        raise HTTPException(status_code=403, detail="Admins can disable workflows but are restricted from deleting them.")
+    # 1. Fetch workflow to verify existence and check ownership
+    try:
+        workflow = await get_workflow(workflow_id, version)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # 2. Authorization: Only the creator (user_id) or an admin can delete
+    is_owner = str(workflow.user_id) == str(user.id)
+    is_admin = user.role == "admin"
+
+    if not (is_owner or is_admin):
+        logger.warning("delete_unauthorized", workflow_id=workflow_id, user_id=user.id)
+        raise HTTPException(status_code=403, detail="Permission denied. Only the owner or an administrator can delete this workflow.")
 
     success = await delete_workflow(workflow_id, version)
     if not success:
