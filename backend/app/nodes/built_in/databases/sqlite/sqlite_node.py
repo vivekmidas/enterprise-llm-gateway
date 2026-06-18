@@ -172,7 +172,7 @@ class SQLiteDBExecutor(DBExecutor):
             
             result = await self.execute_query(conn, sql_query, query_type, sql_params)
 
-            duration = round((time.time() - start_time) * 1000, 2)
+            #duration = round((time.time() - start_time) * 1000, 2)
             self.logger.info("sqlite_node_execution_success", trace_id=trace_id, duration_ms=duration)
             return NodeOutput(
                 trace_id=trace_id,
