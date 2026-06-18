@@ -39,6 +39,7 @@ dependencies = [
     "presidio_analyzer",
     "greenlet",
     "httpx",
+    "jinja2"
 
 ]
 dev = [
