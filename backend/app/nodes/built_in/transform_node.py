@@ -32,7 +32,7 @@ class TransformNode(BaseNode):
             # 1. Parse the incoming input_data (which is a string, likely JSON)
             parsed_input_data: Any
             try:
-                parsed_input_data = json.loads(inp.input_data)
+                parsed_input_data = json.loads(inp.data)
             except json.JSONDecodeError:
                 # If not JSON, treat it as a plain string
                 parsed_input_data = inp.data
@@ -77,14 +77,14 @@ class TransformNode(BaseNode):
                 trace_id=inp.trace_id,
                 data=final_output_data,
                 status="success",
-                metadata={"transformed_from": inp.input_data}
+                metadata={"transformed_from": inp.data}
             )
 
         except Exception as e:
             self.logger.error("transform_node_execution_failed", error=str(e), trace_id=inp.trace_id)
             return NodeOutput(
                 trace_id=inp.trace_id,
-                data=inp.input_data, # Return original input on failure
+                data=inp.data, # Return original input on failure
                 status="failure",
                 error_message=f"Data transformation failed: {str(e)}",
                 error_code=500

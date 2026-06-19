@@ -16,14 +16,7 @@ class GenericLLMAgent(BaseNode):
     # Hardcoded fallback defaults (Level 0)
     # Level 1 (NodeDB) will override these during init()
     # Level 2 (Workflow Instance) will override everything during run()
-    user_properties: Dict[str, Any] = {
-        "ip": "127.0.0.1",
-        "port": "8000",
-        "model_name": "qwen:0.5b",
-        "temperature": 0.7, 
-        "system_prompt": "You are a helpful assistant.",
-        "path": "/v1/chat/completions"
-    }
+ 
 
     async def init(self) -> None:
         """

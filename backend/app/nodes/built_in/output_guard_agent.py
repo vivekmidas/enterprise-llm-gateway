@@ -10,12 +10,6 @@ class OutputGuardAgent(BaseNode):
     version: str = "1.0.0"
     category: str = "Guardrails"
     
-    user_properties: Dict[str, Any] = {
-        "checkPII": True,
-        "checkMAD": True,
-        "checkPolicy": False
-    }
-
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)
         return NodeOutput(
@@ -34,7 +28,7 @@ class OutputGuardAgent(BaseNode):
         # Simple PII leak check (can be enhanced with Presidio again)
         pii_keywords = ["phone", "email", "password", "account number"]
         for kw in pii_keywords:
-            if kw in inp.content.lower():
+            if kw in inp.data.lower():
                 violations.append(f"output_pii_leak:{kw}")
 
         return NodeOutput(

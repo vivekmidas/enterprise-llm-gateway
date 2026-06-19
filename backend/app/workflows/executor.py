@@ -114,8 +114,8 @@ def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = 
                 # Return ONLY the fields that changed. Returning the full state object (model_copy)
                 # causes conflicts on unchanged keys (like trace_id) during parallel execution steps.
                 updates = {
-                    "content": result.output_data,
-                    "masked_content": result.output_data,
+                    "content": result.data,
+                    "masked_content": result.data,
                 }
 
                 # Return only what changed. Metadata and violations should be merged by LangGraph reducers.

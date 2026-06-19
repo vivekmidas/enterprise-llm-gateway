@@ -41,13 +41,13 @@ class ProfanityGuardAgent(BaseNode):
 
         results = await asyncio.to_thread(
             self._analyzer.analyze,
-            text=inp.content,
+            text=inp.data,
             entities=["PROFANITY"],
             language="en"
         )
 
         violations = []
-        masked = inp.content
+        masked = inp.data
 
         for r in results:
             violations.append(f"profanity")

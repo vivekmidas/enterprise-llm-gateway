@@ -136,12 +136,12 @@ class SQLiteDBExecutor(DBExecutor):
 
         # Parse input_data to JSON and extract required fields
         try:
-            payload = json.loads(inp.input_data)
+            payload = json.loads(inp.data)
         except (json.JSONDecodeError, TypeError):
-            self.logger.error("invalid_input_data_json", trace_id=trace_id, input_data=inp.input_data)
+            self.logger.error("invalid_input_data_json", trace_id=trace_id, input_data=inp.data)
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps({"error": "Invalid JSON input data"}),
+                data=json.dumps({"error": "Invalid JSON input data"}),
                 status="failure",
                 error_message="Input data must be a valid JSON object.",
                 error_code=400,
@@ -158,7 +158,7 @@ class SQLiteDBExecutor(DBExecutor):
         if not table_name or  not field_names or not field_values or not query_type:
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps({"error": "data validation failed required"}),
+                data=json.dumps({"error": "data validation failed required"}),
                 status="failure",
                 error_message="data validation failed required.",
                 error_code=400,
@@ -176,7 +176,7 @@ class SQLiteDBExecutor(DBExecutor):
             self.logger.info("sqlite_node_execution_success", trace_id=trace_id)
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps(result, default=str), # Ensure result is JSON serializable
+                data=json.dumps(result, default=str), # Ensure result is JSON serializable
                 status="success",
                 metadata={"query_type": query_type, "table_name": table_name},
                 #latency_ms=duration
@@ -186,7 +186,7 @@ class SQLiteDBExecutor(DBExecutor):
             self.logger.error("sqlite_node_execution_failed", trace_id=trace_id, error=str(e), exc_info=True)
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps({"error": str(e)}),
+                data=json.dumps({"error": str(e)}),
                 status="failure",
                 error_message=f"SQLite execution failed: {e}",
                 error_code=500,

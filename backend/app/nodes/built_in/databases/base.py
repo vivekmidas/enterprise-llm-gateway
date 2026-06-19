@@ -45,7 +45,7 @@ class DBExecutor(BaseNode, abc.ABC):
             self.logger.warning("db_validation_failed", **error, trace_id=inp.trace_id)
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=json.dumps(error),
+                data=json.dumps(error),
                 status="failure",
                 error_message=error["error_message"],
                 error_code=400,
@@ -100,7 +100,7 @@ class DBExecutor(BaseNode, abc.ABC):
 
             # Success response
             duration = round((time.time() - start_time) * 1000, 2)
-            output_data = {
+            data = {
                 "status": "success",
                 "data": result,
                 "metadata": {
@@ -113,13 +113,13 @@ class DBExecutor(BaseNode, abc.ABC):
             self.logger.info("db_node_execution_success",
                             trace_id=trace_id,
                             duration_ms=duration,
-                            row_count=output_data["metadata"]["row_count"])
+                            row_count=data["metadata"]["row_count"])
 
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps(output_data),
+                data=json.dumps(data),
                 status="success",
-                metadata=output_data["metadata"],
+                metadata=data["metadata"],
                 latency_ms=duration,
                 start_time=start_time,
                 end_time=time.time()
@@ -139,7 +139,7 @@ class DBExecutor(BaseNode, abc.ABC):
 
             return NodeOutput(
                 trace_id=trace_id,
-                output_data=json.dumps(error),
+                data=json.dumps(error),
                 status="failure",
                 error_message=str(e),
                 error_code=500,

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import String, cast, or_, select
 import structlog
 
 from app.core.database import get_db
-from app.models.db_models import NodeDB
+from app.models.db_models import CategoryDB, NodeDB
 from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
 
@@ -15,18 +15,51 @@ router = APIRouter(prefix="/nodes", tags=["nodes"])
 def _defaults_from_payload(node_data: dict) -> dict:
     return property_entries_to_dict(node_data.get("user_properties"))
 
+
+def _nodes_with_categories_query():
+    node_columns = [
+        column
+        for column in NodeDB.__table__.columns
+        if column.name not in {"category_id", "category_color"}
+    ]
+
+    return (
+        select(
+            *node_columns,
+            CategoryDB.id.label("category_id"),
+            CategoryDB.color.label("category_color"),
+        )
+        .select_from(NodeDB)
+        .outerjoin(CategoryDB, cast(CategoryDB.id, String) == NodeDB.category)
+    )
+
+
+async def _fetch_nodes(db: AsyncSession, statement):
+    result = await db.execute(statement)
+    return [dict(row) for row in result.mappings().all()]
+
+
+async def _fetch_node(db: AsyncSession, statement):
+    result = await db.execute(statement)
+    row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
 @router.get("")
 async def list_nodes(db: AsyncSession = Depends(get_db)):
     """Fetches all registered nodes from the database."""
-    result = await db.execute(select(NodeDB))
-    nodes = result.scalars().all()
+    nodes = await _fetch_nodes(db, _nodes_with_categories_query())
     return {"nodes": nodes}
 
 @router.get("/{node_name}")
 async def get_node(node_name: str, db: AsyncSession = Depends(get_db)):
     """Fetches a specific node definition by name."""
-    result = await db.execute(select(NodeDB).where(NodeDB.name == node_name))
-    node = result.scalar_one_or_none()
+    node = await _fetch_node(
+        db,
+        _nodes_with_categories_query().where(
+            or_(NodeDB.name == node_name, cast(NodeDB.id, String) == node_name)
+        ),
+    )
     if not node:
         return {"error": "Node not found"}
     return {"node": node}
@@ -34,8 +67,10 @@ async def get_node(node_name: str, db: AsyncSession = Depends(get_db)):
 @router.get("/{id}")
 async def get_node_by_id(id: str, db: AsyncSession = Depends(get_db)):
     """Fetches a specific node definition by ID."""
-    result = await db.execute(select(NodeDB).where(NodeDB.id == id))
-    node = result.scalar_one_or_none()
+    node = await _fetch_node(
+        db,
+        _nodes_with_categories_query().where(cast(NodeDB.id, String) == id),
+    )
     if not node:
         return {"error": "Node not found"}
     return {"node": node}
@@ -75,6 +110,8 @@ async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
 @router.get("/categories/{category_id}")
 async def get_nodes_by_category(category_id: str, db: AsyncSession = Depends(get_db)):
     """Fetches all nodes belonging to a specific category."""
-    result = await db.execute(select(NodeDB).where(NodeDB.category == category_id))
-    nodes = result.scalars().all()
+    nodes = await _fetch_nodes(
+        db,
+        _nodes_with_categories_query().where(cast(CategoryDB.id, String) == category_id),
+    )
     return {"nodes": nodes}
