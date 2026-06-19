@@ -9,7 +9,7 @@ class ContextSetterAgent(BaseNode):
     category: str = "Context Enrichment"
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
-        await super().validate_input(inp)
+        await super().validwate_input(inp)
         
         if not inp.context or "user_id" not in inp.context:
             return NodeOutput(
@@ -29,8 +29,9 @@ class ContextSetterAgent(BaseNode):
 
     async def init(self) -> None:
         await super().init()
-        
+       
     async def execute (self, inp: NodeInput) -> NodeOutput:
+        self.logger.info(f"Execution Started for  {self.name}")
         start = time.time()
         
         # Simulate CRM lookup (replace with real API/DB call)
@@ -43,12 +44,13 @@ class ContextSetterAgent(BaseNode):
         }
 
         enriched_content = f"User Context: {user_context}\n\nUser Message: {inp.data}"
-
+        self.logger.info(f"Execution Ended for  {self.name}")
+  
         return NodeOutput(
             trace_id=inp.trace_id,
             start_time=start,
             end_time=time.time(),
             data=enriched_content,
             metadata={"context_fetched": True, "source": "crm"},
-            latency_ms=round((time.time() - start) * 1000, 2)
+            # latency_ms=round((time.time() - start) * 1000, 2)
         )

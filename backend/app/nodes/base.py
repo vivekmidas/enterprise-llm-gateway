@@ -104,6 +104,8 @@ class BaseNode(BaseModel, abc.ABC):
         Initializes the node. Default implementation loads properties from DB.
         Should be called during registration/discovery.
         """
+        self.logger.info(f"Initiating node start {self.name}")
+ 
         db_data = await self._get_db_node_data()
         if db_data:
             if db_data.get("user_properties"):
@@ -117,6 +119,7 @@ class BaseNode(BaseModel, abc.ABC):
 
         # Unified merge: User properties override System properties
         self.properties = {**self.system_properties, **self.user_properties}
+        self.logger.info(f"Initiating node ended {self.name}")
 
     def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
         """
@@ -139,14 +142,13 @@ class BaseNode(BaseModel, abc.ABC):
         Checks for mandatory fields and validates data types across context, config, and input data.
         Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
+        self.logger.info("Starting validate_input_contract", name= self.name)
         schema = self.input_contract
         if not schema:
             return None
 
         # 1. Merge all available input sources for field matching
         available_data = inp.data
-   
-    
         if inp.data:
             try:
                 content_data = json.loads(inp.data)
@@ -161,8 +163,9 @@ class BaseNode(BaseModel, abc.ABC):
         properties = schema.get("properties", schema)
 
         for field, rules in properties.items():
+            self.logger.debug("Validating field", name=self.name, field=field, rules=rules)
             field_rules = rules if isinstance(rules, dict) else {"type": rules}
-            is_required_str = field_rules.get("required", "True")
+            is_required_str = field_rules.get("required", "False") # default is false
             if is_required_str.lower() == "false":
                 is_required = False
             if is_required_str.lower() == "true":
@@ -202,6 +205,7 @@ class BaseNode(BaseModel, abc.ABC):
                     errors.append(f"Field '{field}' expected valid JSON structure or string, but validation failed.")
 
         if errors:
+            self.logger.error(f"Ending validation of validate_input_contract",name= self.name, inp_data=inp.data,errors= "; ".join(errors))
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,
@@ -210,7 +214,7 @@ class BaseNode(BaseModel, abc.ABC):
                 error_code=400,
                 violations=["contract_violation"]
             )
-               
+            
         return None
 
     # def apply_output_envelope(self, execution_output: Any, original_input: NodeInput) -> str:
@@ -269,7 +273,7 @@ class BaseNode(BaseModel, abc.ABC):
         Returns:
             NodeOutput: The standardized result containing content, status, and metadata.
         """
-        self.logger.info("node_run_started", trace_id=inp.trace_id, input=inp.model_dump())
+        self.logger.info("node_run_started", name = self.name, trace_id=inp.trace_id, input=inp.model_dump())
         start_ts = time.time()
         try:
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
@@ -314,6 +318,7 @@ class BaseNode(BaseModel, abc.ABC):
             
             self.logger.info(
                 "node_run_completed", 
+                name=self.name,
                 status=output.status, 
                 latency_ms=output.latency_ms, 
                 output=output.model_dump()
@@ -324,6 +329,7 @@ class BaseNode(BaseModel, abc.ABC):
             end_ts = time.time()
             self.logger.error(
                 "node_run_exception", 
+                name=self.name,
                 error=str(e), 
                 trace_id=inp.trace_id, 
                 input=inp.model_dump()
@@ -352,10 +358,23 @@ class TriggerNode(BaseNode, abc.ABC):
 
     async def init(self) -> None:
         """Triggers should still load their properties from the database."""
+        self.logger.info(
+                        "Trigger node init started", 
+                        name=self.name
+                    )
         await super().init()
-    
+        self.logger.info(
+                        "Trigger node init ended", 
+                        name=self.name,
+                    )
+        
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """Default trigger execution just passes the input payload through."""
+        self.logger.info(
+                        "Trigger node execution  started", 
+                        name=self.name,
+                        trace_id=self.inp.trace_id, 
+                    )
         return NodeOutput(trace_id=inp.trace_id, data=inp.data)
     
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
@@ -377,12 +396,16 @@ class TriggerNode(BaseNode, abc.ABC):
             agent_node_id: The unique ID of the trigger node within the specific workflow.
             workflow_config: The full JSON definition of the workflow to be executed.
         """
+        self.logger.info(
+                        "Trigger node  activation started", 
+                        name=self.name
+                    )
         self._workflows[agent_node_id] = workflow_config
         
         # Global node properties are loaded in init()
         # Instance properties should be resolved using _get_node_config() when needed
         self.logger.debug("workflow_registered_to_trigger",
-                         agent_node_id=agent_node_id, 
+                          name=self.name,
                          workflow_id=workflow_config.get("id"))
 
     async def execute_dynamic_agent(self, agent_node_id: str, payload: Any, trace_id: Optional[str] = None):
@@ -393,6 +416,11 @@ class TriggerNode(BaseNode, abc.ABC):
         """
         from app.workflows.executor import WorkflowExecutor
         # Generate a trace ID if not provided, prefixed by node name for observability
+
+        self.logger.debug("execute_dynamic_agent started",
+                          name=self.name,
+                         workflow_id=agent_node_id)
+        
         t_id = trace_id or f"{self.name}-{int(time.time())}"
         
         # Retrieve the workflow config for this specific agent_node_id
@@ -403,12 +431,19 @@ class TriggerNode(BaseNode, abc.ABC):
 
         # Trigger the workflow execution via the central executor logic
         try:
+            self.logger.debug("WorkflowExecutor started",
+                          name=self.name,
+                         workflow_id=workflow_config.get("id"))
+ 
             executor = WorkflowExecutor(workflow_config)
 
             # Ensure dictionary/list payloads are correctly serialized to JSON strings
             content = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
-            
+            self.logger.debug("WorkflowExecutor ended",
+                          name=self.name,
+                         workflow_id=workflow_config.get("id"))
+ 
             return await executor.execute_async(content, t_id)
         except Exception as e:
-            self.logger.error("dynamic_agent_execution_crashed", error=str(e), trace_id=t_id)
+            self.logger.error("dynamic_agent_execution_crashed",name=self.name, error=str(e), trace_id=t_id)
             return None

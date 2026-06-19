@@ -329,7 +329,7 @@ class WorkflowExecutor:
                     updates["violations"] = list(result.violations or [])
                     if result.status == "failure":
                         updates["violations"].append(f"node_failure:{node_id}")
-                        logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
+                        logger.error("agent_execution_failed", agent=agent_name, node_id=node_id,  trace_id=state.trace_id)
                    
                     return updates
                 except Exception as e:

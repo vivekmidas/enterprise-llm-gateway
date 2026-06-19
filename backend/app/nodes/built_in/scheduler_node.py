@@ -27,7 +27,6 @@ class SchedulerAgent(TriggerNode):
 
     async def init(self) -> None:
         await super().init()
-        
         self._tasks: Dict[str, asyncio.Task] = {}
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
