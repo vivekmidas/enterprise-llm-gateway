@@ -2,7 +2,8 @@
 from typing import Dict, Any, List, Optional
 import time
 import urllib.parse
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 from app.utils.http_client import HttpClient, ApiResponse
 from pydantic import Field
 import abc
@@ -51,10 +52,10 @@ class ApiRequestNode(BaseNode):
         """
         self.logger.debug("Validating input", trace_id=inp.trace_id)
         await super().validate_input(inp)
-        if not inp.content:
+        if not inp.data:
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 code=400,
                 error_message="Content is required"
@@ -161,7 +162,7 @@ class ApiRequestNode(BaseNode):
                 if response.status_code >= 200 and response.status_code < 300:
                     return NodeOutput(
                         trace_id=input_data.trace_id,
-                        content=response.body,
+                        data=response.body,
                         status="success",
                         metadata={
                             "status_code": response.status_code,
@@ -185,7 +186,7 @@ class ApiRequestNode(BaseNode):
         self.logger.error("API Request failed after retries", extra={"last_error": last_error})
         return NodeOutput(
             trace_id=input_data.trace_id,
-            content=input_data.content,
+            data=input_data.data,
             status="failure",
             error_message=last_error or "Unknown error"
         )

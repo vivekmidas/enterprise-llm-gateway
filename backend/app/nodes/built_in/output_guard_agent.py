@@ -1,5 +1,6 @@
 # backend/app/agents/built_in/output_guard_agent.py
-from app.nodes.base import  BaseNode, NodeInput, NodeOutput
+from app.nodes.base import  BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 from typing import List, Dict, Any
 import time
 
@@ -19,7 +20,7 @@ class OutputGuardAgent(BaseNode):
         await super().validate_input(inp)
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )
 
@@ -38,7 +39,7 @@ class OutputGuardAgent(BaseNode):
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             violations=violations,
             start_time=start,
             end_time=time.time(),

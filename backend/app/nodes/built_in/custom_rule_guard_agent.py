@@ -1,6 +1,7 @@
 import asyncio
 import time
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 
 class CustomRuleGuardAgent(BaseNode):
     name: str = "custom_rule_guard"
@@ -13,7 +14,7 @@ class CustomRuleGuardAgent(BaseNode):
         
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success",
             error_code=200
         )
@@ -24,19 +25,18 @@ class CustomRuleGuardAgent(BaseNode):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         config = inp.config or {}
-        
         violations = []
-        masked = inp.content
+        masked = inp.data
 
         # Keywords
         for kw in config.get("keywords", []):
-            if kw.lower() in inp.content.lower():
+            if kw.lower() in inp.data.lower():
                 violations.append(f"custom_keyword:{kw}")
                 masked = masked.replace(kw, f"[REDACTED-{kw}]")
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=masked,
+            data=masked,
             start_time=start,
             end_time=time.time(),
             violations=violations,

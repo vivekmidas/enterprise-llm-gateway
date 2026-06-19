@@ -1,4 +1,5 @@
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 import time
 
 class ContextSetterAgent(BaseNode):
@@ -13,7 +14,7 @@ class ContextSetterAgent(BaseNode):
         if not inp.context or "user_id" not in inp.context:
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error_code=400,
                 error_message=f"Context with user_id is required for ContextSetterAgent {self.name}"
@@ -21,7 +22,7 @@ class ContextSetterAgent(BaseNode):
             
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             error_code=200,
             status="success"
         )
@@ -41,13 +42,13 @@ class ContextSetterAgent(BaseNode):
             **inp.context
         }
 
-        enriched_content = f"User Context: {user_context}\n\nUser Message: {inp.content}"
+        enriched_content = f"User Context: {user_context}\n\nUser Message: {inp.data}"
 
         return NodeOutput(
             trace_id=inp.trace_id,
             start_time=start,
             end_time=time.time(),
-            content=enriched_content,
+            data=enriched_content,
             metadata={"context_fetched": True, "source": "crm"},
             latency_ms=round((time.time() - start) * 1000, 2)
         )

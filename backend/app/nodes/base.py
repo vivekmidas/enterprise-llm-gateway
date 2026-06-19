@@ -11,27 +11,8 @@ except ImportError:
     # Fallback to standard Template if nativetypes is unavailable
     from jinja2 import Template as NativeTemplate
 import structlog
-
-class NodeInput(BaseModel):
-    """Standardized input envelope passed to every node's execution method."""
-    trace_id: str
-    input_data: str
-    config: Dict[str, Any] = Field(default_factory=dict)
-    context: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-class NodeOutput(BaseModel):
-    """Standardized output envelope returned by every node after execution."""
-    trace_id: str
-    output_data: str
-    status: str = "success"  # "success" or "failure"
-    error_message: Optional[str] = None
-    error_code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
-    violations: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    latency_ms: float = 0.0
-    start_time: float = 0.0
-    end_time: float = 0.0
+from app.nodes.properties import property_entries_to_dict
+from app.core.types.common import NodeInput,NodeOutput
 
 class BaseNode(BaseModel, abc.ABC):
     """
@@ -126,9 +107,9 @@ class BaseNode(BaseModel, abc.ABC):
         db_data = await self._get_db_node_data()
         if db_data:
             if db_data.get("user_properties"):
-                self.user_properties.update(db_data.get("user_properties", {}))
+                self.user_properties.update(property_entries_to_dict(db_data.get("user_properties")))
             if db_data.get("system_properties"):
-                self.system_properties = db_data.get("system_properties")
+                self.system_properties = property_entries_to_dict(db_data.get("system_properties"))
             if db_data.get("input_contract"):
                 self.input_contract = db_data.get("input_contract")
             if db_data.get("output_contract"):
@@ -163,12 +144,12 @@ class BaseNode(BaseModel, abc.ABC):
             return None
 
         # 1. Merge all available input sources for field matching
-        available_data = inp.input_data
+        available_data = inp.data
    
     
-        if inp.input_data:
+        if inp.data:
             try:
-                content_data = json.loads(inp.input_data)
+                content_data = json.loads(inp.data)
                 if isinstance(content_data, dict):
                     available_data= content_data
             except (json.JSONDecodeError, TypeError):
@@ -223,7 +204,7 @@ class BaseNode(BaseModel, abc.ABC):
         if errors:
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=inp.input_data,
+                data=inp.data,
                 status="failure",
                 error_message="; ".join(errors),
                 error_code=400,
@@ -349,7 +330,7 @@ class BaseNode(BaseModel, abc.ABC):
             )
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=inp.input_data,
+                data=inp.data,
                 error_code=500,
                 status="failure",
                 error_message=str(e),
@@ -375,7 +356,7 @@ class TriggerNode(BaseNode, abc.ABC):
     
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """Default trigger execution just passes the input payload through."""
-        return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
+        return NodeOutput(trace_id=inp.trace_id, data=inp.data)
     
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         # Triggers can choose to implement validation if needed, but by default they don't block execution

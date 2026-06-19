@@ -2,7 +2,8 @@ import asyncio
 import time
 import subprocess
 from typing import Any, Dict, List
-from app.nodes.base import TriggerNode, NodeInput, NodeOutput
+from app.nodes.base import TriggerNode
+from app.core.types.common import NodeInput, NodeOutput
 
 class SchedulerAgent(TriggerNode):
     """
@@ -20,7 +21,7 @@ class SchedulerAgent(TriggerNode):
         await super().validate_input(inp)
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )
 
@@ -84,6 +85,6 @@ class SchedulerAgent(TriggerNode):
         """
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )

@@ -2,24 +2,7 @@ import abc
 import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-
-class NodeInput(BaseModel):
-    trace_id: str
-    content: str
-    config: Dict[str, Any] = Field(default_factory=dict)
-    context: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-class AgentOutput(BaseModel):
-    trace_id: str
-    content: str
-    status: str = "success"  # "success" or "failure"
-    violations: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    error: Optional[str] = None
-    latency_ms: float = 0.0
-    start_time: float = 0.0
-    end_time: float = 0.0
+from  app.core.types.common import NodeInput, NodeOutput
 
 class BaseAgent(abc.ABC):
     """
@@ -49,14 +32,14 @@ class BaseAgent(abc.ABC):
         return getattr(self, "propertySchema", [])
 
     @abc.abstractmethod
-    async def run(self, inp: NodeInput) -> AgentOutput:
+    async def run(self, inp: NodeInput) -> NodeOutput:
         """
         Core logic to be implemented by child agents.
         Should return content and metadata/violations.
         """
         pass
 
-    async def execute(self, inp: NodeInput) -> AgentOutput:
+    async def execute(self, inp: NodeInput) -> NodeOutput:
         """
         Standard execution wrapper with observability, timing, and error handling.
         """
@@ -75,9 +58,9 @@ class BaseAgent(abc.ABC):
 
         except Exception as e:
             end_ts = time.time()
-            return AgentOutput(
+            return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error=str(e),
                 start_time=start_ts,

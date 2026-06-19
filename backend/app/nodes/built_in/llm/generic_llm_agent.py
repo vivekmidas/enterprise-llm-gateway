@@ -1,7 +1,8 @@
 import httpx
 from typing import Any, Dict, List, Optional
 import json
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 
 class GenericLLMAgent(BaseNode):
     name: str = "generic_llm_agent"
@@ -37,10 +38,10 @@ class GenericLLMAgent(BaseNode):
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """Validates that input content is present before execution."""
         await super().validate_input(inp)
-        if not inp.content or not inp.content.strip():
+        if not inp.data or not inp.data.strip():
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error_message="Input content is empty",
             )
@@ -60,11 +61,11 @@ class GenericLLMAgent(BaseNode):
         temperature = float(config.get("temperature")) # Ensure temperature is a float
         system_prompt = config.get("system_prompt")
 
-        message_to_llm = inp.content # Default to using the raw content
+        message_to_llm = inp.data # Default to using the raw content
 
         # Attempt to parse as JSON and extract 'message' if it's a dict
         try:
-            parsed_json = json.loads(inp.content)
+            parsed_json = json.loads(inp.data)
             if isinstance(parsed_json, dict) and "message" in parsed_json:
                 message_to_llm = parsed_json["message"]
         except json.JSONDecodeError:
@@ -96,7 +97,7 @@ class GenericLLMAgent(BaseNode):
                 
                 return NodeOutput(
                     trace_id=inp.trace_id,
-                    content=ai_message,
+                    data=ai_message,
                     metadata={
                         "endpoint": endpoint,
                         "model": model_name,
@@ -108,7 +109,7 @@ class GenericLLMAgent(BaseNode):
             self.logger.error("generic_llm_request_failed", error=str(e), endpoint=endpoint)
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error_message=f"Generic LLM request failed: {str(e)}",
             )

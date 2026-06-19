@@ -9,6 +9,7 @@ from app.workflows.class_models import NodeConfig, WorkflowDefinition
 from app.core.cache import workflow_cache
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import NodeDB, WorkflowDB, WorkflowNodeDB, WorkflowNodePropertyDB
+from app.nodes.properties import property_entries_to_dict
 from sqlalchemy import select, delete
 
 logger = structlog.get_logger(__name__)
@@ -70,8 +71,7 @@ def _default_properties_from_node_definition(node_definition: NodeDB | None) -> 
     if not node_definition:
         return {}
 
-    defaults = dict(node_definition.user_properties) if isinstance(node_definition.user_properties, dict) else {}
-    return defaults
+    return property_entries_to_dict(node_definition.user_properties)
 
 
 async def _get_workflow_node(
@@ -224,7 +224,7 @@ async def _hydrate_workflow_definition(
         catalog_node = catalog_result.scalar_one_or_none()
         defaults = _default_properties_from_node_definition(catalog_node)
         user_properties = dict(defaults)
-        system_properties = catalog_node.system_properties if catalog_node and catalog_node.system_properties else {}
+        system_properties = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
 
         # Load instance-specific overrides for user properties from the store
         instance_overrides = await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))

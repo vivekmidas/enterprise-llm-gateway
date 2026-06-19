@@ -5,6 +5,7 @@ import structlog
 
 from app.core.database import get_db
 from app.models.db_models import NodeDB
+from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
 
 logger = structlog.get_logger(__name__)
@@ -12,9 +13,7 @@ router = APIRouter(prefix="/nodes", tags=["nodes"])
 
 
 def _defaults_from_payload(node_data: dict) -> dict:
-    defaults = node_data.get("user_properties") if isinstance(node_data.get("user_properties"), dict) else {}
-    defaults = dict(defaults or {})
-    return defaults
+    return property_entries_to_dict(node_data.get("user_properties"))
 
 @router.get("")
 async def list_nodes(db: AsyncSession = Depends(get_db)):
@@ -66,6 +65,7 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
 @router.post("")
 async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
     """Creates a new node definition in the registry (catalog)."""
+    new_node = NodeDB(**{key: value for key, value in node_data.items() if hasattr(NodeDB, key)})
     db.add(new_node)
     await db.commit()
     await db.refresh(new_node)

@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, List, Optional, Union
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 class TransformNode(BaseNode):
     name: str = "transform_node"
     label: str = "Data Transformer"
@@ -18,7 +19,7 @@ class TransformNode(BaseNode):
         if not self.properties.get("mapping_template"):
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=inp.input_data,
+                data=inp.data,
                 status="failure",
                 error_message="'mapping_template' property is required for Transform Node.",
                 error_code=400,
@@ -34,7 +35,7 @@ class TransformNode(BaseNode):
                 parsed_input_data = json.loads(inp.input_data)
             except json.JSONDecodeError:
                 # If not JSON, treat it as a plain string
-                parsed_input_data = inp.input_data
+                parsed_input_data = inp.data
             
             # Prepare data for Jinja2 rendering
             template_context = {
@@ -74,7 +75,7 @@ class TransformNode(BaseNode):
 
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=final_output_data,
+                data=final_output_data,
                 status="success",
                 metadata={"transformed_from": inp.input_data}
             )
@@ -83,7 +84,7 @@ class TransformNode(BaseNode):
             self.logger.error("transform_node_execution_failed", error=str(e), trace_id=inp.trace_id)
             return NodeOutput(
                 trace_id=inp.trace_id,
-                output_data=inp.input_data, # Return original input on failure
+                data=inp.input_data, # Return original input on failure
                 status="failure",
                 error_message=f"Data transformation failed: {str(e)}",
                 error_code=500

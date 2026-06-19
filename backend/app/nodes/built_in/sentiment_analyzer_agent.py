@@ -1,5 +1,6 @@
 # backend/app/agents/built_in/sentiment_analyzer_agent.py
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 import time
 
 class SentimentAnalyzerAgent(BaseNode ):
@@ -14,7 +15,7 @@ class SentimentAnalyzerAgent(BaseNode ):
         await super().validate_input(inp)
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )
         
@@ -22,7 +23,7 @@ class SentimentAnalyzerAgent(BaseNode ):
         start = time.time()
         
         # Simple rule-based + can be replaced with small LLM
-        text = inp.content.lower()
+        text = inp.data.lower()
         score = 0.5
         sentiment = "neutral"
         
@@ -35,7 +36,7 @@ class SentimentAnalyzerAgent(BaseNode ):
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             start_time=start,
             end_time=time.time(),
             metadata={"sentiment": sentiment, "score": score},

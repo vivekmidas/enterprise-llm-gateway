@@ -222,7 +222,7 @@ class WorkflowExecutor:
                 from app.nodes.base import BaseNode
                 class PassthroughNode(BaseNode):
                     async def execute(self, inp): 
-                        return NodeOutput(trace_id=inp.trace_id, output_data=inp.input_data)
+                        return NodeOutput(trace_id=inp.trace_id, data=inp.data)
                     async def init(self): pass
                     async def validate_input(self, inp): return None
                 agent = PassthroughNode(name=agent_name or "passthrough")
@@ -295,7 +295,7 @@ class WorkflowExecutor:
 
                     agent_input = NodeInput(
                         trace_id=state.trace_id,
-                        input_data=state.masked_content or state.content,
+                        data=state.masked_content or state.content,
                         config=node_config or {},
                         context=state.context,
                         metadata=state.metadata,
@@ -316,8 +316,8 @@ class WorkflowExecutor:
 
                     # Return ONLY the fields that changed.
                     updates = {
-                        "content": result.output_data,
-                        "masked_content": result.output_data,
+                        "content": result.data,
+                        "masked_content": result.data,
                     }
 
                     # Return only what changed. Metadata and violations are merged by LangGraph reducers.

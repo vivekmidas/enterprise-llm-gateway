@@ -1,5 +1,7 @@
 import asyncio
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput,NodeOutput
+
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from typing import List, Dict, Any
 
@@ -30,7 +32,7 @@ class ProfanityGuardAgent(BaseNode):
         await super().validate_input(inp)
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )
         
@@ -53,7 +55,7 @@ class ProfanityGuardAgent(BaseNode):
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=masked,
+            data=masked,
             violations=violations,
             latency_ms=0.0,  # Will be set by execute()
             start_time=0.0,  # Will be set by execute()

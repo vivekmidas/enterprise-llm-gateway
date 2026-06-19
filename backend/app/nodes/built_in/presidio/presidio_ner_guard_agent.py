@@ -1,6 +1,7 @@
 import asyncio
 from typing import Dict, Any
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
@@ -19,7 +20,7 @@ class PresidioNERGuardAgent(BaseNode):
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=inp.content,
+            data=inp.data,
             status="success"
         )
 
@@ -35,14 +36,14 @@ class PresidioNERGuardAgent(BaseNode):
         # Run analysis
         results = await asyncio.to_thread(
             self._analyzer.analyze,
-            text=inp.content,
+            text=inp.data,
             entities=entities,
             language="en",
             score_threshold=score_threshold
         )
 
         violations = []
-        masked_content = inp.content
+        masked_content = inp.data
 
         for result in results:
             entity = result.entity_type
@@ -58,7 +59,7 @@ class PresidioNERGuardAgent(BaseNode):
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            content=masked_content,
+            data=masked_content,
             violations=violations,
             metadata={"entities_detected": len(results)},
         )

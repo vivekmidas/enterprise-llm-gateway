@@ -5,7 +5,8 @@ from typing import Any, Dict, Optional
 import structlog
 import jinja2  # Already in project
 
-from ...base import BaseNode, NodeInput, NodeOutput
+from ...base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 
 logger = structlog.get_logger(__name__)
 

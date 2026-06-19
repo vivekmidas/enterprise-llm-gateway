@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 import json
-from app.nodes.base import BaseNode, NodeInput, NodeOutput
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
@@ -26,7 +27,7 @@ class DatabaseNode(BaseNode):
         if not config.get("query"):
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error_message="SQL Query is required"
             )
@@ -78,7 +79,7 @@ class DatabaseNode(BaseNode):
 
                 return NodeOutput(
                     trace_id=inp.trace_id,
-                    content=content,
+                    data=content,
                     status="success",
                     metadata=metadata
                 )
@@ -87,7 +88,7 @@ class DatabaseNode(BaseNode):
             self.logger.error("database_node_failed", error=str(e), trace_id=inp.trace_id)
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+                data=inp.data,
                 status="failure",
                 error_message=f"Database Connection Error: {str(e)}"
             )

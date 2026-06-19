@@ -1,6 +1,7 @@
 # backend/app/nodes/built_in/webhook/api.py
 
-from app.nodes.base import TriggerNode, NodeInput, NodeOutput
+from app.nodes.base import TriggerNode
+from app.core.types.common import NodeInput, NodeOutput
 import time
 import json
 import asyncio
@@ -23,19 +24,6 @@ class WebhookAgent(TriggerNode):
     version: str = "1.0.0"
     category: str = "Integration"
     node_type: str = "trigger"
-
-    # Input Contract defines the expected JSON structure for incoming requests
-    input_contract: Dict[str, Any] = {
-        "properties": {
-            "data": {"message": {"type": "string", "required": True}},
-            "time_sent": {"type": "number", "required": True},
-            "auth_token": {"type": "string", "required": False},
-            "source_system": {"type": "string", "required": True},
-            "event_type": {"type": "string", "required": False},
-            "request_id": {"type": "string", "required": False},
-            "environment": {"type": "string", "required": False},
-        }
-    }
 
     # Store server tasks keyed by (host, port)
     _server_tasks: Dict[Tuple[str, int], asyncio.Task] = PrivateAttr(default_factory=dict)
@@ -171,23 +159,23 @@ class WebhookAgent(TriggerNode):
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         # Basic validation - can be extended with schema checks
         self.logger.info("webhook_validation_started")
-        if not inp.content:
+        if not inp.data:
             return NodeOutput(
                 trace_id=inp.trace_id,
-                content=inp.content,
+          
                 status="failure",
                 code=400,
-                error_message="Content is required"
+                error_message="data is required"
             )
 
         try:
-            json_content = json.loads(inp.content)
+            json_content = json.loads(inp.data)
             # Safely check for the 'message' key only if the content is a JSON object.
             # This avoids KeyErrors when passing other types of JSON data.
             if isinstance(json_content, dict) and "message" in json_content and not json_content.get("message"):
                 return NodeOutput(
                     trace_id=inp.trace_id,
-                    content=inp.content,
+                    data=inp.data,
                     status="failure",
                     code=400,
                     error_message="Invalid trigger: 'message' field cannot be empty"
@@ -205,7 +193,7 @@ class WebhookAgent(TriggerNode):
         """
         return NodeOutput(
             trace_id=inp.trace_id,
-            output_data=inp.input_data,
+            data=inp.data,
             status="success",
             metadata={"source": "api_webhook"}
         )

@@ -14,7 +14,7 @@ async def test_presidio():
     
     test_input = NodeInput(
         trace_id=trace_id,
-        content="Hi, my name is John Doe, my phone is +91 9876543210 and email is john.doe@company.com. My password is Secret123!",
+        data="Hi, my name is John Doe, my phone is +91 9876543210 and email is john.doe@company.com. My password is Secret123!",
         context={"user_id": "123"},
         config={
             "entities": ["PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "PII_PASSWORD"],
