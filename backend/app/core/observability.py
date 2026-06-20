@@ -78,7 +78,7 @@ def setup_tracing():
     """OpenTelemetry tracing setup"""
     trace.set_tracer_provider(TracerProvider())
     trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://jaeger:4317"))  # configurable later
+        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4317"))  # configurable later
     )
 
 
