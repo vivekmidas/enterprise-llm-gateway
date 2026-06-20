@@ -1,6 +1,5 @@
 import abc
 import json
-import re
 import time
 from functools import cached_property
 from typing import Any, Dict, List, Optional, Union
@@ -13,6 +12,7 @@ except ImportError:
 import structlog
 from app.nodes.properties import property_entries_to_dict
 from app.core.types.common import NodeInput,NodeOutput
+from app.nodes.contracts import validate_input_contract as validate_contract
 
 class BaseNode(BaseModel, abc.ABC):
     """
@@ -139,7 +139,7 @@ class BaseNode(BaseModel, abc.ABC):
     async def validate_input_contract(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
         Validates if the input matches the defined input_contract.
-        Checks for mandatory fields and validates data types across context, config, and input data.
+        Checks mandatory fields and data types in the JSON body passed to the node.
         Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
         self.logger.info("Starting validate_input_contract", name= self.name)
@@ -147,62 +147,7 @@ class BaseNode(BaseModel, abc.ABC):
         if not schema:
             return None
 
-        # 1. Merge all available input sources for field matching
-        available_data = inp.data
-        if inp.data:
-            try:
-                content_data = json.loads(inp.data)
-                if isinstance(content_data, dict):
-                    available_data= content_data
-            except (json.JSONDecodeError, TypeError):
-                # If input_data is not JSON, we don't treat it as key-value pairs
-                # and it won't contribute to named field matching.
-                pass
-
-        errors = []
-        properties = schema.get("properties", schema)
-
-        for field, rules in properties.items():
-            self.logger.debug("Validating field", name=self.name, field=field, rules=rules)
-            field_rules = rules if isinstance(rules, dict) else {"type": rules}
-            is_required_str = field_rules.get("required", "False") # default is false
-            if is_required_str.lower() == "false":
-                is_required = False
-            if is_required_str.lower() == "true":
-                is_required = True
-
-            # 1. Mandatory Check
-            if field not in available_data:
-                if is_required:
-                    errors.append(f"Missing mandatory field: '{field}'")
-                continue
-
-            val = available_data[field]
-            expected_type = str(field_rules.get("type", "")).lower()
-
-            # 2. Type Validation
-            if expected_type == "string" and not isinstance(val, str):
-                errors.append(f"Field '{field}' expected string, got {type(val).__name__}")
-            elif expected_type == "number" and not isinstance(val, (int, float)):
-                errors.append(f"Field '{field}' expected number, got {type(val).__name__}")
-            elif expected_type == "boolean" and not isinstance(val, bool):
-                errors.append(f"Field '{field}' expected boolean, got {type(val).__name__}")
-            elif expected_type in ("dict", "object") and not isinstance(val, dict):
-                errors.append(f"Field '{field}' expected object/dict, got {type(val).__name__}")
-            elif expected_type in ("list", "array") and not isinstance(val, list):
-                errors.append(f"Field '{field}' expected list/array, got {type(val).__name__}")
-            elif expected_type == "json":
-                valid_json = False
-                if isinstance(val, (dict, list)):
-                    valid_json = True
-                elif isinstance(val, str):
-                    try:
-                        json.loads(val)
-                        valid_json = True
-                    except json.JSONDecodeError:
-                        pass
-                if not valid_json:
-                    errors.append(f"Field '{field}' expected valid JSON structure or string, but validation failed.")
+        errors = validate_contract(schema, inp,self.name)
 
         if errors:
             self.logger.error(f"Ending validation of validate_input_contract",name= self.name, inp_data=inp.data,errors= "; ".join(errors))
@@ -319,7 +264,7 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.info(
                 "node_run_completed", 
                 name=self.name,
-                status=output.status, 
+                status=output.status, function_name=__name__,
                 latency_ms=output.latency_ms, 
                 output=output.model_dump()
             )
