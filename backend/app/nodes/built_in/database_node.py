@@ -57,6 +57,7 @@ class DatabaseNode(BaseNode):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         config = inp.config
         query = config.get("query")
+        db_type = config.get("db_type", "postgresql")
         
         try:
             url = self._get_connection_url(config)
@@ -77,9 +78,10 @@ class DatabaseNode(BaseNode):
                     content = f"Query executed successfully. Rows affected: {result.rowcount}"
                     metadata = {"rows_affected": result.rowcount, "status": "success"}
 
+                out_data = self.set_output_data(inp, content)
                 return NodeOutput(
                     trace_id=inp.trace_id,
-                    data=content,
+                    data=out_data,
                     status="success",
                     metadata=metadata
                 )

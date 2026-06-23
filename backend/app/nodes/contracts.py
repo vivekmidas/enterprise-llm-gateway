@@ -102,7 +102,7 @@ def normalize_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 @debug_log
-def validate_input_contract(contract: Dict[str, Any], inp: NodeInput, node_name:str) -> List[str]:
+def validate_input_contract(contract: Dict[str, Any], inp: NodeInput, node_name: str = "node") -> List[str]:
     logger.info("starting validate_input_contract", contract=contract, input=inp, name=node_name)
     schema = normalize_contract(contract)
     if not schema:

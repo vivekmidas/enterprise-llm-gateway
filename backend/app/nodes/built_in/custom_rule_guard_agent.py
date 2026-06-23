@@ -1,5 +1,6 @@
 import asyncio
 import time
+import re
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 
@@ -26,17 +27,25 @@ class CustomRuleGuardAgent(BaseNode):
         start = time.time()
         config = inp.config or {}
         violations = []
-        masked = inp.data
+        
+        data_val = self.get_input_data(inp)
+        keywords = config.get("keywords", [])
 
-        # Keywords
-        for kw in config.get("keywords", []):
-            if kw.lower() in inp.data.lower():
-                violations.append(f"custom_keyword:{kw}")
-                masked = masked.replace(kw, f"[REDACTED-{kw}]")
+        def check_and_redact(text: str) -> str:
+            masked_text = text
+            for kw in keywords:
+                if kw.lower() in text.lower():
+                    violations.append(f"custom_keyword:{kw}")
+                    pattern = re.compile(re.escape(kw), re.IGNORECASE)
+                    masked_text = pattern.sub(f"[REDACTED-{kw}]", masked_text)
+            return masked_text
+
+        new_data_val = self.transform_strings(data_val, check_and_redact)
+        out_data = self.set_output_data(inp, new_data_val)
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            data=masked,
+            data=out_data,
             start_time=start,
             end_time=time.time(),
             violations=violations,

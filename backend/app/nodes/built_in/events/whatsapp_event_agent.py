@@ -16,12 +16,12 @@ class ContextSetterAgent(BaseNode):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         
-       
+        out_data = self.set_output_data(inp, "hi, context set from whatsapp event")
         return NodeOutput(
             trace_id=inp.trace_id,
             start_time=start,
             end_time=time.time(),
-            data="hi, context set from whatsapp event",
+            data=out_data,
             metadata={"context_fetched": True, "source": "crm"},
             latency_ms=round((time.time() - start) * 1000, 2)
         )

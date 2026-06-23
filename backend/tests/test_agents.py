@@ -25,7 +25,7 @@ async def test_presidio():
     result = await agent.run(test_input)
     print("✅ Test Result:",result)
     print("Violations:", result.violations)
-    print("Masked Content:", result.content)
+    print("Masked Content:", result.data)
     print("Latency:", result.latency_ms, "ms")
 
 if __name__ == "__main__":

@@ -22,8 +22,10 @@ class SentimentAnalyzerAgent(BaseNode ):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start = time.time()
         
-        # Simple rule-based + can be replaced with small LLM
-        text = inp.data.lower()
+        data_val = self.get_input_data(inp)
+        strings = self.collect_strings(data_val)
+        text = " ".join(strings).lower()
+        
         score = 0.5
         sentiment = "neutral"
         
@@ -34,9 +36,11 @@ class SentimentAnalyzerAgent(BaseNode ):
             sentiment = "positive"
             score = 0.85
 
+        out_data = self.set_output_data(inp, data_val)
+
         return NodeOutput(
             trace_id=inp.trace_id,
-            data=inp.data,
+            data=out_data,
             start_time=start,
             end_time=time.time(),
             metadata={"sentiment": sentiment, "score": score},

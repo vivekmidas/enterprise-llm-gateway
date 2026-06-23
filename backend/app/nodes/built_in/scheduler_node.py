@@ -72,7 +72,7 @@ class SchedulerAgent(TriggerNode):
                 self.logger.info("scheduler_firing", agent_node_id=agent_node_id)
                 await self.execute_dynamic_agent(
                     agent_node_id=agent_node_id,
-                    payload={ "message": "Hi my name is Cami, need help"}
+                    payload={ "data": "Hi my name is Cami, need help" }
                 )
             except Exception as e:
                 self.logger.error("scheduler_execution_failed", agent_node_id=agent_node_id, error=str(e))

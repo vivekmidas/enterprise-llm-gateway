@@ -38,24 +38,25 @@ class ProfanityGuardAgent(BaseNode):
         
     async def execute(self, inp: NodeInput) -> NodeOutput:
         # Logic implementation (execute() handles timing and status wrapping)
-
-        results = await asyncio.to_thread(
-            self._analyzer.analyze,
-            text=inp.data,
-            entities=["PROFANITY"],
-            language="en"
-        )
-
+        data_val = self.get_input_data(inp)
         violations = []
-        masked = inp.data
 
-        for r in results:
-            violations.append(f"profanity")
-            masked = masked[:r.start] + "[PROFANITY_REDACTED]" + masked[r.end:]
+        def process_profanity():
+            def redact_profanity(text: str) -> str:
+                results = self._analyzer.analyze(text=text, entities=["PROFANITY"], language="en")
+                masked_text = text
+                for r in sorted(results, key=lambda x: x.start, reverse=True):
+                    violations.append("profanity")
+                    masked_text = masked_text[:r.start] + "[PROFANITY_REDACTED]" + masked_text[r.end:]
+                return masked_text
+            return self.transform_strings(data_val, redact_profanity)
+
+        new_data_val = await asyncio.to_thread(process_profanity)
+        out_data = self.set_output_data(inp, new_data_val)
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            data=masked,
+            data=out_data,
             violations=violations,
             latency_ms=0.0,  # Will be set by execute()
             start_time=0.0,  # Will be set by execute()

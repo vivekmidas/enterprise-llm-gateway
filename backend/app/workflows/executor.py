@@ -65,89 +65,6 @@ def validate_no_cycles(nodes: List[Dict], edges: List[Dict]):
             if has_cycle(node_id):
                 raise ValueError(f"Infinite loop detected involving node: {node_id}")
 
-def create_agent_node(agent, node_config: Dict[str, Any] = None, node_id: str = "unknown"):
-    """
-    Factory that transforms a BaseNode instance into a LangGraph-compatible node function.
-    
-    This wrapper handles the conversion between the LangGraph State (AgentState) 
-    and the individual Node's Input/Output models.
-    """
-    async def agent_node(state: AgentState) -> Dict[str, Any]:
-        agent_name = getattr(agent, "name", "unknown")
-        
-        # Circuit Breaker: Skip execution if a previous node failed or raised a violation
-        if state.violations:
-            logger.info("stopping_further_execution_on_node_failure", node_id=node_id, agent=agent_name)
-            return {}
-
-        with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
-            span.set_attribute("agent.name", agent_name)
-            span.set_attribute("node.id", node_id)
-            span.set_attribute("trace_id", state.trace_id)
-            
-            try:
-                logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
-
-                agent_input = NodeInput(
-                    trace_id=state.trace_id,
-                    input_data=state.masked_content or state.content,
-                    config=node_config or {},
-                    context=state.context,
-                    metadata=state.metadata,
-                    input_schema=getattr(agent, "input_contract", {})
-                )
-
-                # Standardized execution wrapper from base.py
-                result = await agent.run(agent_input)
-                
-                # Node Timings and Observability
-                node_trace = {
-                    "node_id": node_id,
-                    "agent_name": agent_name,
-                    "status": result.status,
-                    "latency_ms": result.latency_ms,
-                    "error": result.error_message
-                }
-
-                logger.info("node_execution_finished", **node_trace)
-
-                # Return ONLY the fields that changed. Returning the full state object (model_copy)
-                # causes conflicts on unchanged keys (like trace_id) during parallel execution steps.
-                updates = {
-                    "content": result.data,
-                    "masked_content": result.data,
-                }
-
-                # Return only what changed. Metadata and violations should be merged by LangGraph reducers.
-                # We stop copying the existing state keys here to avoid parallel update collisions.
-                updates["metadata"] = {
-                    "node_history": {node_id: node_trace},
-                    **(result.metadata or {})
-                }
-
-                updates["violations"] = list(result.violations or [])
-                if result.status == "failure":
-                    updates["violations"].append(f"node_failure:{node_id}")
-
-                return updates
-            except Exception as e:
-                logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
-                
-                # Instead of raising, we return a violation to stop the chain gracefully
-                return {
-                    "status": "failure",
-                    "error_message": str(e),
-                    "error_code": 500,
-                    "violations": [f"node_exception:{node_id}"],
-                    "metadata": {
-                        "node_history": {
-                            node_id: {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
-                        }
-                    }
-                }
-
-
-    return agent_node
 
 async def nodes_failure_response(agent):
     return {
@@ -169,23 +86,46 @@ class WorkflowExecutor:
     Encapsulates graph building, compilation, and execution.
     Provides both async and sync interfaces for calling systems.
     """
+    # Cache compiled graphs to avoid rebuilding identical graphs per request
+    _graph_cache: Dict[str, Any] = {}
+
     def __init__(self, agent_config: Dict[str, Any]):
         self.agent_config = agent_config
         self.agent_id = agent_config.get("id")
         self.nodes_raw = agent_config.get("nodes_structure", [])
         self.edges_raw = agent_config.get("edges", [])
-        self.edges_list = self.edges_raw.values() if isinstance(self.edges_raw, dict) else self.edges_raw
+        self.edges_list = list(self.edges_raw.values()) if isinstance(self.edges_raw, dict) else list(self.edges_raw or [])
         self.agents_executed = []
 
         # 0. Validate Graph Structure on initialization
         validate_no_cycles(self.nodes_raw, self.edges_list)
-        
-        # 1. Build and Compile the LangGraph
-        self.compiled_graph = self._build_graph()
+
+        # 1. Build or reuse compiled LangGraph
+        cache_key = self.agent_id or json.dumps(self.agent_config, sort_keys=True)
+        cached = self._graph_cache.get(cache_key)
+        if cached is not None:
+            logger.info("using_cached_graph", agent_id=self.agent_id)
+            self.compiled_graph = cached
+        else:
+            self.compiled_graph = self._build_graph()
+            try:
+                self._graph_cache[cache_key] = self.compiled_graph
+            except Exception:
+                # Best-effort caching; don't fail execution if caching isn't possible
+                logger.debug("graph_cache_store_failed", agent_id=self.agent_id)
+
+    @classmethod
+    def clear_graph_cache(cls, agent_id: Optional[str] = None):
+        """Utility to clear cached compiled graphs. If agent_id is None, clear entire cache."""
+        if agent_id:
+            cls._graph_cache.pop(agent_id, None)
+        else:
+            cls._graph_cache.clear()
 
     def _build_graph(self):
+        logger.info("Building graph", name=__name__, state=AgentState)
         graph = StateGraph(AgentState)
-        
+        logger.info("Graph built ", name=__name__, graph=graph.__format__)
         # Node-level retry configuration
         default_retry_policy = RetryPolicy(max_attempts=2, backoff_factor=2.0, retry_on=(Exception,))
 
@@ -218,7 +158,7 @@ class WorkflowExecutor:
                 
             agent = NodesRegistry.get_node(agent_name)
             if not agent:
-                logger.warning("agent_not_found in nodes_registry, passing thru as empty agent",workflow_id="", agent_name=agent_name)
+                logger.error("agent_not_found in nodes_registry, passing thru as empty agent",workflow_id="", agent_name=agent_name)
                 from app.nodes.base import BaseNode
                 class PassthroughNode(BaseNode):
                     async def execute(self, inp): 
@@ -245,12 +185,17 @@ class WorkflowExecutor:
                 source_edges.setdefault(source, {}).setdefault(condition, []).append(target)
 
         for source, mapping in source_edges.items():
-            if any(c in mapping for c in ["success", "failure"]):
+            # If mapping contains conventional condition keys (success/failure) and each
+            # condition maps to a single target, use conditional routing. If there are
+            # multiple targets for any condition, fall back to adding plain edges
+            # so LangGraph can run them in parallel (ambiguity in conditional routing
+            # with multiple targets is intentionally avoided).
+            has_conditional = any(c in mapping for c in ["success", "failure"])
+            multiple_targets_per_condition = any(len(targets) > 1 for targets in mapping.values())
+
+            if has_conditional and not multiple_targets_per_condition:
                 router_paths = {c: targets[0] for c, targets in mapping.items()}
                 graph.add_conditional_edges(source, create_condition_router(router_paths), router_paths)
-                for cond, targets in mapping.items():
-                    for extra_target in targets[1:]:
-                        graph.add_edge(source, extra_target)
             else:
                 for cond_targets in mapping.values():
                     for target in cond_targets:
@@ -270,7 +215,9 @@ class WorkflowExecutor:
                 if node["id"] not in source_edges:
                     graph.add_edge(node["id"], END)
 
-        return graph.compile()
+            compiled = graph.compile()
+            logger.info("workflow_graph_compiled", nodes_count=len(self.nodes_raw), edges_count=len(self.edges_list))
+            return compiled
 
     def _create_agent_node(self, agent, node_config: Dict[str, Any] = None, node_id: str = "unknown"):
         """
@@ -366,7 +313,6 @@ class WorkflowExecutor:
             llm_response="",
             final_response=""
         )
-
         try:
             result = await self.compiled_graph.ainvoke(state)
         except Exception as e:

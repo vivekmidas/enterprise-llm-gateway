@@ -14,6 +14,44 @@ from app.nodes.properties import property_entries_to_dict
 from app.core.types.common import NodeInput,NodeOutput
 from app.nodes.contracts import validate_input_contract as validate_contract
 
+class JinjaFallbackDict(dict):
+    def __init__(self, fallback_value, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fallback_value = fallback_value
+        self._protected = {
+            'range', 'dict', 'lipsum', 'cycler', 'joiner', 'namespace',
+            'true', 'false', 'none', 'True', 'False', 'None',
+            'context', 'metadata', 'config', 'loop', 'self'
+        }
+
+    def _should_fallback(self, key: str) -> bool:
+        if key in self._protected:
+            return False
+        # Avoid overriding python built-ins
+        import builtins
+        if hasattr(builtins, key):
+            return False
+        return isinstance(self.fallback_value, (str, int, float))
+
+    def __getitem__(self, key):
+        if key in self:
+            return super().__getitem__(key)
+        if self._should_fallback(key):
+            return self.fallback_value
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        if key in self:
+            return super().get(key)
+        if self._should_fallback(key):
+            return self.fallback_value
+        return default
+
+    def __contains__(self, key):
+        if super().__contains__(key):
+            return True
+        return self._should_fallback(key)
+
 class BaseNode(BaseModel, abc.ABC):
     """
     Standardized Base Class for all Enterprise LLM Gateway nodes.
@@ -121,20 +159,43 @@ class BaseNode(BaseModel, abc.ABC):
         self.properties = {**self.system_properties, **self.user_properties}
         self.logger.info(f"Initiating node ended {self.name}")
 
-    def _resolve_variables(self, template: Union[Dict, List, str], data: Dict[str, Any]) -> Any:
+    def _resolve_variables(self, template: Any, data: Dict[str, Any]) -> Any:
         """
-        Recursively resolves variables using Jinja2 syntax (e.g., {{ variable_name }}).
-        Uses NativeTemplate to preserve Python types (dict, list, int) when possible.
+        Recursively resolves variables using simple {{ key }} replacement.
         """
+        import re
         if isinstance(template, dict):
             return {k: self._resolve_variables(v, data) for k, v in template.items()}
         elif isinstance(template, list):
             return [self._resolve_variables(i, data) for i in template]
-        elif isinstance(template, str):
-            # Use Jinja2 for powerful templating support
-            t = NativeTemplate(template)
-            return t.render(**data)
+        elif isinstance(template, str) and self._has_template(template):
+            # Match exactly {{key}}
+            match = re.match(r"^\{\{\s*(\w+)\s*\}\}$", template)
+            if match:
+                var_name = match.group(1)
+                if var_name in data:
+                    return data[var_name]
+                return template
+            
+            # Match mixed strings like "q={{key}}"
+            pattern = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+            def replace_match(m):
+                var_name = m.group(1)
+                if var_name in data:
+                    return str(data[var_name])
+                return m.group(0)
+            return pattern.sub(replace_match, template)
         return template
+
+    def _has_template(self, val: Any) -> bool:
+        """Recursively checks if a value contains a template string."""
+        if isinstance(val, str):
+            return "{{" in val and "}}" in val
+        elif isinstance(val, dict):
+            return any(self._has_template(v) for v in val.values())
+        elif isinstance(val, list):
+            return any(self._has_template(i) for i in val)
+        return False
 
     async def validate_input_contract(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
@@ -145,6 +206,7 @@ class BaseNode(BaseModel, abc.ABC):
         self.logger.info("Starting validate_input_contract", name= self.name)
         schema = self.input_contract
         if not schema:
+            self.logger.debug("No schema found", name= self.name, schema=schema)
             return None
 
         errors = validate_contract(schema, inp,self.name)
@@ -162,31 +224,65 @@ class BaseNode(BaseModel, abc.ABC):
             
         return None
 
-    # def apply_output_envelope(self, execution_output: Any, original_input: NodeInput) -> str:
-    #     """
-    #     Wraps the execution result using the output_envelope template.
-    #     """
-    #     if not self.output_envelope:
-    #         return json.dumps(execution_output) if not isinstance(execution_output, str) else execution_output
+    def get_input_data(self, inp: NodeInput) -> Any:
+        """
+        Extracts the inner value of the 'data' parameter from the incoming payload.
+        Handles both wrapped JSON structures and raw inputs gracefully.
+        """
+        if not inp.data:
+            return None
+        try:
+            parsed = json.loads(inp.data)
+            if isinstance(parsed, dict) and "data" in parsed:
+                return parsed["data"]
+            return parsed
+        except Exception:
+            return inp.data
 
-    #     # Prepare data for interpolation
-    #     merge_data = {**original_input.context}
-        
-    #     # Add original input fields if they are JSON
-    #     try:
-    #         input_json = json.loads(original_input.input_data)
-    #         if isinstance(input_json, dict):
-    #             merge_data.update(input_json)
-    #     except: pass
+    def set_output_data(self, inp: NodeInput, new_data: Any) -> str:
+        """
+        Wraps the output value inside the 'data' parameter key, preserving
+        any other top-level keys in the envelope if they exist.
+        """
+        try:
+            parsed = json.loads(inp.data)
+            if isinstance(parsed, dict) and "data" in parsed:
+                parsed["data"] = new_data
+                return json.dumps(parsed)
+        except Exception:
+            pass
+        return json.dumps({"data": new_data})
 
-    #     # Add execution output. If it's a dict, flatten it into the merge_data
-    #     if isinstance(execution_output, dict):
-    #         merge_data.update(execution_output)
-    #     else:
-    #         merge_data["output"] = execution_output
+    def transform_strings(self, val: Any, func) -> Any:
+        """
+        Recursively traverses a JSON-compatible structure (dict, list, string)
+        and transforms all string values using the provided function.
+        """
+        if isinstance(val, str):
+            return func(val)
+        elif isinstance(val, dict):
+            return {k: self.transform_strings(v, func) for k, v in val.items()}
+        elif isinstance(val, list):
+            return [self.transform_strings(item, func) for item in val]
+        return val
 
-    #     resolved = self._resolve_variables(self.output_envelope, merge_data)
-    #     return json.dumps(resolved) if isinstance(resolved, (dict, list)) else str(resolved)
+    def collect_strings(self, val: Any) -> List[str]:
+        """
+        Recursively traverses a JSON-compatible structure (dict, list, string)
+        and collects all string values in a flat list.
+        """
+        strings = []
+        def _collect(v):
+            if isinstance(v, str):
+                strings.append(v)
+            elif isinstance(v, dict):
+                for val_item in v.values():
+                    _collect(val_item)
+            elif isinstance(v, list):
+                for item in v:
+                    _collect(item)
+        _collect(val)
+        return strings
 
     @abc.abstractmethod
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
@@ -229,23 +325,25 @@ class BaseNode(BaseModel, abc.ABC):
             if contract_output:
                 return contract_output
 
-            # 1. Validation hook, we dont need this now as validate_input_contract does that 
-            # # validation_output = await self.validate_input(inp)
-            # if validation_output:
-            #     end_ts = time.time()
-            #     validation_output.start_time = start_ts
-            #     validation_output.end_time = end_ts
-            #     validation_output.latency_ms = round((end_ts - start_ts) * 1000, 2)
-            #     self.logger.warning(
-            #         "node_validation_failed", 
-            #         trace_id=inp.trace_id, 
-            #         latency_ms=validation_output.latency_ms,
-            #         output=validation_output.model_dump()
-            #     )
-            #     if validation_output.status == "failure" or validation_output.error_code != 200:
-            #         self.logger.error("node_run_terminated_due_to_validation", trace_id=inp.trace_id)
-            #         return validation_output
+            # 0.2 Match properties with input data
+            if inp.data:
+                try:
+                    input_data = json.loads(inp.data)
+                    generic_data = self.get_input_data(inp)
+                    
+                    input_values = {}
+                    if isinstance(input_data, dict):
+                        input_values.update(input_data)
+                    if isinstance(generic_data, dict):
+                        input_values.update(generic_data)
+                    input_values["data"] = generic_data
+                    
+                    if self._has_template(inp.config):
+                        inp.config = self._resolve_variables(inp.config, input_values)
+                except Exception as e:
+                    self.logger.warning("failed_to_resolve_properties_templates", error=str(e))
 
+           
             # 2. Execution logic
             output = await self.execute(inp)
             end_ts = time.time()
@@ -318,7 +416,7 @@ class TriggerNode(BaseNode, abc.ABC):
         self.logger.info(
                         "Trigger node execution  started", 
                         name=self.name,
-                        trace_id=self.inp.trace_id, 
+                        trace_id=inp.trace_id, 
                     )
         return NodeOutput(trace_id=inp.trace_id, data=inp.data)
     
@@ -382,8 +480,26 @@ class TriggerNode(BaseNode, abc.ABC):
  
             executor = WorkflowExecutor(workflow_config)
 
-            # Ensure dictionary/list payloads are correctly serialized to JSON strings
-            content = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            # Ensure payload is wrapped under the "data" key to conform to standard input envelope
+            wrapped_payload = None
+            if isinstance(payload, str):
+                try:
+                    parsed = json.loads(payload)
+                    if isinstance(parsed, dict) and "data" in parsed:
+                        wrapped_payload = parsed
+                    else:
+                        wrapped_payload = {"data": parsed}
+                except Exception:
+                    wrapped_payload = {"data": payload}
+            elif isinstance(payload, dict):
+                if "data" in payload:
+                    wrapped_payload = payload
+                else:
+                    wrapped_payload = {"data": payload}
+            else:
+                wrapped_payload = {"data": payload}
+
+            content = json.dumps(wrapped_payload)
             self.logger.debug("WorkflowExecutor ended",
                           name=self.name,
                          workflow_id=workflow_config.get("id"))

@@ -31,7 +31,8 @@ class GenericLLMAgent(BaseNode):
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """Validates that input content is present before execution."""
         await super().validate_input(inp)
-        if not inp.data or not inp.data.strip():
+        data_val = self.get_input_data(inp)
+        if data_val is None or (isinstance(data_val, str) and not data_val.strip()) or (isinstance(data_val, (dict, list)) and not data_val):
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,
@@ -54,16 +55,13 @@ class GenericLLMAgent(BaseNode):
         temperature = float(config.get("temperature")) # Ensure temperature is a float
         system_prompt = config.get("system_prompt")
 
-        message_to_llm = inp.data # Default to using the raw content
-
-        # Attempt to parse as JSON and extract 'message' if it's a dict
-        try:
-            parsed_json = json.loads(inp.data)
-            if isinstance(parsed_json, dict) and "message" in parsed_json:
-                message_to_llm = parsed_json["message"]
-        except json.JSONDecodeError:
-            # Not a valid JSON string, fallback to using the original content
-            pass
+        data_val = self.get_input_data(inp)
+        if isinstance(data_val, (dict, list)):
+            message_to_llm = json.dumps(data_val, indent=2)
+        elif data_val is not None:
+            message_to_llm = str(data_val)
+        else:
+            message_to_llm = ""
         
         # OpenAI-compatible chat completion endpoint
         path = config.get("path", "/v1/chat/completions")
@@ -77,7 +75,7 @@ class GenericLLMAgent(BaseNode):
             ],
             "temperature": temperature,
         }
-
+ 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(endpoint, json=payload, timeout=60.0)
@@ -88,9 +86,10 @@ class GenericLLMAgent(BaseNode):
                 ai_message = data["choices"][0]["message"]["content"]
                 usage = data.get("usage", {})
                 
+                out_data = self.set_output_data(inp, ai_message)
                 return NodeOutput(
                     trace_id=inp.trace_id,
-                    data=ai_message,
+                    data=out_data,
                     metadata={
                         "endpoint": endpoint,
                         "model": model_name,

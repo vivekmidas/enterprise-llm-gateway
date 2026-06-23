@@ -4,10 +4,9 @@ import structlog
 from app.core.types.users import User
 from app.api.workflows.schemas import WorkflowSaveRequest
 from app.nodes.registry import NodesRegistry
-from app.workflows.store import update_node_tokens_in_db
+from app.workflows.store import update_node_tokens_in_db,get_workflow_node_properties,_get_workflow_node_details
 from pydantic import BaseModel, Field
 from app.workflows.store import (
-    get_workflow_node_properties,
     load_workflow_from_store,
     list_workflows_from_store,
     update_workflow_node_properties,
@@ -44,53 +43,42 @@ async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
 @router.get("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
 async def get_node_properties(workflow_id: str, agent_node_id: str):
     logger.info("get_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
-    
-    # Fetch the instance-specific property values (e.g., API keys, IPs)
-    properties = await get_workflow_node_properties(workflow_id, agent_node_id)
-    
-    # Fetch the workflow definition to identify the node's type for schema retrieval
-    workflow = await load_workflow_from_store(workflow_id)
-    input_contract = {}
-    output_contract = {}
-    
-    if workflow:
-        # Safely extract the list of nodes regardless of whether workflow is a dict or Pydantic model
-        if isinstance(workflow, dict):
-            nodes = workflow.get("nodes_structure") or workflow.get("nodes") or []
-        else:
-            nodes = getattr(workflow, "nodes_structure", []) or getattr(workflow, "nodes", [])
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.workflows.store import _get_workflow_node, _get_workflow_node_details, _load_workflow_node_properties
+        from app.nodes.properties import property_entries_to_dict
+
+        async with AsyncSessionLocal() as session:
+            workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
+            if not workflow_node:
+                raise HTTPException(status_code=404, detail="Workflow node not found")
             
-        # Find the node using attribute access for Pydantic models or .get() for dictionaries
-        node_entry = next(
-            (n for n in nodes if (getattr(n, "id", None) if not isinstance(n, dict) else n.get("id")) == agent_node_id), 
-            None
-        )
-
-        if node_entry:
-            # Extract node data and type name (the registry key)
-            node_data = getattr(node_entry, "data", {}) if not isinstance(node_entry, dict) else node_entry.get("data", {})
+            user_properties = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+            agent_name = str(workflow_node.agent_name) if workflow_node.agent_name else ""
+            db_node = await _get_workflow_node_details(session, agent_name)
             
-            # Prioritize data hydrated from NodeDB (the catalog) during load_workflow_from_store
-            input_contract = node_data.get("input_contract") or {}
-            output_contract = node_data.get("output_contract") or {}
+            system_properties = {}
+            input_contract = {}
+            output_contract = {}
+            if db_node:
+                system_properties = property_entries_to_dict(db_node.user_properties)
+                input_contract = db_node.input_contract or {}
+                output_contract = db_node.output_contract or {}
 
-            # Fallback to registry only if hydration didn't provide schema/contracts
-            node_type = node_data.get("name") if isinstance(node_data, dict) else getattr(node_data, "name", None)
-            if not node_type:
-                node_type = getattr(node_entry, "name", None) if not isinstance(node_entry, dict) else node_entry.get("name")
+            # user properties override system properties
+            merged_properties = {**system_properties, **user_properties}
 
-            if node_type:
-                # Look up the static definition in the registry as a fallback
-                registry_agent = NodesRegistry.get_node(node_type)
-                if registry_agent:
-                    if not input_contract: input_contract = registry_agent.input_contract
-                    if not output_contract: output_contract = registry_agent.output_contract
-
-    return {
-        "user_properties": properties, 
-        "input_contract": input_contract,
-        "output_contract": output_contract
-    }
+            logger.info("get_workflow_properties_response_success", workflow_id=workflow_id)
+            return {
+                "user_properties": user_properties,
+                "system_properties": system_properties,
+                "properties": merged_properties,
+                "input_contract": input_contract,
+                "output_contract": output_contract
+            }
+    except Exception as e:
+        logger.error("get_workflow_error", workflow_id=workflow_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
@@ -149,7 +137,7 @@ async def remove_workflow(workflow_id: str, user: User, version: Optional[str] =
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     # 2. Authorization: Only the creator (user_id) or an admin can delete
-    is_owner = str(workflow.user_id) == str(user.id)
+    is_owner = workflow.user_id == user.id
     is_admin = user.role == "admin"
 
     if not (is_owner or is_admin):

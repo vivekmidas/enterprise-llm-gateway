@@ -162,23 +162,23 @@ class WebhookAgent(TriggerNode):
         if not inp.data:
             return NodeOutput(
                 trace_id=inp.trace_id,
-          
+                data=inp.data,
                 status="failure",
-                code=400,
+                error_code=400,
                 error_message="data is required"
             )
 
         try:
             json_content = json.loads(inp.data)
-            # Safely check for the 'message' key only if the content is a JSON object.
-            # This avoids KeyErrors when passing other types of JSON data.
-            if isinstance(json_content, dict) and "message" in json_content and not json_content.get("message"):
+            # Check standard "data" parameter instead of hardcoded "message"
+            data_val = json_content.get("data") if isinstance(json_content, dict) else json_content
+            if data_val is None or (isinstance(data_val, str) and not data_val.strip()) or (isinstance(data_val, (dict, list)) and not data_val):
                 return NodeOutput(
                     trace_id=inp.trace_id,
                     data=inp.data,
                     status="failure",
-                    code=400,
-                    error_message="Invalid trigger: 'message' field cannot be empty"
+                    error_code=400,
+                    error_message="Invalid trigger: 'data' field cannot be empty"
                 )
         except (json.JSONDecodeError, TypeError):
             # Skip JSON-specific validation if the content is raw text or improperly formatted JSON

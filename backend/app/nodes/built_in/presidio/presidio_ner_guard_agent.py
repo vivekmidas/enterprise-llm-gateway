@@ -33,33 +33,42 @@ class PresidioNERGuardAgent(BaseNode):
         entities = config.get("entities", ["PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "CREDIT_CARD"])
         score_threshold = config.get("score_threshold", 0.6)
 
-        # Run analysis
-        results = await asyncio.to_thread(
-            self._analyzer.analyze,
-            text=inp.data,
-            entities=entities,
-            language="en",
-            score_threshold=score_threshold
-        )
-
+        data_val = self.get_input_data(inp)
         violations = []
-        masked_content = inp.data
 
-        for result in results:
-            entity = result.entity_type
-            violations.append(f"pii:{entity}")
-            # Mask
-            anonymized = await asyncio.to_thread(
-                self._anonymizer.anonymize,
-                text=masked_content,
-                analyzer_results=[result],
-                operators={"DEFAULT": OperatorConfig("replace", {"new_value": f"[REDACTED-{entity}]"})}
-            )
-            masked_content = anonymized.text
+        def process_ner():
+            def redact_ner(text: str) -> str:
+                results = self._analyzer.analyze(
+                    text=text,
+                    entities=entities,
+                    language="en",
+                    score_threshold=score_threshold
+                )
+                for r in results:
+                    violations.append(f"pii:{r.entity_type}")
+                
+                if results:
+                    operators = {
+                        r.entity_type: OperatorConfig("replace", {"new_value": f"[REDACTED-{r.entity_type}]"})
+                        for r in results
+                    }
+                    operators["DEFAULT"] = OperatorConfig("replace", {"new_value": "[REDACTED]"})
+                    
+                    anonymized = self._anonymizer.anonymize(
+                        text=text,
+                        analyzer_results=results,
+                        operators=operators
+                    )
+                    return anonymized.text
+                return text
+            return self.transform_strings(data_val, redact_ner)
+
+        new_data_val = await asyncio.to_thread(process_ner)
+        out_data = self.set_output_data(inp, new_data_val)
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            data=masked_content,
+            data=out_data,
             violations=violations,
-            metadata={"entities_detected": len(results)},
+            metadata={"entities_detected": len(violations)},
         )

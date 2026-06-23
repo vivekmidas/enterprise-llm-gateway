@@ -9,7 +9,7 @@ class ContextSetterAgent(BaseNode):
     category: str = "Context Enrichment"
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
-        await super().validwate_input(inp)
+        await super().validate_input(inp)
         
         if not inp.context or "user_id" not in inp.context:
             return NodeOutput(
@@ -19,6 +19,7 @@ class ContextSetterAgent(BaseNode):
                 error_code=400,
                 error_message=f"Context with user_id is required for ContextSetterAgent {self.name}"
             )
+            
             
         return NodeOutput(
             trace_id=inp.trace_id,
@@ -43,7 +44,13 @@ class ContextSetterAgent(BaseNode):
             **inp.context
         }
 
-        enriched_content = f"User Context: {user_context}\n\nUser Message: {inp.data}"
+        data_val = self.get_input_data(inp)
+        if isinstance(data_val, dict):
+            new_data_val = {**data_val, "user_context": user_context}
+        else:
+            new_data_val = f"User Context: {user_context}\n\nUser Message: {data_val}"
+
+        enriched_content = self.set_output_data(inp, new_data_val)
         self.logger.info(f"Execution Ended for  {self.name}")
   
         return NodeOutput(

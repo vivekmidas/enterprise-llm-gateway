@@ -15,8 +15,8 @@ def _refresh_workflow_node_properties_table(sync_conn):
         return
 
     columns = {column["name"] for column in inspector.get_columns("workflow_node_properties")}
-    expected_columns = {"workflow_id", "agent_node_id", "agent_name", "key", "value"}
-    legacy_columns = {"workflow_node_id", "properties"}
+    expected_columns = {"workflow_id", "agent_node_id", "agent_name", "properties"}
+    legacy_columns = {"workflow_node_id", "key", "value"}
     if expected_columns.issubset(columns) and columns.isdisjoint(legacy_columns):
         return
 

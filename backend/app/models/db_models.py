@@ -90,8 +90,7 @@ class WorkflowNodePropertyDB(Base):
     workflow_id = Column(String, nullable=False, index=True)
     agent_node_id = Column(String, nullable=False, index=True)
     agent_name = Column(String, nullable=True, index=True)
-    key = Column(String, index=True)
-    value = Column(String)
+    properties = Column(JSON)
     
 class CredentialDB(Base):
     __tablename__ = "credentials"

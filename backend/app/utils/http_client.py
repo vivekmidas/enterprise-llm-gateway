@@ -58,14 +58,29 @@ class HttpClient:
         start = time.time()
         try:
             client = self._get_client()
-            response = client.request(
+            
+            # For GET requests, if json_body is empty/None, do not pass an empty dict,
+            # as it creates a body in HTTPX. For other methods, default to {} if None.
+            req_json = json_body
+            if method.upper() == "GET":
+                if not json_body:
+                    req_json = None
+            else:
+                if json_body is None:
+                    req_json = {}
+
+            request = client.build_request(
                 method=method.upper(),
                 url=url,
                 headers=headers or {},
-                json=json_body or {},
+                json=req_json,
                 data=data_body,
                 params=params
             )
+            
+            logger.info(f"Sending API request: {request.method} {request.url}")
+
+            response = client.send(request)
             duration = (time.time() - start) * 1000
             
             api_resp = ApiResponse(
@@ -81,13 +96,14 @@ class HttpClient:
                 pass
                 
             logger.info(f"API call completed", extra={
-                "method": method, "url": url, "status": response.status_code, "duration_ms": duration
+                "method": method, "url": str(response.url), "status": response.status_code, "duration_ms": duration
             })
             return api_resp
             
         except Exception as e:
             duration = (time.time() - start) * 1000
-            logger.error(f"API call failed", exc_info=True, extra={"url": url})
+            req_url = str(request.url) if 'request' in locals() else url
+            logger.error(f"API call failed", exc_info=True, extra={"url": req_url})
             return ApiResponse(
                 status_code=0, headers={}, body="", duration_ms=duration, error=str(e)
             )

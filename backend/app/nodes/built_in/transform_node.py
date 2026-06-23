@@ -57,7 +57,10 @@ class TransformNode(BaseNode):
             except (json.JSONDecodeError, TypeError):
                 template_obj = mapping_template
 
-            transformed_data = self._resolve_variables(template_obj, template_context)
+            if self._has_template(template_obj):
+                transformed_data = self._resolve_variables(template_obj, template_context)
+            else:
+                transformed_data = template_obj
 
             # 4. Format the output based on the selected output_format
             final_output_data: str

@@ -4,7 +4,6 @@ services:
     ports:
       - 8000:8000
       - 8888:8888
-      - 11434:11434
     env_file:
       - backend/.env
     volumes:

@@ -87,11 +87,22 @@ async def _get_workflow_node(
     )
     return result.scalar_one_or_none()
 
+async def _get_workflow_node_details(session,
+    node_name: str,
+) -> NodeDB | None:
+   
+    result = await session.execute(
+        select(NodeDB).where(
+            NodeDB.name == node_name
+        )
+    )
+    return  result.scalar_one_or_none()
+
 
 async def _load_workflow_node_properties(
     session,
     workflow_id: str,
-    agent_node_id: str,
+    agent_node_id: str
 ) -> dict:
     result = await session.execute(
         select(WorkflowNodePropertyDB).where(
@@ -99,10 +110,10 @@ async def _load_workflow_node_properties(
             WorkflowNodePropertyDB.agent_node_id == agent_node_id,
         )
     )
-    return {
-        row.key: _property_value_from_db(row.value)
-        for row in result.scalars().all()
-    }
+    row = result.scalar_one_or_none()
+    if row and row.properties:
+        return row.properties if isinstance(row.properties, dict) else _safe_json_loads(row.properties, {})
+    return {}
 
 
 def _build_workflow_definition_from_db(db_workflow: WorkflowDB) -> WorkflowDefinition:
@@ -138,8 +149,18 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
         workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
         if not workflow_node:
             raise HTTPException(status_code=404, detail="Workflow node not found")
-        return await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+        
+        user_node_properties = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+        system_node_properties = await _get_workflow_node_details(session, workflow_node.agent_name)
+        system_props = property_entries_to_dict(system_node_properties.system_properties) if system_node_properties else {}
+        return {**system_props, **user_node_properties}
 
+async def get_nodes_properties(agent_name: str) -> dict:
+    async with AsyncSessionLocal() as session:
+        nodeProperties = await _get_nodes_properties(session,agent_name)
+        if not nodeProperties:
+            raise HTTPException(status_code=404, detail="Workflow node not found")
+        return await _load_workflow_node_properties(session,agent_name)
 
 async def update_workflow_node_properties(
     workflow_id: str,
@@ -158,16 +179,14 @@ async def update_workflow_node_properties(
                     WorkflowNodePropertyDB.agent_node_id == agent_node_id,
                 )
             )
-            for key, value in properties.items():
-                session.add(
-                    WorkflowNodePropertyDB(
-                        workflow_id=workflow_id,
-                        agent_node_id=agent_node_id,
-                        agent_name=workflow_node.agent_name,
-                        key=key,
-                        value=_property_value_to_db(value),
-                    )
+            session.add(
+                WorkflowNodePropertyDB(
+                    workflow_id=workflow_id,
+                    agent_node_id=agent_node_id,
+                    agent_name=workflow_node.agent_name,
+                    properties=properties,
                 )
+            )
 
         await workflow_cache.invalidate_agent(workflow_id)
         return {"workflow_id": workflow_id, "agent_node_id": agent_node_id, "properties": properties}
@@ -185,23 +204,30 @@ async def propagate_node_defaults_to_workflows(node_name: str, defaults: dict) -
             workflow_nodes = result.scalars().all()
 
             for workflow_node in workflow_nodes:
-                existing = await _load_workflow_node_properties(
-                    session,
-                    workflow_node.workflow_id,
-                    workflow_node.agent_node_id,
-                )
-                for key, value in defaults.items():
-                    if key in existing:
-                        continue
-                    session.add(
-                        WorkflowNodePropertyDB(
-                            workflow_id=workflow_node.workflow_id,
-                            agent_node_id=workflow_node.agent_node_id,
-                            agent_name=workflow_node.agent_name,
-                            key=key,
-                            value=_property_value_to_db(value),
-                        )
+                result = await session.execute(
+                    select(WorkflowNodePropertyDB).where(
+                        WorkflowNodePropertyDB.workflow_id == workflow_node.workflow_id,
+                        WorkflowNodePropertyDB.agent_node_id == workflow_node.agent_node_id,
                     )
+                )
+                row = result.scalar_one_or_none()
+                if not row:
+                    row = WorkflowNodePropertyDB(
+                        workflow_id=workflow_node.workflow_id,
+                        agent_node_id=workflow_node.agent_node_id,
+                        agent_name=workflow_node.agent_name,
+                        properties={}
+                    )
+                    session.add(row)
+                
+                props = dict(row.properties or {})
+                updated = False
+                for key, value in defaults.items():
+                    if key not in props:
+                        props[key] = value
+                        updated = True
+                if updated:
+                    row.properties = props
 
         workflow_ids = {node.workflow_id for node in workflow_nodes}
         for workflow_id in workflow_ids:
@@ -261,37 +287,31 @@ async def update_node_tokens_in_db(
             if not workflow_node:
                 raise HTTPException(status_code=404, detail=f"Workflow node '{node_id}' not found in workflow '{workflow_id}'")
 
-            # 2. Delete existing access_token and refresh_token properties for this node
-            await session.execute(
-                delete(WorkflowNodePropertyDB).where(
+            # 2. Get existing row or create a new one
+            result = await session.execute(
+                select(WorkflowNodePropertyDB).where(
                     WorkflowNodePropertyDB.workflow_id == workflow_id,
-                    WorkflowNodePropertyDB.agent_node_id == node_id,
-                    WorkflowNodePropertyDB.key.in_(["access_token", "refresh_token"])
+                    WorkflowNodePropertyDB.agent_node_id == node_id
                 )
             )
-
-            # 3. Add new access_token
-            session.add(
-                WorkflowNodePropertyDB(
+            row = result.scalar_one_or_none()
+            if not row:
+                row = WorkflowNodePropertyDB(
                     workflow_id=workflow_id,
                     agent_node_id=node_id,
                     agent_name=workflow_node.agent_name,
-                    key="access_token",
-                    value=_property_value_to_db(access_token),
+                    properties={}
                 )
-            )
+                session.add(row)
 
-            # 4. Add new refresh_token if provided
+            # Update the JSON properties dictionary
+            props = dict(row.properties or {})
+            props["access_token"] = access_token
             if refresh_token:
-                session.add(
-                    WorkflowNodePropertyDB(
-                        workflow_id=workflow_id,
-                        agent_node_id=node_id,
-                        agent_name=workflow_node.agent_name,
-                        key="refresh_token",
-                        value=_property_value_to_db(refresh_token),
-                    )
-                )
+                props["refresh_token"] = refresh_token
+            
+            # Re-assign to flag sqlalchemy session changes
+            row.properties = props
         
         # 5. Invalidate the workflow cache to ensure the executor picks up new tokens
         await workflow_cache.invalidate_agent(workflow_id)
@@ -394,16 +414,14 @@ async def save_workflow_to_store(definition: WorkflowDefinition, user_id: str = 
                         session.add(workflow_node)
                         await session.flush()
 
-                        for key, value in instance_properties.items():
-                            session.add(
-                                WorkflowNodePropertyDB(
-                                    workflow_id=definition.id,
-                                    agent_node_id=n_dict.get("id"),
-                                    agent_name=agent_name,
-                                    key=key,
-                                    value=_property_value_to_db(value),
-                                )
+                        session.add(
+                            WorkflowNodePropertyDB(
+                                workflow_id=definition.id,
+                                agent_node_id=n_dict.get("id"),
+                                agent_name=agent_name,
+                                properties=instance_properties,
                             )
+                        )
 
             # Critical: Invalidate Redis compiled graph cache
             await workflow_cache.invalidate_agent(definition.id)

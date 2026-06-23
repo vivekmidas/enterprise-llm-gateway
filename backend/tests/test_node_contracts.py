@@ -246,3 +246,243 @@ def test_base_node_blocks_execution_on_contract_failure():
     assert output.error_code == 400
     assert output.violations == ["contract_violation"]
     assert "$.message expected string" in output.error_message
+
+
+class TemplateResolveTestNode(BaseNode):
+    name: str = "template_resolve_test_node"
+
+    async def init(self) -> None:
+        return None
+
+    async def validate_input(self, inp: NodeInput):
+        return None
+
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(trace_id=inp.trace_id, data=json.dumps(inp.config))
+
+
+def test_node_properties_resolved_with_input_data():
+    node = TemplateResolveTestNode(
+        properties={"message_template": "{{message}}", "constant_val": "static"},
+        input_contract={
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": {"type": "string"},
+            },
+        }
+    )
+
+    inp = NodeInput(
+        trace_id="trace-1",
+        data=json.dumps({"message": "Hello from input!"}),
+        config={"another_template": "Value: {{message}}"}
+    )
+
+    output = asyncio.run(node.run(inp))
+    assert output.status == "success"
+    resolved_config = json.loads(output.data)
+    assert resolved_config["message_template"] == "Hello from input!"
+    assert resolved_config["constant_val"] == "static"
+    assert resolved_config["another_template"] == "Value: Hello from input!"
+
+
+def test_node_properties_resolved_with_data_wrapped_input():
+    node = TemplateResolveTestNode(
+        properties={"message_template": "{{message}}"},
+        input_contract={
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": {"type": "string"},
+            },
+        }
+    )
+
+    inp = NodeInput(
+        trace_id="trace-2",
+        data=json.dumps({"data": {"message": "Hello from data wrapper!"}}),
+        config={}
+    )
+
+    output = asyncio.run(node.run(inp))
+    assert output.status == "success"
+    resolved_config = json.loads(output.data)
+    assert resolved_config["message_template"] == "Hello from data wrapper!"
+
+
+def test_sentiment_analyzer_with_various_data_formats():
+    from app.nodes.built_in.sentiment_analyzer_agent import SentimentAnalyzerAgent
+
+    node = SentimentAnalyzerAgent()
+    
+    # Test with simple string data
+    inp1 = NodeInput(trace_id="t1", data=json.dumps({"data": "This is a great day!"}))
+    out1 = asyncio.run(node.execute(inp1))
+    assert out1.metadata["sentiment"] == "positive"
+    assert json.loads(out1.data)["data"] == "This is a great day!"
+
+    # Test with dict data
+    inp2 = NodeInput(trace_id="t2", data=json.dumps({"data": {"text": "This is terrible!"}}))
+    out2 = asyncio.run(node.execute(inp2))
+    assert out2.metadata["sentiment"] == "negative"
+    assert json.loads(out2.data)["data"] == {"text": "This is terrible!"}
+
+    # Test with list of dicts (array of key-values)
+    inp3 = NodeInput(trace_id="t3", data=json.dumps({"data": [{"key": "review", "value": "neutral comment"}]}))
+    out3 = asyncio.run(node.execute(inp3))
+    assert out3.metadata["sentiment"] == "neutral"
+    assert json.loads(out3.data)["data"] == [{"key": "review", "value": "neutral comment"}]
+
+
+def test_context_setter_with_dict_and_string():
+    from app.nodes.built_in.context_setter_agent import ContextSetterAgent
+
+    node = ContextSetterAgent()
+    
+    # Test with dict
+    inp1 = NodeInput(
+        trace_id="t1",
+        data=json.dumps({"data": {"user_query": "hello"}}),
+        context={"user_id": "123"}
+    )
+    out1 = asyncio.run(node.execute(inp1))
+    data_out1 = json.loads(out1.data)["data"]
+    assert isinstance(data_out1, dict)
+    assert data_out1["user_query"] == "hello"
+    assert data_out1["user_context"]["customer_id"] == "123"
+
+    # Test with string
+    inp2 = NodeInput(
+        trace_id="t2",
+        data=json.dumps({"data": "hello string"}),
+        context={"user_id": "123"}
+    )
+    out2 = asyncio.run(node.execute(inp2))
+    data_out2 = json.loads(out2.data)["data"]
+    assert "User Context:" in data_out2
+    assert "User Message: hello string" in data_out2
+
+
+def test_api_request_node_with_kv_list_and_dict():
+    from app.nodes.built_in.api_request_node import ApiRequestNode
+
+    node = ApiRequestNode()
+
+    # Test with GET request and dict
+    inp1 = NodeInput(
+        trace_id="t1",
+        data=json.dumps({"data": {"foo": "bar"}}),
+        config={"method": "GET", "url": "http://mock-api.com"}
+    )
+    
+    from app.utils.http_client import HttpClient, ApiResponse
+    class MockResponse:
+        status_code = 200
+        body = "OK"
+        headers = {}
+        duration_ms = 10.0
+    
+    original_execute_sync = HttpClient.execute_sync
+    
+    # Capture params sent
+    captured_kwargs = {}
+    def mock_execute_sync(self, method, url, headers=None, json_body=None, data_body=None, params=None):
+        captured_kwargs["method"] = method
+        captured_kwargs["url"] = url
+        captured_kwargs["json_body"] = json_body
+        captured_kwargs["data_body"] = data_body
+        captured_kwargs["params"] = params
+        return MockResponse()
+        
+    HttpClient.execute_sync = mock_execute_sync
+    try:
+        # Dict test
+        asyncio.run(node.execute(inp1))
+        assert captured_kwargs["params"] == {"foo": "bar"}
+
+        # KV list test
+        inp2 = NodeInput(
+            trace_id="t2",
+            data=json.dumps({"data": [{"key": "name", "value": "antigravity"}]}),
+            config={"method": "GET", "url": "http://mock-api.com"}
+        )
+        asyncio.run(node.execute(inp2))
+        assert captured_kwargs["params"] == {"name": "antigravity"}
+
+        # Post standard data string test
+        inp3 = NodeInput(
+            trace_id="t3",
+            data=json.dumps({"data": "some-text"}),
+            config={"method": "POST", "url": "http://mock-api.com", "body_type": "json"}
+        )
+        asyncio.run(node.execute(inp3))
+        assert captured_kwargs["json_body"] == {"data": "some-text"}
+    finally:
+        HttpClient.execute_sync = original_execute_sync
+
+
+def test_trigger_node_execute_dynamic_agent_payload_wrapping():
+    from app.nodes.base import TriggerNode
+    from app.workflows.executor import WorkflowExecutor
+    
+    class DummyTriggerNode(TriggerNode):
+        name: str = "dummy_trigger"
+        async def init(self):
+            pass
+            
+    node = DummyTriggerNode()
+    
+    # Register a dummy workflow
+    dummy_workflow = {"id": "flow-1", "nodes_structure": []}
+    asyncio.run(node.activate("node-1", dummy_workflow))
+    
+    # Mock WorkflowExecutor.execute_async
+    original_execute_async = WorkflowExecutor.execute_async
+    
+    captured_content = []
+    async def mock_execute_async(self, content, trace_id=None):
+        captured_content.append(content)
+        return "success"
+        
+    WorkflowExecutor.execute_async = mock_execute_async
+    try:
+        # 1. Test string payload (not wrapped)
+        asyncio.run(node.execute_dynamic_agent("node-1", "hello"))
+        assert json.loads(captured_content[-1]) == {"data": "hello"}
+
+        # 2. Test dict payload (not wrapped)
+        asyncio.run(node.execute_dynamic_agent("node-1", {"msg": "hello"}))
+        assert json.loads(captured_content[-1]) == {"data": {"msg": "hello"}}
+
+        # 3. Test wrapped dict payload
+        asyncio.run(node.execute_dynamic_agent("node-1", {"data": "already wrapped"}))
+        assert json.loads(captured_content[-1]) == {"data": "already wrapped"}
+    finally:
+        WorkflowExecutor.execute_async = original_execute_async
+
+
+def test_node_properties_resolved_with_generic_data_value():
+    node = TemplateResolveTestNode(
+        properties={
+            "message_template": "{{message}}",
+            "direct_data": "{{data}}",
+            "custom_query": "{{query}}",
+            "any_other": "{{arbitrary_key}}"
+        },
+        input_contract={}
+    )
+
+    inp = NodeInput(
+        trace_id="trace-3",
+        data=json.dumps({"data": "Hello from generic data!"}),
+        config={}
+    )
+
+    output = asyncio.run(node.run(inp))
+    assert output.status == "success"
+    resolved_config = json.loads(output.data)
+    assert resolved_config["message_template"] == "{{message}}"
+    assert resolved_config["direct_data"] == "Hello from generic data!"
+    assert resolved_config["custom_query"] == "{{query}}"
+    assert resolved_config["any_other"] == "{{arbitrary_key}}"

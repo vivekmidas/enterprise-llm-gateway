@@ -25,15 +25,21 @@ class OutputGuardAgent(BaseNode):
         start = time.time()
         violations = []
 
-        # Simple PII leak check (can be enhanced with Presidio again)
+        data_val = self.get_input_data(inp)
         pii_keywords = ["phone", "email", "password", "account number"]
-        for kw in pii_keywords:
-            if kw in inp.data.lower():
-                violations.append(f"output_pii_leak:{kw}")
+
+        def check_pii(text: str) -> str:
+            for kw in pii_keywords:
+                if kw in text.lower():
+                    violations.append(f"output_pii_leak:{kw}")
+            return text
+
+        self.transform_strings(data_val, check_pii)
+        out_data = self.set_output_data(inp, data_val)
 
         return NodeOutput(
             trace_id=inp.trace_id,
-            data=inp.data,
+            data=out_data,
             violations=violations,
             start_time=start,
             end_time=time.time(),
