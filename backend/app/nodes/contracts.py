@@ -62,8 +62,8 @@ def parse_input_data(inp: NodeInput) -> tuple[Any, List[str]]:
     try:
         return json.loads(inp.data), []
     except (json.JSONDecodeError, TypeError):
-        logger.error("parse_input_data_failed", trace_id=inp.trace_id, error="invalid json")
-        return None, ["$.data expected valid JSON string"]
+        # Fall back to raw string
+        return inp.data, []
 
 
 @debug_log

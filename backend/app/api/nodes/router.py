@@ -75,6 +75,26 @@ async def get_node_by_id(id: str, db: AsyncSession = Depends(get_db)):
         return {"error": "Node not found"}
     return {"node": node}
 
+async def _resolve_category_id(category_val: str, db: AsyncSession) -> str:
+    if not category_val:
+        return category_val
+    try:
+        stmt = select(CategoryDB).where(
+            or_(
+                cast(CategoryDB.id, String) == category_val,
+                CategoryDB.group == category_val,
+                CategoryDB.label == category_val
+            )
+        )
+        result = await db.execute(stmt)
+        category_obj = result.scalar_one_or_none()
+        if category_obj:
+            return str(category_obj.id)
+    except Exception as e:
+        logger.error("error_resolving_category_id", error=str(e))
+    return category_val
+
+
 @router.put("/{node_name}")
 async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depends(get_db)):
     """Updates a node definition in the registry (catalog)."""
@@ -82,6 +102,9 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     node = result.scalar_one_or_none()
     if not node:
         return {"error": "Node not found"}
+
+    if "category" in node_data and node_data["category"]:
+        node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
 
     defaults = _defaults_from_payload(node_data)
 
@@ -100,6 +123,9 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
 @router.post("")
 async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
     """Creates a new node definition in the registry (catalog)."""
+    if "category" in node_data and node_data["category"]:
+        node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
+
     new_node = NodeDB(**{key: value for key, value in node_data.items() if hasattr(NodeDB, key)})
     db.add(new_node)
     await db.commit()

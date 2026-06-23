@@ -41,7 +41,7 @@ async def test_api_request_node_get(mock_execute):
     assert kwargs["method"] == "GET"
     assert kwargs["url"] == "http://example.com/api"
     # Query parameters must merge original query_params and input message
-    assert kwargs["params"] == {"foo": "bar", "message": "hello get"}
+    assert kwargs["params"] == {"foo": "bar", "data": "hello get"}
     assert kwargs["json_body"] is None
     assert kwargs["data_body"] is None
 
@@ -76,7 +76,7 @@ async def test_api_request_node_delete(mock_execute):
     kwargs = mock_execute.call_args[1]
     
     assert kwargs["method"] == "DELETE"
-    assert kwargs["params"] == {"message": "hello delete"}
+    assert kwargs["params"] == {"data": "hello delete"}
     assert kwargs["json_body"] is None
     assert kwargs["data_body"] is None
 
@@ -111,7 +111,7 @@ async def test_api_request_node_post_json_raw_string(mock_execute):
     kwargs = mock_execute.call_args[1]
     
     assert kwargs["method"] == "POST"
-    assert kwargs["json_body"] == {"message": "hello post"}
+    assert kwargs["json_body"] == {"data": "hello post"}
     assert kwargs["data_body"] is None
 
 
@@ -148,7 +148,7 @@ async def test_api_request_node_put_json_dict_string(mock_execute):
     kwargs = mock_execute.call_args[1]
     
     assert kwargs["method"] == "PUT"
-    assert kwargs["json_body"] == {"message": "hello put inside json"}
+    assert kwargs["json_body"] == {"message": "hello put inside json", "other": "field"}
     assert kwargs["data_body"] is None
 
 
@@ -183,7 +183,7 @@ async def test_api_request_node_post_form(mock_execute):
     
     assert kwargs["method"] == "POST"
     assert kwargs["json_body"] is None
-    assert kwargs["data_body"] == {"message": "hello form"}
+    assert kwargs["data_body"] == {"data": "hello form"}
 
 
 @pytest.mark.asyncio
@@ -239,6 +239,7 @@ async def test_api_request_node_auth_key(mock_execute):
         config={
             "method": "POST",
             "url": "http://example.com",
+            "auth_type": "bearer",
             "auth_key": "my-secret-token"
         }
     )

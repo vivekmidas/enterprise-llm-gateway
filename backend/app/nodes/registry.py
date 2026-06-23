@@ -108,97 +108,134 @@ class NodesRegistry:
         )
 
         # Sync definitions with DB to load global properties/schema overrides 
-        # TODO: revisit
-        # await cls.sync_with_db()
+        await cls.sync_with_db()
 
-    # @classmethod
-    # async def sync_with_db(cls):
-    #     """
-    #     Syncs discovered nodes and categories from files/classes into the database.
-    #     This ensures the DB is populated for the API to consume.
-    #     """
-    #     from app.core.database import AsyncSessionLocal
-    #     from app.models.db_models import NodeDB, CategoryDB
-    #     from sqlalchemy import select
-    #     client_id = 0  # Placeholder for SaaS multi-tenancy support
-    #     cls.logger.info("syncing_registry_with_db")
-        
-    #     async with AsyncSessionLocal() as session:
-    #         async with session.begin():
-    #             # 1. Sync Categories from data/node_categories.json
-    #             base_dir = Path(__file__).resolve().parent.parent.parent
-    #             cat_file = base_dir / "data" / "node_categories.json"
-    #             if cat_file.exists():
-    #                 try:
-    #                     with open(cat_file, "r") as f:
-    #                         cats = json.load(f)
-    #                         for cat in cats:
-    #                             stmt = select(CategoryDB).where(CategoryDB.name == cat["name"])
-    #                             result = await session.execute(stmt)
-    #                             db_cat = result.scalar_one_or_none()
-    #                             if not db_cat:
-    #                                 session.add(CategoryDB(name=cat["name"], icon=cat.get("icon"), color=cat.get("color")))
-    #                                 cls.logger.info("category_created_in_db", name=cat["name"])
-    #                             # We skip updating categories to preserve UI edits
-    #                 except Exception as e:
-    #                     cls.logger.error("failed_to_sync_categories", error=str(e))
+    @classmethod
+    async def sync_with_db(cls):
+        """
+        Syncs discovered nodes and categories from files/classes into the database.
+        This ensures the DB is populated for the API to consume.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.db_models import NodeDB, CategoryDB
+        from sqlalchemy import select
 
-    #             # 2. Sync Discovered Nodes
-    #             for node_name, node in cls._nodes.items():
-    #                 # Prepared for SaaS: client_id filtering would happen here
-    #                 stmt = select(NodeDB).where(NodeDB.name == node_name)
-    #                 result = await session.execute(stmt)
-    #                 db_node = result.scalar_one_or_none()
-                    
-    #                 if not db_node:
-    #                     # Only add if it doesn't exist to prevent overwriting UI customizations
-    #                     session.add(NodeDB(
-    #                         name=node.name,
-    #                         label=node.label,
-    #                         description=node.description,
-    #                         version=node.version,
-    #                         category=node.category,
-    #                         icon=node.icon,
-    #                         color=node.color,
-    #                         badge=node.badge,
-    #                         sub_label=node.sub_label,
-                            
-    #                         properties=node.properties,
-    #                         input_contract=node.input_contract,
-    #                         output_contract=node.output_contract
-    #                     ))
-    #                     cls.logger.info("node_added_to_catalog", name=node_name, client_id=client_id)
-    #                 else:
-    #                     # If it exists, pull properties from DB into the in-memory registry
-    #                     if db_node.properties:
-    #                         # Merge new properties from code definition into DB properties if they don't exist.
-    #                         # This ensures new system-level defaults are added to existing DB nodes,
-    #                         # while preserving any existing customized values in the database.
-    #                         updated_db_properties = {**node.properties, **db_node.properties}
-    #                         if updated_db_properties != db_node.properties:
-    #                             db_node.properties = updated_db_properties
-    #                             session.add(db_node) # Mark the db_node for update
-    #                             cls.logger.info("node_db_properties_merged", name=node_name, client_id=client_id)
+        cls.logger.info("syncing_registry_with_db")
 
+        def merge_properties(db_props, code_props):
+            # If both are dicts, merge them directly, preserving DB values
+            if isinstance(db_props, dict) and isinstance(code_props, dict):
+                merged = dict(code_props)
+                merged.update(db_props)
+                return merged
 
-    #                         if node.input_contract != db_node.input_contract:
-    #                             db_node.input_contract = node.input_contract
-    #                             session.add(db_node)
-    #                             cls.logger.info("node_db_input_contract_updated", name=node_name)
+            # Otherwise, treat as lists of property entries (schemas)
+            db_list = db_props if isinstance(db_props, list) else []
+            if isinstance(db_props, dict):
+                db_list = [{"key": k, "value": v} for k, v in db_props.items()]
 
-    #                         if node.output_contract != db_node.output_contract:
-    #                             db_node.output_contract = node.output_contract
-    #                             session.add(db_node)
-    #                             cls.logger.info("node_db_output_contract_updated", name=node_name)
+            code_list = code_props if isinstance(code_props, list) else []
+            if isinstance(code_props, dict):
+                code_list = [{"key": k, "default": v} for k, v in code_props.items()]
 
-    #                         node.properties.update(db_node.properties)
-    #                         if db_node.input_contract:
-    #                             node.input_contract = db_node.input_contract
-    #                         if db_node.output_contract:
-    #                             node.output_contract = db_node.output_contract
-    #                     cls.logger.debug("node_properties_synced_from_db", name=node_name, client_id=client_id)
+            db_keys = {item.get("key"): item for item in db_list if isinstance(item, dict) and "key" in item}
+            code_keys = {item.get("key"): item for item in code_list if isinstance(item, dict) and "key" in item}
 
-    #         cls.logger.info("nodes_synced_with_db", count=len(cls._nodes), client_id=client_id)
+            merged_list = []
+
+            # 1. Keep existing DB entries, merging structural metadata from code
+            for key, db_item in db_keys.items():
+                if key in code_keys:
+                    updated_item = {**code_keys[key], **db_item}
+                    if "value" in db_item:
+                        updated_item["value"] = db_item["value"]
+                    elif "default" in db_item:
+                        updated_item["default"] = db_item["default"]
+                    merged_list.append(updated_item)
+                else:
+                    # Retain properties deprecated in code but configured in DB for safety
+                    merged_list.append(db_item)
+
+            # 2. Add new properties defined in code
+            for key, code_item in code_keys.items():
+                if key not in db_keys:
+                    merged_list.append(code_item)
+
+            return merged_list
+
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # 1. Sync Categories from data/node_categories.json if exists
+                base_dir = Path(__file__).resolve().parent.parent.parent
+                cat_file = base_dir / "data" / "node_categories.json"
+                if cat_file.exists():
+                    try:
+                        with open(cat_file, "r") as f:
+                            cats = json.load(f)
+                            for cat in cats:
+                                stmt = select(CategoryDB).where(CategoryDB.group == cat.get("name"))
+                                result = await session.execute(stmt)
+                                db_cat = result.scalar_one_or_none()
+                                if not db_cat:
+                                    session.add(CategoryDB(
+                                        group=cat.get("name"),
+                                        icon=cat.get("icon"),
+                                        color=cat.get("color"),
+                                        label=cat.get("label"),
+                                        description=cat.get("description")
+                                    ))
+                                    cls.logger.info("category_created_in_db", name=cat.get("name"))
+                    except Exception as e:
+                        cls.logger.error("failed_to_sync_categories", error=str(e))
+
+                # 2. Sync Discovered Nodes
+                for node_name, node in cls._nodes.items():
+                    stmt = select(NodeDB).where(NodeDB.name == node_name)
+                    result = await session.execute(stmt)
+                    db_node = result.scalar_one_or_none()
+
+                    # Load defaults from Python node class
+                    user_props_code = node.user_properties or []
+                    system_props_code = node.system_properties or {}
+
+                    if not db_node:
+                        cls.logger.info("registering_new_node_to_db", name=node_name)
+                        new_db_node = NodeDB(
+                            name=node.name,
+                            label=node.label,
+                            node_type=node.node_type.upper() if node.node_type else "NODE",
+                            description=node.description,
+                            version=node.version,
+                            category="1",
+                            group=node.group,
+                            icon="bot",
+                            color=node.color,
+                            badge=node.badge,
+                            sub_label=node.sub_label,
+                            user_properties=user_props_code,
+                            system_properties=system_props_code,
+                            input_contract=node.input_contract,
+                            output_contract=node.output_contract
+                        )
+                        session.add(new_db_node)
+                    else:
+                        cls.logger.info("syncing_existing_node_schema_to_db", name=node_name)
+
+                        # Merge properties non-destructively
+                        merged_user_props = merge_properties(db_node.user_properties, user_props_code)
+                        merged_sys_props = merge_properties(db_node.system_properties, system_props_code)
+
+                        # Update core implementations fields, keeping user-customized ones
+                        db_node.node_type = node.node_type.upper() if node.node_type else db_node.node_type
+                        db_node.version = node.version or db_node.version
+                        db_node.input_contract = node.input_contract or db_node.input_contract
+                        db_node.output_contract = node.output_contract or db_node.output_contract
+                        db_node.user_properties = merged_user_props
+                        db_node.system_properties = merged_sys_props
+
+                        session.add(db_node)
+
+            cls.logger.info("nodes_synced_with_db", count=len(cls._nodes))
 
     @classmethod
     async def _scan_package(cls, package_paths: List[str], prefix: str):

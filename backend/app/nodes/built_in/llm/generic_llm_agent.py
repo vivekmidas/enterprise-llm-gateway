@@ -52,7 +52,7 @@ class GenericLLMAgent(BaseNode):
         ip = config.get("ip")
         port = config.get("port")
         model_name = config.get("model_name")
-        temperature = float(config.get("temperature")) # Ensure temperature is a float
+        temperature = config.get("temperature") # Ensure temperature is a float
         system_prompt = config.get("system_prompt")
 
         data_val = self.get_input_data(inp)

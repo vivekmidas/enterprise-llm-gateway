@@ -34,10 +34,10 @@ class DatabaseNode(BaseNode):
         return None
 
     def _get_connection_url(self, config: Dict[str, Any]) -> str:
-        db_type = config.get("db_type", "postgresql")
+        db_type = config.get("db_type", "sqlite")
         
         if db_type == "sqlite":
-            return f"sqlite:///{config.get('database', 'demo.db')}"
+            return f"sqlite:///{config.get('database', 'enterprise-llm-agent.db')}"
 
         driver = {
             "postgresql": "postgresql+psycopg2",
@@ -45,19 +45,20 @@ class DatabaseNode(BaseNode):
             "oracle": "oracle+oracledb"
         }.get(db_type, "postgresql")
 
-        return URL.create(
+        return str(URL.create(
             drivername=driver,
             username=config.get("username"),
             password=config.get("password"),
             host=config.get("host"),
             port=int(config.get("port", 5432)),
             database=config.get("database")
+            )
         )
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
         config = inp.config
         query = config.get("query")
-        db_type = config.get("db_type", "postgresql")
+        db_type = config.get("db_type", "sqlite")
         
         try:
             url = self._get_connection_url(config)
@@ -66,7 +67,7 @@ class DatabaseNode(BaseNode):
             engine = create_engine(url, connect_args={"connect_timeout": 10} if db_type != "sqlite" else {})
             
             with engine.connect() as connection:
-                result = connection.execute(text(query))
+                result = connection.execute(str(query))
                 
                 if result.returns_rows:
                     # Convert rows to a list of dicts for JSON serialization

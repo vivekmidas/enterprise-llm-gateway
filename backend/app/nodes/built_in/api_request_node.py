@@ -4,6 +4,7 @@ import time
 import urllib.parse
 import ast
 import json
+import abc
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from app.utils.http_client import HttpClient, ApiResponse
@@ -29,7 +30,7 @@ class ApiRequestConfig(BaseModel):
     follow_redirects: bool = True
     ssl_verify: bool = True
 
-class ApiRequestNode(BaseNode):
+class ApiRequestNode(BaseNode, abc.ABC):
     """Generic External API Request Node - Flexible & Production Ready"""
     name: str = "external_api_node"
     node_type: str = "NODE"
@@ -76,7 +77,7 @@ class ApiRequestNode(BaseNode):
             parsed = urllib.parse.urlparse(url)
             if parsed.scheme:
                 scheme = parsed.scheme
-                netloc = parsed.netloc
+                netloc = host if host else parsed.netloc
                 url_path = parsed.path
                 if norm_path:
                     combined_path = "/" + url_path.strip("/")
@@ -88,7 +89,7 @@ class ApiRequestNode(BaseNode):
                     combined_path = url_path
             else:
                 scheme = proto
-                netloc = url.rstrip("/")
+                netloc = host if host else url.rstrip("/")
                 combined_path = "/" + norm_path if norm_path else ""
 
             # Apply separate port override if not in netloc
@@ -220,6 +221,9 @@ class ApiRequestNode(BaseNode):
             if is_kv_list and temp_dict:
                 message_val = temp_dict
 
+        if isinstance(message_val, dict):
+            message_val = {k: v for k, v in message_val.items() if k not in config_keys}
+
         if message_val is None:
             message_val = ""
 
@@ -232,11 +236,15 @@ class ApiRequestNode(BaseNode):
         config_params = config.get("query_params") or config.get("params") or {}
         if isinstance(config_params, dict):
             params = {str(k): v for k, v in config_params.items()}
-        elif isinstance(config_params, str) and config_params:
+        elif isinstance(config_params, str) and config_params.strip():
             try:
-                # Handle lists of dicts e.g. '[{"q": "val"}]' or ast-parseable formats
+                # Handle dictionary JSON format
                 parsed_params = json.loads(config_params)
-                if isinstance(parsed_params, list):
+                if isinstance(parsed_params, dict):
+                    for k, v in parsed_params.items():
+                        params[str(k)] = v
+                # Handle lists of dicts e.g. '[{"q": "val"}]' or ast-parseable formats
+                elif isinstance(parsed_params, list):
                     for item in parsed_params:
                         if isinstance(item, dict):
                             for k, v in item.items():
@@ -244,25 +252,41 @@ class ApiRequestNode(BaseNode):
             except Exception:
                 try:
                     parsed_params = ast.literal_eval(config_params)
-                    if isinstance(parsed_params, list):
+                    if isinstance(parsed_params, dict):
+                        for k, v in parsed_params.items():
+                            params[str(k)] = v
+                    elif isinstance(parsed_params, list):
                         for item in parsed_params:
                             if isinstance(item, dict):
                                 for k, v in item.items():
                                     params[str(k)] = v
                 except Exception:
-                    pass
+                    # Fallback to query string format e.g. api_token=69747bd28b3bd8.99561497&fmt=json
+                    try:
+                        parsed_qs = urllib.parse.parse_qsl(config_params)
+                        if parsed_qs:
+                            for k, v in parsed_qs:
+                                params[str(k)] = v
+                    except Exception:
+                        pass
 
         # Apply API key in query params if applicable
         if auth_type == "api_key" and api_key_location.lower() == "query":
             params[api_key_name] = api_key
 
         if method in ("GET", "DELETE"):
+            path_str = urllib.parse.urlparse(full_url).path
             if isinstance(message_val, dict):
                 # Merge dict directly into query parameters
                 for k, v in message_val.items():
+                    if v and str(v) in path_str:
+                        continue
                     params[str(k)] = v
             else:
-                params["data"] = message_val
+                if message_val and str(message_val) in path_str:
+                    pass
+                else:
+                    params["data"] = message_val
         else:
             # For POST/PUT/PATCH/etc.
             body = config.get("body")
