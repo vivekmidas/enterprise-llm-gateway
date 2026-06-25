@@ -307,3 +307,107 @@ async def test_api_request_node_dynamic_overrides(mock_execute):
     assert kwargs["json_body"] == {"message": "hello dynamic world", "foo": "bar"}
 
 
+@pytest.mark.asyncio
+@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+async def test_api_request_node_with_api_path_static(mock_execute):
+    mock_execute.return_value = ApiResponse(
+        status_code=200,
+        headers={"Content-Type": "application/json"},
+        body='{"status": "ok"}',
+        duration_ms=10.0
+    )
+
+    node = ApiRequestNode()
+    await node.init()
+
+    # Case A: Static config with path and api_path
+    test_input = NodeInput(
+        trace_id=str(uuid.uuid4()),
+        data="test",
+        config={
+            "method": "GET",
+            "url": "http://example.com",
+            "path": "/api/v1",
+            "api_path": "/products"
+        }
+    )
+
+    result = await node.run(test_input)
+    assert result.status == "success"
+    mock_execute.assert_called_once()
+    kwargs = mock_execute.call_args[1]
+    assert kwargs["url"] == "http://example.com/api/v1/products"
+
+
+@pytest.mark.asyncio
+@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+async def test_api_request_node_with_api_path_dynamic(mock_execute):
+    mock_execute.return_value = ApiResponse(
+        status_code=200,
+        headers={"Content-Type": "application/json"},
+        body='{"status": "ok"}',
+        duration_ms=10.0
+    )
+
+    node = ApiRequestNode()
+    await node.init()
+
+    # Dynamic override of api_path and path in input data JSON
+    json_data = json.dumps({
+        "path": "/api/v2",
+        "api_path": "/customers",
+        "message": "dynamic"
+    })
+
+    test_input = NodeInput(
+        trace_id=str(uuid.uuid4()),
+        data=json_data,
+        config={
+            "method": "GET",
+            "url": "http://example.com",
+            "path": "/api/v1",
+            "api_path": "/products"
+        }
+    )
+
+    result = await node.run(test_input)
+    assert result.status == "success"
+    mock_execute.assert_called_once()
+    kwargs = mock_execute.call_args[1]
+    assert kwargs["url"] == "http://example.com/api/v2/customers"
+    assert kwargs["json_body"] is None  # Since GET has no json_body, custom payload values are query params or filtered
+
+
+@pytest.mark.asyncio
+@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+async def test_api_request_node_api_path_ignored_when_missing(mock_execute):
+    mock_execute.return_value = ApiResponse(
+        status_code=200,
+        headers={"Content-Type": "application/json"},
+        body='{"status": "ok"}',
+        duration_ms=10.0
+    )
+
+    node = ApiRequestNode()
+    await node.init()
+
+    # Config with path but no api_path
+    test_input = NodeInput(
+        trace_id=str(uuid.uuid4()),
+        data="test",
+        config={
+            "method": "GET",
+            "url": "http://example.com",
+            "path": "/api/v1"
+        }
+    )
+
+    result = await node.run(test_input)
+    assert result.status == "success"
+    mock_execute.assert_called_once()
+    kwargs = mock_execute.call_args[1]
+    assert kwargs["url"] == "http://example.com/api/v1"
+
+
+
+

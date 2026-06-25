@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from fastapi import Request
-from app.nodes.built_in.webhook.base_webhook_agent import WebhookAgent
+from app.nodes.built_in.webhook.base.base_webhook_agent import WebhookAgent
 from app.nodes.registry import NodesRegistry
 
 @pytest.mark.asyncio

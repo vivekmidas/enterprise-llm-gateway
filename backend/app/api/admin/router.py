@@ -4,8 +4,8 @@ from typing import List, Dict, Any, Optional
 import structlog
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
-from app.nodes.built_in.webhook.base_webhook_agent import WebhookAgent
-from app.nodes.built_in.scheduler_node import SchedulerAgent
+from app.nodes.built_in.webhook.base.base_webhook_agent import WebhookAgent
+from app.nodes.built_in.webhook.base.scheduler_node import SchedulerAgent
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 logger = structlog.get_logger(__name__)

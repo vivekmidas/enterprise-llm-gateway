@@ -12,6 +12,7 @@ class NodeInput(BaseModel):
 class NodeOutput(BaseModel):
     """Standardized output envelope returned by every node after execution."""
     trace_id: str
+    #todo- need to change to accept any kind of data. e.g. binary, json, docs, pdfs etc...
     data: str
     status: str = "success"  # "success" or "failure"
     error_message: Optional[str] = None

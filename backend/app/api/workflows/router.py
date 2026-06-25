@@ -58,10 +58,12 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
             db_node = await _get_workflow_node_details(session, agent_name)
             
             system_properties = {}
+            system_level_properties = {}
             input_contract = {}
             output_contract = {}
             if db_node:
                 system_properties = property_entries_to_dict(db_node.user_properties)
+                system_level_properties = property_entries_to_dict(db_node.system_properties)
                 input_contract = db_node.input_contract or {}
                 output_contract = db_node.output_contract or {}
 
@@ -72,6 +74,7 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
             return {
                 "user_properties": user_properties,
                 "system_properties": system_properties,
+                "system_level_properties": system_level_properties,
                 "properties": merged_properties,
                 "input_contract": input_contract,
                 "output_contract": output_contract

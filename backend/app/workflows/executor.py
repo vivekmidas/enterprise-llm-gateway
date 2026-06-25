@@ -39,6 +39,71 @@ def message_content_to_text(content: object) -> str:
 
     return str(content)
 
+def evaluate_condition_expression(expression: str, state: AgentState) -> bool:
+    """
+    Evaluates a condition expression (e.g. "profit > 10" or "output.score < 0.5")
+    against the state data/context/metadata.
+    """
+    logger.debug("evaluating_condition_expression", expression=expression)
+    variables = {}
+    output_dict = {}
+
+    # 1. Parse node output content (which is state.content)
+    if state.content:
+        try:
+            # Try to load as JSON
+            parsed = json.loads(state.content)
+            if isinstance(parsed, dict):
+                output_dict.update(parsed)
+                # If it's wrapped in a "data" envelope, also expose that
+                if "data" in parsed and isinstance(parsed["data"], dict):
+                    output_dict.update(parsed["data"])
+        except Exception:
+            # If not JSON, treat it as a string under data
+            output_dict["data"] = state.content
+
+    # 2. Expose the "output" variable directly as a dictionary
+    variables["output"] = output_dict
+    
+    # 3. Also expose output keys directly at the root level of the environment
+    variables.update(output_dict)
+
+    # 4. Merge context and metadata into the evaluation context
+    if isinstance(state.context, dict):
+        variables.update(state.context)
+    if isinstance(state.metadata, dict):
+        variables.update(state.metadata)
+
+    # 5. Evaluate the expression safely
+    try:
+        # Sanitize common symbols (like % or quotes)
+        expr_clean = expression.replace("%", "").strip()
+        
+        # Build local context and try to cast strings to numeric types for comparison
+        local_context = {}
+        for k, v in variables.items():
+            if isinstance(v, str):
+                try:
+                    if "." in v:
+                        local_context[k] = float(v)
+                    else:
+                        local_context[k] = int(v)
+                except ValueError:
+                    local_context[k] = v
+            else:
+                local_context[k] = v
+
+        # We construct a clean and restricted environment
+        allowed_globals = {"__builtins__": None}
+        
+        # Safely evaluate
+        result = eval(expr_clean, allowed_globals, local_context)
+        logger.info("condition_evaluated", expression=expression, result=bool(result))
+        return bool(result)
+    except Exception as e:
+        logger.error("condition_evaluation_error", expression=expression, error=str(e))
+        return False
+
 def validate_no_cycles(nodes: List[Dict], edges: List[Dict]):
     """Performs DFS to detect cycles in the graph definition."""
     adj = {}
@@ -130,12 +195,63 @@ class WorkflowExecutor:
         default_retry_policy = RetryPolicy(max_attempts=2, backoff_factor=2.0, retry_on=(Exception,))
 
         # Define routing logic for conditional nodes
-        def create_condition_router(mapping: Dict[str, str]):
-            async def router(state: AgentState) -> str:
-                decision = "failure" if state.violations else state.metadata.get("condition_result", "success")
-                if decision not in mapping and "default" in mapping:
-                    decision = "default"
-                return decision
+        def create_source_router(mapping: Dict[str, Dict[str, Any]]):
+            async def router(state: AgentState) -> Any:
+                logger.info("routing_evaluation_started", violations=state.violations, metadata=state.metadata)
+                
+                # Check for failure
+                has_failed = bool(state.violations)
+                
+                if has_failed:
+                    logger.info("node_failed_routing_checking", mapping_keys=list(mapping.keys()))
+                    targets = []
+                    # Check failure / has_violations conditions
+                    if "failure" in mapping:
+                        targets = mapping["failure"]["targets"]
+                    elif "has_violations" in mapping:
+                        targets = mapping["has_violations"]["targets"]
+                    
+                    if not targets:
+                        logger.info("no_failure_path_defined_graceful_stop")
+                        return "__end__"
+                    
+                    logger.info("following_failure_path", targets=targets)
+                    return targets[0] if len(targets) == 1 else targets
+
+                # On Success:
+                # 1. Evaluate custom expression conditions
+                special_keys = {"success", "failure", "has_violations", "default"}
+                matched_expression_targets = []
+                for cond_name, info in mapping.items():
+                    if cond_name not in special_keys:
+                        # Prioritize evaluating the associated expression logic if configured,
+                        # fallback to evaluating the condition name itself
+                        expr_to_eval = info.get("expression") or cond_name
+                        if evaluate_condition_expression(expr_to_eval, state):
+                            logger.info("expression_condition_matched", condition=cond_name, expression=expr_to_eval, targets=info["targets"])
+                            matched_expression_targets.extend(info["targets"])
+
+                # 2. Check standard success conditions / unconditional edges
+                success_targets = []
+                
+                # If a condition_result is explicitly defined in metadata (e.g. from a custom logic node)
+                condition_result = state.metadata.get("condition_result")
+                if condition_result and condition_result in mapping:
+                    success_targets.extend(mapping[condition_result]["targets"])
+                
+                # Unconditional edges (condition is empty or default) or explicit "success" edge
+                if "success" in mapping:
+                    success_targets.extend(mapping["success"]["targets"])
+                
+                # Combine matched expression targets and normal success targets
+                all_success_targets = list(set(matched_expression_targets + success_targets))
+                
+                if not all_success_targets:
+                    logger.info("no_matching_success_path_stop")
+                    return "__end__"
+                
+                logger.info("following_success_paths", targets=all_success_targets)
+                return all_success_targets[0] if len(all_success_targets) == 1 else all_success_targets
             return router
 
         # Add Nodes to the graph
@@ -180,26 +296,28 @@ class WorkflowExecutor:
         for edge in self.edges_list:
             source = edge.get("source") or edge.get("from_node")
             target = edge.get("target") or edge.get("to_node")
-            condition = edge.get("condition") or "default"
+            condition = edge.get("condition")
+            expression = edge.get("expression")
+            
+            if not condition or str(condition).strip() in {"", "default"}:
+                condition = "success"
+                
             if source and target:
-                source_edges.setdefault(source, {}).setdefault(condition, []).append(target)
+                source_edges.setdefault(source, {}).setdefault(condition, {"targets": [], "expression": expression})
+                source_edges[source][condition]["targets"].append(target)
 
         for source, mapping in source_edges.items():
-            # If mapping contains conventional condition keys (success/failure) and each
-            # condition maps to a single target, use conditional routing. If there are
-            # multiple targets for any condition, fall back to adding plain edges
-            # so LangGraph can run them in parallel (ambiguity in conditional routing
-            # with multiple targets is intentionally avoided).
-            has_conditional = any(c in mapping for c in ["success", "failure"])
-            multiple_targets_per_condition = any(len(targets) > 1 for targets in mapping.values())
-
-            if has_conditional and not multiple_targets_per_condition:
-                router_paths = {c: targets[0] for c, targets in mapping.items()}
-                graph.add_conditional_edges(source, create_condition_router(router_paths), router_paths)
-            else:
-                for cond_targets in mapping.values():
-                    for target in cond_targets:
-                        graph.add_edge(source, target)
+            path_map = {}
+            for info in mapping.values():
+                for target in info["targets"]:
+                    path_map[target] = target
+            path_map["__end__"] = END
+            
+            graph.add_conditional_edges(
+                source,
+                create_source_router(mapping),
+                path_map
+            )
 
         # Entry Point Detection
         entry_node_id = None
@@ -227,11 +345,6 @@ class WorkflowExecutor:
         async def agent_node(state: AgentState) -> Dict[str, Any]:
             agent_name = getattr(agent, "name", "unknown")
             
-            # Circuit Breaker: Skip execution if a previous node failed or raised a violation
-            if state.violations:
-                logger.info("stopping_further_execution_on_node_failure", node_id=node_id, agent=agent_name)
-                return {}
-
             with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
                 span.set_attribute("agent.name", agent_name)
                 span.set_attribute("node.id", node_id)
@@ -267,9 +380,39 @@ class WorkflowExecutor:
                         "masked_content": result.data,
                     }
 
+                    # Parse input and output data as dict/JSON if possible
+                    parsed_input = agent_input.data
+                    if isinstance(parsed_input, str):
+                        try:
+                            parsed_input = json.loads(parsed_input)
+                        except Exception:
+                            pass
+
+                    parsed_output = result.data
+                    if isinstance(parsed_output, str):
+                        try:
+                            parsed_output = json.loads(parsed_output)
+                        except Exception:
+                            pass
+
+                    existing_nodes = dict(state.context.get("nodes", {})) if state.context else {}
+                    existing_nodes[node_id] = {
+                        "data": {
+                            "input_data": parsed_input,
+                            "output_data": parsed_output
+                        }
+                    }
+                    updates["context"] = {
+                        "nodes": existing_nodes
+                    }
+
                     # Return only what changed. Metadata and violations are merged by LangGraph reducers.
+                    # Manually merge the nested node_history dict with existing history in state.metadata
+                    existing_history = dict(state.metadata.get("node_history", {})) if state.metadata else {}
+                    existing_history[node_id] = node_trace
+                    
                     updates["metadata"] = {
-                        "node_history": {node_id: node_trace},
+                        "node_history": existing_history,
                         **(result.metadata or {})
                     }
 
@@ -282,6 +425,9 @@ class WorkflowExecutor:
                 except Exception as e:
                     logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
                     
+                    existing_history = dict(state.metadata.get("node_history", {})) if state.metadata else {}
+                    existing_history[node_id] = {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
+                    
                     # Instead of raising, we return a violation to stop the chain gracefully
                     return {
                         "status": "failure",
@@ -289,9 +435,7 @@ class WorkflowExecutor:
                         "error_code": 500,
                         "violations": [f"node_exception:{node_id}"],
                         "metadata": {
-                            "node_history": {
-                                node_id: {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
-                            }
+                            "node_history": existing_history
                         }
                     }
 
@@ -334,6 +478,9 @@ class WorkflowExecutor:
             result_dict = result.copy()
         else:
             result_dict = {}
+
+        if result_dict.get("violations"):
+            result_dict["status"] = "failure"
 
         result_dict["final_response"] = result_dict.get("llm_response") or result_dict.get("content", input_content)
         # result_dict["agents_executed"] = self.agents_executed

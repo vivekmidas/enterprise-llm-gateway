@@ -9,6 +9,16 @@ def overwrite(current: T, update: T) -> T:
     """Reducer that allows parallel nodes to update a value, with the last one winning."""
     return update
 
+def merge_metadata(current: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer that performs a deep update of metadata keys (like node_history)."""
+    merged = dict(current or {})
+    for k, v in (update or {}).items():
+        if k == "node_history" and isinstance(v, dict) and isinstance(merged.get("node_history"), dict):
+            merged["node_history"] = {**merged["node_history"], **v}
+        else:
+            merged[k] = v
+    return merged
+
 class EnterpriseState(BaseModel):
     """Core state schema for all workflows - mutable friendly"""
     
@@ -26,14 +36,14 @@ class EnterpriseState(BaseModel):
     final_violations: Annotated[List[str], operator.add] = []
     is_safe: Annotated[bool, operator.and_] = True
     errors: Annotated[List[str], operator.add] = []
-    metadata: Annotated[Dict[str, Any], operator.ior] = {}
+    metadata: Annotated[Dict[str, Any], merge_metadata] = {}
        
 class WorkflowState(BaseModel):
     trace_id: Annotated[str, overwrite]
     content: Annotated[str, overwrite] = ""
     masked_content: Annotated[str, overwrite] = ""
     context: Annotated[Dict[str, Any], operator.ior] = {}
-    metadata: Annotated[Dict[str, Any], operator.ior] = {}
+    metadata: Annotated[Dict[str, Any], merge_metadata] = {}
     violations: Annotated[List[str], operator.add] = []
     llm_response: Annotated[str, overwrite] = ""
     final_response: Annotated[str, overwrite] = ""

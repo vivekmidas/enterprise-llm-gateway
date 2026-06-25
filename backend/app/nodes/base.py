@@ -206,6 +206,25 @@ class BaseNode(BaseModel, abc.ABC):
             return any(self._has_template(i) for i in val)
         return False
 
+    def _resolve_jinja_templates(self, template: Any, render_context: Dict[str, Any]) -> Any:
+        """
+        Recursively resolves variables using Jinja2 NativeTemplate to preserve types.
+        """
+        if isinstance(template, dict):
+            return {k: self._resolve_jinja_templates(v, render_context) for k, v in template.items()}
+        elif isinstance(template, list):
+            return [self._resolve_jinja_templates(i, render_context) for i in template]
+        elif isinstance(template, str) and "{{" in template and "}}" in template:
+            try:
+                tpl = NativeTemplate(template)
+                rendered = tpl.render(**render_context)
+                return rendered
+            except Exception as e:
+                self.logger.warning("jinja_template_render_failed", template=template, error=str(e))
+                return template
+        return template
+
+
     async def validate_input_contract(self, inp: NodeInput) -> Optional[NodeOutput]:
         """
         Validates if the input matches the defined input_contract.
@@ -329,6 +348,40 @@ class BaseNode(BaseModel, abc.ABC):
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
             inp.config = {**self.properties, **inp.config}
     
+            # 0.05 Resolve visual mapping templates (connect node outputs to target input contract)
+            mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
+            if mapping_config:
+                try:
+                    if isinstance(mapping_config, str):
+                        try:
+                            mapping_config = json.loads(mapping_config)
+                        except Exception:
+                            pass
+
+                    if isinstance(mapping_config, dict) and mapping_config:
+                        # Parse predecessor's output data
+                        previous_data = inp.data
+                        if isinstance(previous_data, str):
+                            try:
+                                previous_data = json.loads(previous_data)
+                            except Exception:
+                                pass
+
+                        render_context = {
+                            "data": previous_data,
+                            "input_data": previous_data,
+                            "nodes": inp.context.get("nodes", {}),
+                            "context": inp.context,
+                            "metadata": inp.metadata
+                        }
+                        
+                        # Resolve mapping using Jinja2
+                        mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
+                        # Re-serialize to JSON string for input validation/execution
+                        inp.data = json.dumps(mapped_data)
+                except Exception as e:
+                    self.logger.error("failed_to_resolve_mapping_templates", error=str(e))
+
             # 0.1 Input Contract Validation
             contract_output = await self.validate_input_contract(inp)
             if contract_output:

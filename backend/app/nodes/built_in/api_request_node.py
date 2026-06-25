@@ -15,6 +15,7 @@ class ApiRequestConfig(BaseModel):
     method: str = Field(default="POST", description="HTTP Method")
     url: str = Field(default="http://0.0.0.0:9999", description="Base URL e.g. https://api.example.com")
     path: str = Field(default="/", description="Path with expressions e.g. /users/{id}")
+    api_path: Optional[str] = Field(default=None, description="Specific API path e.g. /products")
     query_params: Dict[str, Any] = Field(default_factory=dict)
     headers: Dict[str, str] = Field(default_factory=lambda: {"Content-Type": "application/json"})
     auth_type: str = Field(default="none", description="none | api_key | bearer")
@@ -65,12 +66,13 @@ class ApiRequestNode(BaseNode, abc.ABC):
             )
         return None
 
-    def _build_full_url(self, url: str, host: str, path: str, port: str, protocol: str) -> str:
+    def _build_full_url(self, url: str, host: str, path: str, port: str, protocol: str, api_path: Optional[str] = None) -> str:
         # Normalize protocol
         proto = (protocol or "http").lower().rstrip(":/")
         
-        # Normalize path
+        # Normalize paths
         norm_path = path.strip().lstrip("/") if path else ""
+        norm_api_path = api_path.strip().lstrip("/") if api_path else ""
 
         # If URL is specified
         if url:
@@ -87,10 +89,18 @@ class ApiRequestNode(BaseNode, abc.ABC):
                         combined_path = combined_path.rstrip("/") + "/" + norm_path
                 else:
                     combined_path = url_path
+                
+                # Append api_path if provided
+                if norm_api_path:
+                    combined_path = combined_path.rstrip("/") + "/" + norm_api_path
             else:
                 scheme = proto
                 netloc = host if host else url.rstrip("/")
                 combined_path = "/" + norm_path if norm_path else ""
+                
+                # Append api_path if provided
+                if norm_api_path:
+                    combined_path = combined_path.rstrip("/") + "/" + norm_api_path
 
             # Apply separate port override if not in netloc
             if port:
@@ -113,6 +123,11 @@ class ApiRequestNode(BaseNode, abc.ABC):
             scheme = proto
             base = f"{scheme}://{netloc}"
             combined_path = "/" + norm_path if norm_path else ""
+            
+            # Append api_path if provided
+            if norm_api_path:
+                combined_path = combined_path.rstrip("/") + "/" + norm_api_path
+                
             if combined_path and combined_path != "/":
                 return f"{base.rstrip('/')}/{combined_path.lstrip('/')}"
             return base
@@ -172,7 +187,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
                 pass
 
         config_keys = {
-            "host", "url", "path", "port", "protocol", "method", 
+            "host", "url", "path", "api_path", "port", "protocol", "method", 
             "auth_type", "api_key", "auth_key", "auth_token", 
             "api_key_name", "api_key_location", "body_type"
         }
@@ -181,6 +196,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
         url = input_json.get("url") or config.get("url") or ""
         host = input_json.get("host") or config.get("host") or ""
         path = input_json.get("path") or config.get("path") or ""
+        api_path = input_json.get("api_path") or config.get("api_path") or ""
         port = input_json.get("port") or config.get("port") or ""
         protocol = input_json.get("protocol") or config.get("protocol") or "http"
         method = (input_json.get("method") or config.get("method") or "GET").upper()
@@ -192,7 +208,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
         body_type = (input_json.get("body_type") or config.get("body_type") or "json").lower()
 
         # Build full URL
-        full_url = self._build_full_url(url=url, host=host, path=path, port=port, protocol=protocol)
+        full_url = self._build_full_url(url=url, host=host, path=path, port=port, protocol=protocol, api_path=api_path)
 
         # Prepare headers
         config_headers = config.get("headers", {})

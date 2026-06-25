@@ -104,7 +104,7 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
                 routes = self._active_routes.get(server_key, {})
 
                 if normalized_path not in routes:
-                    self.logger.warning(
+                    self.logger.error(
                         "webhook_route_not_found", path=normalized_path, host=host, port=port
                     )
                     raise HTTPException(status_code=404, detail="Webhook path not registered")
@@ -268,11 +268,12 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
         return None
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
+        self.logger.info("webhook_execution_started", trace_id=inp.trace_id, agent_name=self.name)
         return NodeOutput(
             trace_id=inp.trace_id,
             data=inp.data,
             status="success",
-            metadata={"source": "api_webhook"},
+            metadata={"source": self.name},
         )
 
 

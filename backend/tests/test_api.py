@@ -14,11 +14,11 @@ async def test_get_nodes():
     
     assert response.status_code == 200
     data = response.json()
-    # Based on frontend api.ts, we expect a key 'agents'
-    assert "agents" in data
-    assert isinstance(data["agents"], list)
-    if len(data["agents"]) > 0:
-        agent = data["agents"][0]
+    # Based on frontend api.ts, we expect a key 'nodes'
+    assert "nodes" in data
+    assert isinstance(data["nodes"], list)
+    if len(data["nodes"]) > 0:
+        agent = data["nodes"][0]
         assert "name" in agent
         assert "group" in agent
 
@@ -31,6 +31,7 @@ async def test_workflow_lifecycle():
     payload = {
         "id": workflow_id,
         "name": "Integration Test Workflow",
+        "user_id": "test-user",
         "nodes": [
             {
                 "id": "start-1",
@@ -50,7 +51,7 @@ async def test_workflow_lifecycle():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # 1. Create (POST /workflows)
         create_res = await ac.post("/workflows", json=payload)
-        assert create_res.status_code == 200
+        assert create_res.status_code == 201
         assert create_res.json()["id"] == workflow_id
 
         # 2. Get by ID (GET /workflows/{id})
@@ -67,7 +68,11 @@ async def test_workflow_lifecycle():
         assert any(w["id"] == workflow_id for w in workflows)
 
         # 4. Delete (DELETE /workflows/{id})
-        delete_res = await ac.delete(f"/workflows/{workflow_id}")
+        delete_res = await ac.request(
+            "DELETE",
+            f"/workflows/{workflow_id}",
+            json={"id": "test-user", "role": "admin", "email": "test-user@example.com"}
+        )
         assert delete_res.status_code == 204
 
         # 5. Verify Deletion
@@ -87,7 +92,8 @@ async def test_category_lifecycle():
     Test the full lifecycle of a category: Create -> Get -> Update -> List -> Delete.
     """
     payload = {
-        "name": "Test Category",
+        "group": "Test Category",
+        "label": "Test Category",
         "icon": "test-icon",
         "color": "#ffffff"
     }
@@ -99,18 +105,18 @@ async def test_category_lifecycle():
         assert create_res.status_code == 201
         data = create_res.json()
         category_id = data["id"]
-        assert data["name"] == payload["name"]
+        assert data["group"] == payload["group"]
 
         # 2. Get by ID
         get_res = await ac.get(f"/categories/{category_id}")
         assert get_res.status_code == 200
-        assert get_res.json()["name"] == "Test Category"
+        assert get_res.json()["group"] == "Test Category"
 
         # 3. Update
-        update_payload = {"name": "Updated Category"}
+        update_payload = {"group": "Updated Category"}
         update_res = await ac.put(f"/categories/{category_id}", json=update_payload)
         assert update_res.status_code == 200
-        assert update_res.json()["name"] == "Updated Category"
+        assert update_res.json()["group"] == "Updated Category"
 
         # 4. List all
         list_res = await ac.get("/categories")

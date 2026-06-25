@@ -1,6 +1,7 @@
+from mysql import connector
 import asyncio
 import json
-import sqlite3
+import mysql.connector
 import time
 from typing import Any, Dict, Optional, List
 from ..base import DBExecutor
@@ -9,22 +10,21 @@ from jinja2 import Environment, BaseLoader, Template
 jinja_env = Environment( loader=BaseLoader(),  trim_blocks=True, lstrip_blocks=True)
 
     
-class SQLiteDBExecutor(DBExecutor):
+class GenericMySQLDBExecutor(DBExecutor):
     """
-    Concrete SQLite Database Executor Node.
-    Loads only sqlite3 (built-in, no extra deps).
-    Easy to understand, secure, and maintainable.
+    Concrete MySQL Database Executor Node.
+    Loads only mysql-connector-python (or appropriate lib).
     """
 
-    db_type: str = "sqlite"
-    name: str = "sqlite_query_executor"
-    description: str = "Executes SQL queries on SQLite databases. Supports parameterized queries and Jinja templating."
+    db_type: str = "mysql"
+    name: str = "generic_mysql_query_executor"
+    description: str = "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating."
 
-    # Helper to quote identifiers for SQLite
+    # Helper to quote identifiers for MySQL
     def _quote_identifier(self, identifier: str) -> str:
         """Quotes an identifier to prevent SQL injection for table/column names."""
-        # Basic quoting for SQLite. For more complex cases, a whitelist is safer.
-        return f'"{identifier.replace('"', '""')}"'
+        # Basic quoting for MySQL. For more complex cases, a whitelist is safer.
+        return f'`{identifier.replace('`', '``')}`'
     
     @staticmethod
     async def get_connection(self, connection_config: Dict[str, Any]):
@@ -33,17 +33,21 @@ class SQLiteDBExecutor(DBExecutor):
         Pooling not needed for SQLite (file-based), but configurable timeout.
         """
         # Corrected: sqlite3.connect expects a file path, not a URI
-        database_path = connection_config.get("path", "./database.db")
-        timeout = connection_config.get("timeout", 5.0)
-        conn = sqlite3.connect(database_path, timeout=timeout)
-        conn.row_factory = sqlite3.Row  # Return dict-like rows
-
-        self.logger.info("sqlite_connection_acquired", database=database_path)
-        return conn
+        dataBase = mysql.connector.connect(
+        host = connection_config.get("host", "localhost"),                # Localhost for local connection
+        user = connection_config.get("user", "user"),
+        passwd = connection_config.get("password", "password"),
+        database = connection_config.get("database", "database"),
+        port = connection_config.get("port", 3306),
+        
+)
+        self.logger.info("mysql_connection_acquired", database=dataBase)
+        return dataBase
 
     async def execute_query(self, connection, query: str, query_type:str, params: Optional[Dict] = None) -> Any:
         """ # Removed query_type from here, as it is not used.
         Execute query with proper parameterization (prevents SQL injection).
+        Supports SELECT (fetchall) and other statements (rowcount).
         """
         try:
             cursor = connection.cursor()
@@ -56,20 +60,20 @@ class SQLiteDBExecutor(DBExecutor):
             # Handle SELECT vs other queries
             if query_type.strip().upper()=="SELECT":
                 rows = cursor.fetchall()
-                result = [dict(row) for row in rows] # Convert sqlite3.Row to dict
+                result = [dict(row) for row in rows] 
             else:
                 connection.commit()
                 result = {"rowcount": cursor.rowcount, "lastrowid": cursor.lastrowid}
 
-            connection.close()  # Clean up for SQLite
-
-            self.logger.info("sqlite_query_executed", query_type="select" if "SELECT" in query.upper() else "other")
+            self.logger.info("mysql_query_executed", query_type="select" if "SELECT" in query.upper() else "other")
+            connection.commit()
+            cursor.close()
             return result
 
-        except sqlite3.Error as e:
+        except mysql.connector.Error as e:
             if connection:
                 connection.close()
-            raise RuntimeError(f"SQLite execution error: {e}") from e
+            raise RuntimeError(f"MySQL execution error: {e}") from e
     
     async def _generate_sql_query(self, field_names: List[str], field_values: List[Any], table_name: str, query_type: str, condition: Optional[str] = None) -> tuple[str, List[Any]]:
         """
