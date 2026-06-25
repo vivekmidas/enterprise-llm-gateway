@@ -5,4 +5,4 @@ __pycache__
 
 # ignore all files under directory qdrant_storage
 
-**/qdrant_storage/**
+*/qdrant_storage/*
