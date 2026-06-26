@@ -12,27 +12,45 @@ from app.workflows.store import (
     update_workflow_node_properties,
     toggle_workflow_in_store,
 )
+from sqlalchemy import select
 
 from app.workflows.service import save_workflow, delete_workflow, get_workflow
 from app.workflows.class_models import WorkflowDefinition
+from app.api.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 logger = structlog.get_logger(__name__)
 
+def _mask_sensitive_properties(properties: dict) -> dict:
+    masked = {}
+    for k, v in properties.items():
+        normalized_key = k.lower()
+        if any(s in normalized_key for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+            masked[k] = "••••••••" if v else ""
+        else:
+            masked[k] = v
+    return masked
+
 @router.get("", response_model=List[WorkflowDefinition])
-async def get_workflows():
-    logger.info("get_workflows_request")
-    workflows = await list_workflows_from_store()
+async def get_workflows(current_user: User = Depends(get_current_user)):
+    logger.info("get_workflows_request", customer_id=current_user.customer_id)
+    workflows = await list_workflows_from_store(customer_id=current_user.customer_id)
     logger.info("get_workflows_response", count=len(workflows))
     return workflows
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)
-async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
-    logger.info("get_workflow_request", workflow_id=workflow_id, version=version)
+async def get_workflow_by_id(
+    workflow_id: str,
+    version: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    logger.info("get_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
     try:
         workflow = await get_workflow(workflow_id, version)
+        if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+            raise HTTPException(status_code=403, detail="Access denied to this workflow")
         logger.info("get_workflow_response_success", workflow_id=workflow_id)
         return workflow
     except Exception as e:
@@ -41,7 +59,11 @@ async def get_workflow_by_id(workflow_id: str, version: Optional[str] = None):
 
 
 @router.get("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
-async def get_node_properties(workflow_id: str, agent_node_id: str):
+async def get_node_properties(
+    workflow_id: str,
+    agent_node_id: str,
+    current_user: User = Depends(get_current_user)
+):
     logger.info("get_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
     try:
         from app.core.database import AsyncSessionLocal
@@ -52,6 +74,11 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
             if not workflow_node:
                 raise HTTPException(status_code=404, detail="Workflow node not found")
+            
+            # Verify authorization
+            workflow = await get_workflow(workflow_id)
+            if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Access denied to this workflow")
             
             user_properties = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
             agent_name = str(workflow_node.agent_name) if workflow_node.agent_name else ""
@@ -67,8 +94,28 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
                 input_contract = db_node.input_contract or {}
                 output_contract = db_node.output_contract or {}
 
+            # Merge customer overrides first (if not already done during hydration)
+            from app.models.db_models import CustomerNodeDB
+            result = await session.execute(
+                select(CustomerNodeDB).where(
+                    CustomerNodeDB.customer_id == current_user.customer_id,
+                    CustomerNodeDB.node_name == agent_name
+                )
+            )
+            cust_node = result.scalar_one_or_none()
+            if cust_node and cust_node.properties:
+                # system properties default overrides
+                system_properties.update(cust_node.properties)
+                system_level_properties.update(cust_node.properties)
+
             # user properties override system properties
             merged_properties = {**system_properties, **user_properties}
+
+            if current_user.role not in ["system_admin", "admin"]:
+                merged_properties = _mask_sensitive_properties(merged_properties)
+                user_properties = _mask_sensitive_properties(user_properties)
+                system_properties = _mask_sensitive_properties(system_properties)
+                system_level_properties = _mask_sensitive_properties(system_level_properties)
 
             logger.info("get_workflow_properties_response_success", workflow_id=workflow_id)
             return {
@@ -85,14 +132,52 @@ async def get_node_properties(workflow_id: str, agent_node_id: str):
 
 
 @router.put("/{workflow_id}/nodes/{agent_node_id}/properties", response_model=dict)
-async def update_node_properties(workflow_id: str, agent_node_id: str, properties: dict):
+async def update_node_properties(
+    workflow_id: str,
+    agent_node_id: str,
+    properties: dict,
+    current_user: User = Depends(get_current_user)
+):
     logger.info("update_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
+    
+    # Verify authorization
+    workflow = await get_workflow(workflow_id)
+    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this workflow")
+        
+    # Prevent standard users from modifying admin-configured keys
+    if current_user.role not in ["system_admin", "admin"]:
+        from app.core.database import AsyncSessionLocal
+        from app.workflows.store import _get_workflow_node, _load_workflow_node_properties
+        from app.models.db_models import CustomerNodeDB
+        async with AsyncSessionLocal() as session:
+            workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
+            if workflow_node:
+                agent_name = workflow_node.agent_name
+                result = await session.execute(
+                    select(CustomerNodeDB).where(
+                        CustomerNodeDB.customer_id == current_user.customer_id,
+                        CustomerNodeDB.node_name == agent_name
+                    )
+                )
+                cust_node = result.scalar_one_or_none()
+                if cust_node and cust_node.properties:
+                    existing_props = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+                    for k in cust_node.properties.keys():
+                        if k in existing_props:
+                            properties[k] = existing_props[k]
+                        else:
+                            properties.pop(k, None)
+
     return await update_workflow_node_properties(workflow_id, agent_node_id, properties)
 
 
 @router.patch("/{workflow_id}/toggle", response_model=dict)
-async def toggle_workflow_status(workflow_id: str):
+async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(get_current_user)):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
+    workflow = await get_workflow(workflow_id)
+    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this workflow")
     try:
         return await toggle_workflow_in_store(workflow_id)
     except Exception as e:
@@ -100,28 +185,30 @@ async def toggle_workflow_status(workflow_id: str):
 
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_workflow(request: WorkflowSaveRequest):
-    user_id = request.user_id
-    logger.info("create_workflow_request", workflow_id=request.id, name=request.name, user_id=user_id)
+async def create_workflow(request: WorkflowSaveRequest, current_user: User = Depends(get_current_user)):
+    # Override user_id and customer_id with the authenticated user info
+    request.user_id = current_user.id
+    request.customer_id = current_user.customer_id
+    
+    logger.info("create_workflow_request", workflow_id=request.id, name=request.name, user_id=request.user_id, customer_id=request.customer_id)
     
     request_data = request.model_dump()
     
     # Fix 1: Clean up input_contract and output_contract from nodes before saving
-    # These are part of the node definition, not the workflow instance configuration.
     if "nodes_structure" in request_data and isinstance(request_data["nodes_structure"], list):
         for node in request_data["nodes_structure"]:
             if "data" in node and isinstance(node["data"], dict):
                 node["data"].pop("input_contract", None)
                 node["data"].pop("output_contract", None)
 
-    # Create definition; user_id is automatically picked up from request_data
+    # Create definition
     workflow = WorkflowDefinition(
         **request_data,
         version="1"
     )
 
     try:
-        saved_workflow = await save_workflow(workflow)
+        saved_workflow = await save_workflow(workflow, customer_id=current_user.customer_id)
         logger.info("create_workflow_success", workflow_id=request.id)
         return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
     except Exception as e:
@@ -130,8 +217,8 @@ async def create_workflow(request: WorkflowSaveRequest):
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(workflow_id: str, user: User, version: Optional[str] = None):
-    logger.info("remove_workflow_request", workflow_id=workflow_id, version=version)
+async def remove_workflow(workflow_id: str, version: Optional[str] = None, current_user: User = Depends(get_current_user)):
+    logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
     
     # 1. Fetch workflow to verify existence and check ownership
     try:
@@ -139,12 +226,15 @@ async def remove_workflow(workflow_id: str, user: User, version: Optional[str] =
     except Exception:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
+    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this workflow")
+
     # 2. Authorization: Only the creator (user_id) or an admin can delete
-    is_owner = workflow.user_id == user.id
-    is_admin = user.role == "admin"
+    is_owner = workflow.user_id == current_user.id
+    is_admin = current_user.role in ["system_admin", "admin"]
 
     if not (is_owner or is_admin):
-        logger.warning("delete_unauthorized", workflow_id=workflow_id, user_id=user.id)
+        logger.warning("delete_unauthorized", workflow_id=workflow_id, user_id=current_user.id)
         raise HTTPException(status_code=403, detail="Permission denied. Only the owner or an administrator can delete this workflow.")
 
     success = await delete_workflow(workflow_id, version)

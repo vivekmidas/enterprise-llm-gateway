@@ -237,6 +237,7 @@ async def propagate_node_defaults_to_workflows(node_name: str, defaults: dict) -
 async def _hydrate_workflow_definition(
     session,
     definition: WorkflowDefinition,
+    customer_id: Optional[int] = None,
 ) -> WorkflowDefinition:
     hydrated = definition.model_copy(deep=True)
     hydrated_nodes = []
@@ -252,12 +253,32 @@ async def _hydrate_workflow_definition(
         user_properties = dict(defaults)
         system_properties = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
 
+        # Merge customer admin overrides if customer_id is provided
+        if customer_id and agent_name:
+            from app.models.db_models import CustomerNodeDB
+            result = await session.execute(
+                select(CustomerNodeDB).where(
+                    CustomerNodeDB.customer_id == customer_id,
+                    CustomerNodeDB.node_name == agent_name
+                )
+            )
+            cust_node = result.scalar_one_or_none()
+            if cust_node and cust_node.properties:
+                user_properties.update(cust_node.properties)
+                system_properties.update(cust_node.properties)
+
         # Load instance-specific overrides for user properties from the store
         instance_overrides = await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))
+        
+        # Prevent standard users from overriding admin properties
+        if customer_id and agent_name:
+            if 'cust_node' in locals() and cust_node and cust_node.properties:
+                for k in cust_node.properties.keys():
+                    instance_overrides.pop(k, None)
+
         user_properties.update(instance_overrides)
 
         if catalog_node:
-           
             data["input_contract"] = catalog_node.input_contract or {}
             data["output_contract"] = catalog_node.output_contract or {}
         data["user_properties"] = user_properties
@@ -336,7 +357,11 @@ async def toggle_workflow_in_store(workflow_id: str) -> dict:
             await workflow_cache.invalidate_agent(workflow_id)
             return {"id": workflow_id, "is_enabled": db_workflow.is_enabled}
 
-async def save_workflow_to_store(definition: WorkflowDefinition, user_id: str = None) -> dict:
+async def save_workflow_to_store(
+    definition: WorkflowDefinition,
+    user_id: str = None,
+    customer_id: Optional[int] = None
+) -> dict:
     """
     Save workflow definition to database + invalidate Redis cache.
     """
@@ -379,6 +404,9 @@ async def save_workflow_to_store(definition: WorkflowDefinition, user_id: str = 
                     target_user_id =  sanitized_definition.user_id
                     if target_user_id:
                         db_workflow.user_id = target_user_id
+                        
+                    if customer_id:
+                        db_workflow.customer_id = customer_id
                         
                     db_workflow.updated_at = datetime.utcnow().isoformat()
                     
@@ -451,7 +479,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
                     raise FileNotFoundError
                 
                 definition = _build_workflow_definition_from_db(db_workflow)
-                return await _hydrate_workflow_definition(session, definition)
+                return await _hydrate_workflow_definition(session, definition, customer_id=db_workflow.customer_id)
         except FileNotFoundError:
             logger.warning("agent_not_found", agent_id=agent_id, version=version)
             raise HTTPException(
@@ -466,17 +494,19 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None)
             )
 
 
-async def list_workflows_from_store() -> list: 
+async def list_workflows_from_store(customer_id: Optional[int] = None) -> list: 
     """List all available workflows."""
     with tracer.start_as_current_span("list_workflows_from_store"):
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB)
+                if customer_id:
+                    stmt = stmt.where(WorkflowDB.customer_id == customer_id)
                 result = await session.execute(stmt)
                 workflows = []
                 for workflow in result.scalars().all():
                     definition = _build_workflow_definition_from_db(workflow)
-                    workflows.append(await _hydrate_workflow_definition(session, definition))
+                    workflows.append(await _hydrate_workflow_definition(session, definition, customer_id=workflow.customer_id))
                 return workflows
         except Exception as e:
             logger.error("failed_to_list_agents", error=str(e))

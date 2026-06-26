@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, cast, or_, select
 import structlog
+import json
+from datetime import datetime
 
 from app.core.database import get_db
-from app.models.db_models import CategoryDB, NodeDB
+from app.models.db_models import CategoryDB, NodeDB, CustomerNodeDB
 from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
+from app.api.auth.dependencies import get_current_user, get_current_admin, get_current_system_admin
+from app.core.types.users import User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/nodes", tags=["nodes"])
@@ -45,15 +49,155 @@ async def _fetch_node(db: AsyncSession, statement):
     return dict(row) if row else None
 
 
+def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive: bool = False) -> dict:
+    def merge_list(properties_val, overrides_dict):
+        if not properties_val:
+            return []
+        if isinstance(properties_val, str):
+            try:
+                properties_val = json.loads(properties_val)
+            except Exception:
+                return []
+        if not isinstance(properties_val, list):
+            return properties_val
+            
+        merged = []
+        for item in properties_val:
+            entry = item
+            if isinstance(item, str):
+                try:
+                    entry = json.loads(item)
+                except Exception:
+                    continue
+            if isinstance(entry, dict):
+                key = entry.get("key")
+                if key and key in overrides_dict:
+                    val = overrides_dict[key]
+                    if mask_sensitive and any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+                        entry["default"] = "••••••••" if val else ""
+                        entry["value"] = "••••••••" if val else ""
+                    else:
+                        entry["default"] = val
+                        entry["value"] = val
+                elif mask_sensitive and key:
+                    if any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+                        if entry.get("default"):
+                            entry["default"] = "••••••••"
+                        if entry.get("value"):
+                            entry["value"] = "••••••••"
+                merged.append(entry)
+        return merged
+
+    node = dict(node)
+    user_props = merge_list(node.get("user_properties"), overrides)
+    system_props = merge_list(node.get("system_properties"), overrides)
+    node["user_properties"] = user_props
+    node["system_properties"] = system_props
+    return node
+
+
+@router.get("/customer/config")
+async def get_customer_node_configs(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Retrieves all custom configurations and status of nodes for the active customer."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == current_user.customer_id)
+    result = await db.execute(stmt)
+    configs = result.scalars().all()
+    return {"configs": [
+        {
+            "node_name": c.node_name,
+            "properties": c.properties,
+            "is_enabled": c.is_enabled,
+            "updated_at": c.updated_at
+        } for c in configs
+    ]}
+
+
+@router.put("/customer/config/{node_name}")
+async def configure_customer_node(
+    node_name: str,
+    config_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Saves node properties override and enabled status for the customer tenant."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+        
+    stmt = select(CustomerNodeDB).where(
+        CustomerNodeDB.customer_id == current_user.customer_id,
+        CustomerNodeDB.node_name == node_name
+    )
+    result = await db.execute(stmt)
+    customer_node = result.scalar_one_or_none()
+    
+    if not customer_node:
+        customer_node = CustomerNodeDB(
+            customer_id=current_user.customer_id,
+            node_name=node_name
+        )
+        db.add(customer_node)
+        
+    if "properties" in config_data:
+        customer_node.properties = config_data["properties"]
+    if "is_enabled" in config_data:
+        customer_node.is_enabled = config_data["is_enabled"]
+        
+    customer_node.updated_at = datetime.utcnow().isoformat()
+    await db.commit()
+    await db.refresh(customer_node)
+    
+    return {
+        "node_name": customer_node.node_name,
+        "properties": customer_node.properties,
+        "is_enabled": customer_node.is_enabled
+    }
+
+
 @router.get("")
-async def list_nodes(db: AsyncSession = Depends(get_db)):
-    """Fetches all registered nodes from the database."""
+async def list_nodes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Fetches registered nodes, filtered and merged by customer admin settings."""
+    stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == current_user.customer_id)
+    result = await db.execute(stmt)
+    cust_nodes = {cn.node_name: cn for cn in result.scalars().all()}
+    
     nodes = await _fetch_nodes(db, _nodes_with_categories_query())
-    return {"nodes": nodes}
+    
+    filtered_nodes = []
+    for node in nodes:
+        node_name = node.get("name")
+        cust_node = cust_nodes.get(node_name)
+        
+        if current_user.role in ["system_admin", "admin"]:
+            overrides = cust_node.properties if cust_node and cust_node.properties else {}
+            merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
+            merged["is_enabled"] = cust_node.is_enabled if cust_node else True
+            filtered_nodes.append(merged)
+        else:
+            if cust_node and cust_node.is_enabled:
+                overrides = cust_node.properties or {}
+                merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
+                merged["is_enabled"] = True
+                filtered_nodes.append(merged)
+                
+    return {"nodes": filtered_nodes}
+
 
 @router.get("/{node_name}")
-async def get_node(node_name: str, db: AsyncSession = Depends(get_db)):
-    """Fetches a specific node definition by name."""
+async def get_node(
+    node_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Fetches a specific node definition by name, merged with customer overrides."""
     node = await _fetch_node(
         db,
         _nodes_with_categories_query().where(
@@ -62,18 +206,56 @@ async def get_node(node_name: str, db: AsyncSession = Depends(get_db)):
     )
     if not node:
         return {"error": "Node not found"}
-    return {"node": node}
+        
+    stmt = select(CustomerNodeDB).where(
+        CustomerNodeDB.customer_id == current_user.customer_id,
+        CustomerNodeDB.node_name == node["name"]
+    )
+    result = await db.execute(stmt)
+    cust_node = result.scalar_one_or_none()
+    
+    if current_user.role not in ["system_admin", "admin"]:
+        if not cust_node or not cust_node.is_enabled:
+            return {"error": "Node not found or not enabled by admin"}
+            
+    overrides = cust_node.properties if cust_node and cust_node.properties else {}
+    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
+    merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
+    return {"node": merged_node}
 
-@router.get("/{id}")
-async def get_node_by_id(id: str, db: AsyncSession = Depends(get_db)):
-    """Fetches a specific node definition by ID."""
+
+@router.get("/id/{id}")
+async def get_node_by_id(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Fetches a specific node definition by ID, merged with customer overrides."""
     node = await _fetch_node(
         db,
         _nodes_with_categories_query().where(cast(NodeDB.id, String) == id),
     )
     if not node:
         return {"error": "Node not found"}
-    return {"node": node}
+        
+    stmt = select(CustomerNodeDB).where(
+        CustomerNodeDB.customer_id == current_user.customer_id,
+        CustomerNodeDB.node_name == node["name"]
+    )
+    result = await db.execute(stmt)
+    cust_node = result.scalar_one_or_none()
+    
+    if current_user.role not in ["system_admin", "admin"]:
+        if not cust_node or not cust_node.is_enabled:
+            return {"error": "Node not found or not enabled by admin"}
+            
+    overrides = cust_node.properties if cust_node and cust_node.properties else {}
+    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
+    merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
+    return {"node": merged_node}
+
 
 async def _resolve_category_id(category_val: str, db: AsyncSession) -> str:
     if not category_val:
@@ -96,8 +278,13 @@ async def _resolve_category_id(category_val: str, db: AsyncSession) -> str:
 
 
 @router.put("/{node_name}")
-async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depends(get_db)):
-    """Updates a node definition in the registry (catalog)."""
+async def update_node(
+    node_name: str,
+    node_data: dict,
+    current_user: User = Depends(get_current_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Updates a global node definition in the registry catalog (Super-Admin only)."""
     result = await db.execute(select(NodeDB).where(NodeDB.name == node_name))
     node = result.scalar_one_or_none()
     if not node:
@@ -108,7 +295,6 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
 
     defaults = _defaults_from_payload(node_data)
 
-    # Update node fields based on incoming data
     for key, value in node_data.items():
         if hasattr(node, key):
             setattr(node, key, value)
@@ -120,9 +306,14 @@ async def update_node(node_name: str, node_data: dict, db: AsyncSession = Depend
     logger.info("node_updated", node_name=node_name)
     return {"node": node}
 
+
 @router.post("")
-async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
-    """Creates a new node definition in the registry (catalog)."""
+async def create_node(
+    node_data: dict,
+    current_user: User = Depends(get_current_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Creates a new global node definition in the registry catalog (Super-Admin only)."""
     if "category" in node_data and node_data["category"]:
         node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
 
@@ -133,11 +324,36 @@ async def create_node(node_data: dict, db: AsyncSession = Depends(get_db)):
     logger.info("node_created", node_name=new_node.name)
     return {"node": new_node}
 
+
 @router.get("/categories/{category_id}")
-async def get_nodes_by_category(category_id: str, db: AsyncSession = Depends(get_db)):
-    """Fetches all nodes belonging to a specific category."""
+async def get_nodes_by_category(
+    category_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Fetches all nodes belonging to a specific category, filtered by tenant configuration."""
+    stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == current_user.customer_id)
+    result = await db.execute(stmt)
+    cust_nodes = {cn.node_name: cn for cn in result.scalars().all()}
+
     nodes = await _fetch_nodes(
         db,
         _nodes_with_categories_query().where(cast(CategoryDB.id, String) == category_id),
     )
-    return {"nodes": nodes}
+
+    filtered_nodes = []
+    for node in nodes:
+        node_name = node.get("name")
+        cust_node = cust_nodes.get(node_name)
+
+        if current_user.role in ["system_admin", "admin"]:
+            overrides = cust_node.properties if cust_node and cust_node.properties else {}
+            filtered_nodes.append(_merge_customer_config_into_node(node, overrides, mask_sensitive=False))
+        else:
+            if cust_node and cust_node.is_enabled:
+                overrides = cust_node.properties or {}
+                filtered_nodes.append(_merge_customer_config_into_node(node, overrides, mask_sensitive=True))
+
+
+    return {"nodes": filtered_nodes}
+

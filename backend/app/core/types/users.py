@@ -4,6 +4,9 @@ from typing import Optional
 
 class User (BaseModel):
     id: str
-    role:str
-    email:str
+    role: str
+    email: str
+    customer_id: Optional[int] = None
+    domain: Optional[str] = None
+
     

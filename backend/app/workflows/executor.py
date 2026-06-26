@@ -352,6 +352,26 @@ class WorkflowExecutor:
                 
                 try:
                     logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
+                    
+                    customer_id = None
+                    if hasattr(self.agent_config, "customer_id"):
+                        customer_id = self.agent_config.customer_id
+                    elif isinstance(self.agent_config, dict):
+                        customer_id = self.agent_config.get("customer_id")
+                        
+                    if customer_id is not None:
+                        from app.core.database import AsyncSessionLocal
+                        from app.models.db_models import CustomerNodeDB
+                        from sqlalchemy import select
+                        async with AsyncSessionLocal() as session:
+                            stmt = select(CustomerNodeDB).where(
+                                CustomerNodeDB.customer_id == customer_id,
+                                CustomerNodeDB.node_name == agent_name
+                            )
+                            res = await session.execute(stmt)
+                            cust_node = res.scalar_one_or_none()
+                            if not cust_node or not cust_node.is_enabled:
+                                raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
 
                     agent_input = NodeInput(
                         trace_id=state.trace_id,

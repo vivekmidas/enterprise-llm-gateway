@@ -20,12 +20,12 @@ from app.workflows.class_models import WorkflowDefinition
 
 logger = structlog.get_logger(__name__)
 
-async def save_workflow(definition: WorkflowDefinition ) -> dict:
+async def save_workflow(definition: WorkflowDefinition, customer_id: Optional[int] = None) -> dict:
     """Public service method"""
-    logger.info("workflow_save_initiated", workflow_id=definition.id, user_id=definition.user_id)
+    logger.info("workflow_save_initiated", workflow_id=definition.id, user_id=definition.user_id, customer_id=customer_id)
     definition.updated_at = datetime.utcnow()  # Update the timestamp
 
-    result = await save_workflow_to_store(definition)
+    result = await save_workflow_to_store(definition, customer_id=customer_id)
     
     # Immediately activate triggers for the saved workflow so it goes live
     # if definition.is_enabled:

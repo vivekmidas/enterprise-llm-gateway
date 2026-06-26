@@ -3,14 +3,12 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app  # Assuming the FastAPI app is initialized in app/main.py
 
 @pytest.mark.asyncio
-async def test_get_nodes():
+async def test_get_nodes(client: AsyncClient, system_admin_headers: dict):
     """
     Test the /nodes endpoint.
     Expected to return a list of available agent definitions for the frontend.
     """
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        response = await ac.get("/nodes")
+    response = await client.get("/nodes", headers=system_admin_headers)
     
     assert response.status_code == 200
     data = response.json()
@@ -23,7 +21,7 @@ async def test_get_nodes():
         assert "group" in agent
 
 @pytest.mark.asyncio
-async def test_workflow_lifecycle():
+async def test_workflow_lifecycle(client: AsyncClient, system_admin_headers: dict):
     """
     Test the full lifecycle of a workflow: Create -> Get -> List -> Delete.
     """
@@ -47,43 +45,40 @@ async def test_workflow_lifecycle():
         "category": "testing"
     }
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # 1. Create (POST /workflows)
-        create_res = await ac.post("/workflows", json=payload)
-        assert create_res.status_code == 201
-        assert create_res.json()["id"] == workflow_id
+    # 1. Create (POST /workflows)
+    create_res = await client.post("/workflows", json=payload, headers=system_admin_headers)
+    assert create_res.status_code == 201
+    assert create_res.json()["id"] == workflow_id
 
-        # 2. Get by ID (GET /workflows/{id})
-        get_res = await ac.get(f"/workflows/{workflow_id}")
-        assert get_res.status_code == 200
-        data = get_res.json()
-        assert data["name"] == "Integration Test Workflow"
-        assert len(data["nodes"]) == 1
+    # 2. Get by ID (GET /workflows/{id})
+    get_res = await client.get(f"/workflows/{workflow_id}", headers=system_admin_headers)
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["name"] == "Integration Test Workflow"
+    assert len(data["nodes"]) == 1
 
-        # 3. List all (GET /workflows)
-        list_res = await ac.get("/workflows")
-        assert list_res.status_code == 200
-        workflows = list_res.json()
-        assert any(w["id"] == workflow_id for w in workflows)
+    # 3. List all (GET /workflows)
+    list_res = await client.get("/workflows", headers=system_admin_headers)
+    assert list_res.status_code == 200
+    workflows = list_res.json()
+    assert any(w["id"] == workflow_id for w in workflows)
 
-        # 4. Delete (DELETE /workflows/{id})
-        delete_res = await ac.request(
-            "DELETE",
-            f"/workflows/{workflow_id}",
-            json={"id": "test-user", "role": "admin", "email": "test-user@example.com"}
-        )
-        assert delete_res.status_code == 204
+    # 4. Delete (DELETE /workflows/{id})
+    delete_res = await client.request(
+        "DELETE",
+        f"/workflows/{workflow_id}",
+        json={"id": "test-user", "role": "admin", "email": "test-user@example.com"},
+        headers=system_admin_headers
+    )
+    assert delete_res.status_code == 204
 
-        # 5. Verify Deletion
-        verify_res = await ac.get(f"/workflows/{workflow_id}")
-        assert verify_res.status_code == 404
+    # 5. Verify Deletion
+    verify_res = await client.get(f"/workflows/{workflow_id}", headers=system_admin_headers)
+    assert verify_res.status_code == 404
 
 @pytest.mark.asyncio
-async def test_get_nonexistent_workflow():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        response = await ac.get("/workflows/non-existent-id")
+async def test_get_nonexistent_workflow(client: AsyncClient, system_admin_headers: dict):
+    response = await client.get("/workflows/non-existent-id", headers=system_admin_headers)
     assert response.status_code == 404
 
 @pytest.mark.asyncio

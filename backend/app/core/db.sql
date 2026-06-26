@@ -52,11 +52,13 @@ CREATE TABLE IF NOT EXISTS oauth_providers (
 	PRIMARY KEY (id)
 );
 INSERT INTO oauth_providers VALUES(0,'google','Google OAuth Provider','Validates and get auth details from Google','http://localhost:3000/api/oauth/google/connect',NULL,NULL,'http://localhost:3000/api/oauth/google/callback',NULL);
-CREATE TABLE IF NOT EXISTS companies (
+CREATE TABLE IF NOT EXISTS customers (
 	id INTEGER NOT NULL, 
 	name VARCHAR, 
 	domain VARCHAR, 
 	status VARCHAR, 
+	icon VARCHAR,
+	color_schema VARCHAR,
 	dateadded VARCHAR, 
 	dateupdated VARCHAR, 
 	PRIMARY KEY (id)
@@ -67,14 +69,14 @@ CREATE TABLE IF NOT EXISTS "users" (
 	email_id VARCHAR, 
 	password VARCHAR NOT NULL, 
 	name VARCHAR, 
-	company_id VARCHAR, 
+	customer_id VARCHAR, 
 	status VARCHAR, 
 	role VARCHAR, 
 	created_at VARCHAR, 
 	updated_at VARCHAR, 
 	PRIMARY KEY (id)
 );
-INSERT INTO users VALUES(1,'admin@gateway.com','admin@gateway.com','$argon2id$v=19$m=1024,t=2,p=8$/0cgTA2yr5XSuEdFKV0PXA$LtUPEWod7A/RZ6C2Mjs4mPzYvHg53R/huF/R+4vT2xI','test test',NULL,'active','admin','2026-06-15T06:54:24.944840','2026-06-15T06:54:24.944863');
+INSERT INTO users VALUES(1,'admin@gateway.com','admin@gateway.com','$argon2id$v=19$m=1024,t=2,p=8$/0cgTA2yr5XSuEdFKV0PXA$LtUPEWod7A/RZ6C2Mjs4mPzYvHg53R/huF/R+4vT2xI','test test',NULL,'active','system_admin','2026-06-15T06:54:24.944840','2026-06-15T06:54:24.944863');
 INSERT INTO users VALUES(2,'vivek@midasminds.in','vivek@midasminds.in','$argon2id$v=19$m=1024,t=2,p=8$/0cgTA2yr5XSuEdFKV0PXA$LtUPEWod7A/RZ6C2Mjs4mPzYvHg53R/huF/R+4vT2xI','Vivek Jain',NULL,'active','user','2026-06-15T07:02:43.832758','2026-06-15T07:02:43.832776');
 INSERT INTO users VALUES(3,'test@test.com','test@test.com','$argon2id$v=19$m=1024,t=2,p=8$Dwx8YxEUwfFTRjZ1G9PAwQ$BpcCREYOMFO5IDAAhDXhvwYBH81YniJdxDDuaZXXFg8','test test',NULL,'active','user','2026-06-15T11:54:01.515901','2026-06-15T11:54:01.516496');
 INSERT INTO users VALUES(4,'test@example.com','test@example.com','$argon2id$v=19$m=1024,t=2,p=8$JaHhi49W9hp61Yn3sln5qg$VPC5u0pFyJ1yF8YsCFeah2vcuiqco1y4jPAoLEvsC4g','Test User',NULL,'active','user','2026-06-22T07:16:57.721383','2026-06-22T07:16:57.721407');
@@ -89,7 +91,7 @@ CREATE TABLE IF NOT EXISTS "workflows" (
 	definition JSON, 
 	updated_at VARCHAR, 
 	is_enabled Boolean,
-	company_id varchar,
+	customer_id varchar,
 	user_id varchar,
 	PRIMARY KEY (id)
 );
@@ -143,6 +145,16 @@ CREATE TABLE IF NOT EXISTS "workflow_node_properties" (
 	properties JSON, 
 	PRIMARY KEY (id)
 );
+CREATE TABLE IF NOT EXISTS "customer_nodes" (
+	id INTEGER NOT NULL, 
+	customer_id INTEGER NOT NULL, 
+	node_name VARCHAR NOT NULL, 
+	properties JSON, 
+	is_enabled BOOLEAN DEFAULT 1, 
+	updated_at VARCHAR, 
+	PRIMARY KEY (id),
+	FOREIGN KEY(customer_id) REFERENCES customers (id)
+);
 CREATE INDEX ix_categories_id ON categories (id);
 CREATE UNIQUE INDEX ix_categories_group ON categories ("group");
 CREATE INDEX ix_workflow_nodes_id ON workflow_nodes (id);
@@ -150,14 +162,17 @@ CREATE UNIQUE INDEX ix_credentials_name ON credentials (name);
 CREATE INDEX ix_credentials_id ON credentials (id);
 CREATE UNIQUE INDEX ix_oauth_providers_name ON oauth_providers (name);
 CREATE INDEX ix_oauth_providers_id ON oauth_providers (id);
-CREATE INDEX ix_companies_id ON companies (id);
-CREATE UNIQUE INDEX ix_companies_domain ON companies (domain);
-CREATE UNIQUE INDEX ix_companies_name ON companies (name);
+CREATE INDEX ix_customers_id ON customers (id);
+CREATE UNIQUE INDEX ix_customers_domain ON customers (domain);
+CREATE UNIQUE INDEX ix_customers_name ON customers (name);
 CREATE INDEX ix_users_id ON users (id);
 CREATE UNIQUE INDEX ix_users_username ON users (username);
 CREATE INDEX ix_workflows_id ON workflows (id);
 CREATE INDEX ix_nodes_id ON nodes (id);
 CREATE UNIQUE INDEX ix_nodes_name ON nodes (name);
+CREATE INDEX ix_customer_nodes_id ON customer_nodes (id);
+CREATE INDEX ix_customer_nodes_customer_id ON customer_nodes (customer_id);
+CREATE INDEX ix_customer_nodes_node_name ON customer_nodes (node_name);
 CREATE INDEX ix_workflow_node_properties_agent_node_id ON workflow_node_properties (agent_node_id);
 CREATE INDEX ix_workflow_node_properties_id ON workflow_node_properties (id);
 CREATE INDEX ix_workflow_node_properties_workflow_id ON workflow_node_properties (workflow_id);

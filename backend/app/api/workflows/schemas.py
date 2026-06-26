@@ -13,6 +13,7 @@ class WorkflowSaveRequest(BaseModel):
     properties: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     category: Optional[str] = "default"
+    customer_id: int = None
 
 
 class WorkflowResponse(WorkflowSaveRequest):

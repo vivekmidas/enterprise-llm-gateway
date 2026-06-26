@@ -4,12 +4,14 @@ from app.core.database import Base
 from datetime import datetime
 
 
-class CompanyDB(Base):
-    __tablename__ = "companies"
+class CustomerDB(Base):
+    __tablename__ = "customers"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     domain = Column(String, unique=True, index=True, nullable=True)  # Useful for auto-assigning users via SSO
     status = Column(String, default="active")  # active, suspended
+    icon = Column(String, nullable=True)
+    color_schema = Column(String, nullable=True)
     dateadded = Column(String, default=lambda: datetime.utcnow().isoformat())
     dateupdated = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
@@ -21,7 +23,7 @@ class UserDB(Base):
     email_id = Column(String, unique=True, index=True)
     password = Column(String, nullable=False)  # Store bcrypt hashed password
     name = Column(String, nullable=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     status = Column(String, default="active")  # active, deactivated, suspended
     role = Column(String, default="user")     # admin, user
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
@@ -56,7 +58,17 @@ class NodeDB(Base):
     input_contract=Column(JSON)
     output_contract=Column(JSON)
 
-    
+
+class CustomerNodeDB(Base):
+    __tablename__ = "customer_nodes"
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    node_name = Column(String, nullable=False, index=True)
+    properties = Column(JSON, nullable=True)
+    is_enabled = Column(Boolean, default=True)
+    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
 class WorkflowNodeDB(Base):
     __tablename__ = "workflow_nodes"
     id = Column(Integer, primary_key=True, index=True)
@@ -80,7 +92,7 @@ class WorkflowDB(Base):
     definition = Column(JSON, nullable=True)
     updated_at = Column(String)
     is_enabled = Column(Boolean, default=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     user_id = Column(String, nullable=True, index=True) # User ID of the creator
     
 

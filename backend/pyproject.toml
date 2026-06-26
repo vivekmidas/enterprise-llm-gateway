@@ -40,8 +40,8 @@ dependencies = [
     "presidio_analyzer",
     "greenlet",
     "httpx",
-    "jinja2"
-
+    "jinja2",
+    "pyjwt"
 ]
 dev = [
   { include-group = "prod" },
@@ -71,3 +71,9 @@ quote-style = "double"
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
