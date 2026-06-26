@@ -4,4 +4,5 @@ __pycache__/
 .venv/
 venv/
 node_modules/
-backend/qdrant_storage/*
+*/qdrant_storage/*
+
