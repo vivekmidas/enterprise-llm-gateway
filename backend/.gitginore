@@ -4,5 +4,6 @@
 __pycache__
 
 # ignore all files under directory qdrant_storage
-
+../frontend
+enterprise_gateway.db
 */qdrant_storage/*

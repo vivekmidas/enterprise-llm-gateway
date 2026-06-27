@@ -208,3 +208,38 @@ If an administrator disables a node (sets `is_enabled = False` in the `customer_
   - New customer onboarding automatically populates all nodes as enabled.
   - Disabling a node hides it from standard users.
   - Executing a workflow with a disabled node halts with an error.
+
+---
+
+## 6. Tenant-wide Node Input/Output Contract Customization & Inheritance
+
+To support advanced customization (e.g. custom schemas, custom fields in a vector database query, or specialized request structures), tenants need to configure customer-specific input and output contracts that override global system defaults.
+
+### A. Inheritance Sequence & Merging Order
+
+When a workflow is built, loaded, or executed, the system resolves its nodes' contract schemas in the following order:
+
+```
+[System Registry Node (NodeDB)]
+            │
+            ▼ (Overridden by)
+[Tenant Custom Node Configuration (CustomerNodeDB)]
+```
+
+1. **System Default Contract**: The system-level base schema stored in the `nodes` catalog (`NodeDB`).
+2. **Tenant-wide Override**: If a tenant admin has configured custom input/output contracts (saved in `CustomerNodeDB`), these contracts override the system defaults for all workflows within that tenant.
+3. **Workflow-Level Hydration**: The workflow storage engine (`backend/app/workflows/store.py`) merges the tenant-level overrides into the workflow definition at load time, ensuring standard users see the correct tenant-wide contracts on the canvas and in properties mapping dialogs.
+
+### B. Access Control & Hybrid Editing Permissions
+
+To prevent schema drift and protect workflow execution integrity, editing capabilities are scoped by user role:
+
+| Action / Capability | System Admin | Tenant Admin | Standard User |
+| :--- | :--- | :--- | :--- |
+| Edit Global Node Registry Contracts | **Yes** | No | No |
+| Edit Tenant-wide Override Contracts | **Yes** (on behalf of tenant) | **Yes** | No |
+| Override core schema structure in workflow | No | No | No |
+| Customize properties & map fields | Yes | Yes | **Yes** (via local `properties` mapper) |
+
+* **Standard User Restrictions**: Standard users are not allowed to change core input or output schemas (contracts) for node instances. Consequently, the `workflow_node_properties` table does NOT contain columns for `input_contract` and `output_contract`. Instead, standard users build workflows adhering strictly to the tenant-wide contracts. If field mapping is required (e.g., matching a dynamic database output to an input), the mapper saves the mappings inside the local instance `properties` (e.g. under `mapping_template`), leaving the contract schema intact.
+* **Tenant Admin Capabilities**: Tenant Admins can override the default contract schema for any node allocated to their tenant using the administration panel, which saves the custom JSON schemas directly to `CustomerNodeDB.input_contract` and `CustomerNodeDB.output_contract`.

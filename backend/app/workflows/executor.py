@@ -157,6 +157,8 @@ class WorkflowExecutor:
     def __init__(self, agent_config: Dict[str, Any]):
         self.agent_config = agent_config
         self.agent_id = agent_config.get("id")
+        self.customer_id = agent_config.get("customer_id")
+        self.user_id = agent_config.get("user_id")
         self.nodes_raw = agent_config.get("nodes_structure", [])
         self.edges_raw = agent_config.get("edges", [])
         self.edges_list = list(self.edges_raw.values()) if isinstance(self.edges_raw, dict) else list(self.edges_raw or [])
@@ -359,6 +361,7 @@ class WorkflowExecutor:
                     elif isinstance(self.agent_config, dict):
                         customer_id = self.agent_config.get("customer_id")
                         
+                    cust_node = None
                     if customer_id is not None:
                         from app.core.database import AsyncSessionLocal
                         from app.models.db_models import CustomerNodeDB
@@ -373,13 +376,17 @@ class WorkflowExecutor:
                             if not cust_node or not cust_node.is_enabled:
                                 raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
 
+                    input_schema = getattr(agent, "input_contract", {})
+                    if cust_node and cust_node.input_contract is not None:
+                        input_schema = cust_node.input_contract
+
                     agent_input = NodeInput(
                         trace_id=state.trace_id,
                         data=state.masked_content or state.content,
                         config=node_config or {},
                         context=state.context,
                         metadata=state.metadata,
-                        input_schema=getattr(agent, "input_contract", {})
+                        input_schema=input_schema
                     )
 
                     # Call run() to leverage the standardized wrapper (logging, validation, timing)
@@ -487,6 +494,10 @@ class WorkflowExecutor:
                 "error_message": str(e),
                 "final_response": f"Workflow failed: {str(e)}",
                 "trace_id": trace_id,
+                "workflow_id": self.agent_id,
+                "workflow_name": self.agent_config.get("name"),
+                "customer_id": self.customer_id,
+                "user_id": self.user_id,
                 "latency_ms": round((time.time() - start_time) * 1000, 2)
             })
             await trace_store.save_trace(trace_id, result_dict)
@@ -503,9 +514,11 @@ class WorkflowExecutor:
             result_dict["status"] = "failure"
 
         result_dict["final_response"] = result_dict.get("llm_response") or result_dict.get("content", input_content)
-        # result_dict["agents_executed"] = self.agents_executed
         result_dict["trace_id"] = trace_id
-        #result_dict["agent_id"] = self.agent_id
+        result_dict["workflow_id"] = self.agent_id
+        result_dict["workflow_name"] = self.agent_config.get("name")
+        result_dict["customer_id"] = self.customer_id
+        result_dict["user_id"] = self.user_id
         result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
         result_dict["timestamp"] = time.time()
 

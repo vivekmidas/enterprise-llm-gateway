@@ -232,7 +232,7 @@ class BaseNode(BaseModel, abc.ABC):
         Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
         self.logger.info("Starting validate_input_contract", name= self.name)
-        schema = self.input_contract
+        schema = inp.input_schema if getattr(inp, "input_schema", None) is not None else self.input_contract
         if not schema:
             self.logger.debug("No schema found", name= self.name, schema=schema)
             return None

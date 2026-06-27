@@ -7,6 +7,30 @@ python -m spacy download en_core_web_lg
 uv add presidio-analyzer presidio-anonymizer spacy
 pip install presidio-analyzer presidio-anonymizer spacy
 
+### Redis Setup & Prerequisites
+
+This application relies on **Redis** for compiled workflow caching and multi-tenant trace logging. Ensure Redis is running using one of the methods below:
+
+#### Option A: Docker (Containerized Setup)
+Ensure you add a Redis container (e.g., `redis:7-alpine`) to your services and set the `REDIS_HOST` environment variable to `redis` in the backend service configuration.
+
+#### Option B: macOS (Local Setup via Homebrew)
+1. Install Redis:
+   ```bash
+   brew install redis
+   ```
+2. Start the Redis background service:
+   ```bash
+   brew services start redis
+   ```
+3. Test connectivity:
+   ```bash
+   redis-cli ping
+   # Should return PONG
+   ```
+
+---
+
 mermaid
 
 flowchart TD

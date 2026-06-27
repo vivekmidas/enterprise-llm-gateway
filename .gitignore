@@ -4,5 +4,7 @@ __pycache__/
 .venv/
 venv/
 node_modules/
+../frontend
+enterprise_gateway.db
 */qdrant_storage/*
 

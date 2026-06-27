@@ -137,6 +137,7 @@ def _build_workflow_definition_from_db(db_workflow: WorkflowDB) -> WorkflowDefin
         "category": db_workflow.category,
         "is_enabled": db_workflow.is_enabled,
         "user_id": db_workflow.user_id,
+        "customer_id": db_workflow.customer_id,
         "updated_at": db_workflow.updated_at,
         "nodes_structure": nodes,
         "edges": edges
@@ -279,8 +280,15 @@ async def _hydrate_workflow_definition(
         user_properties.update(instance_overrides)
 
         if catalog_node:
-            data["input_contract"] = catalog_node.input_contract or {}
-            data["output_contract"] = catalog_node.output_contract or {}
+            input_contract = catalog_node.input_contract or {}
+            output_contract = catalog_node.output_contract or {}
+            if 'cust_node' in locals() and cust_node:
+                if cust_node.input_contract is not None:
+                    input_contract = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    output_contract = cust_node.output_contract
+            data["input_contract"] = input_contract
+            data["output_contract"] = output_contract
         data["user_properties"] = user_properties
         data["system_properties"] = system_properties
 
