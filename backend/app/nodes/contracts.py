@@ -40,6 +40,15 @@ TYPE_ALIASES = {
     "phone_number": "string",
     "creditcard": "string",
     "credit_card": "string",
+    "ip_address": "string",
+    "pdf": "file",
+    "doc": "file",
+    "docx": "file",
+    "image": "file",
+    "png": "file",
+    "jpg": "file",
+    "jpeg": "file",
+    "file": "file",
 }
 
 FORMAT_PATTERNS = {
@@ -306,7 +315,7 @@ def _format_from_type(field_type: Any) -> Optional[str]:
     normalized = str(field_type or "").lower()
     if normalized == "phone_number":
         return "phone"
-    if normalized in {"email", "password", "phone", "credit_card"}:
+    if normalized in {"email", "password", "phone", "credit_card", "ip_address", "pdf", "doc", "docx", "image", "file"}:
         return normalized
     if normalized == "creditcard":
         return "credit_card"
@@ -371,6 +380,10 @@ def _validate_value(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
             json.loads(value)
         except json.JSONDecodeError:
             errors.append(f"{path} expected valid JSON string")
+
+    field_format = schema.get("format")
+    if expected_type == "file" or field_format in {"pdf", "doc", "docx", "image", "file"}:
+        errors.extend(_validate_file_constraints(value, schema, path))
 
     return errors
 
@@ -481,6 +494,8 @@ def _matches_type(value: Any, expected_type: str) -> bool:
         return isinstance(value, bool)
     if expected_type == "null":
         return value is None
+    if expected_type == "file":
+        return isinstance(value, (str, dict))
     return True
 
 
@@ -491,3 +506,59 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"true", "1", "yes", "y"}
     return bool(value)
+
+
+@debug_log
+def _validate_file_constraints(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
+    errors = []
+    field_format = str(schema.get("format") or "file").lower()
+    
+    # Extract extension or mime-type for validation
+    ext = ""
+    mime = ""
+    
+    if isinstance(value, str):
+        # Could be path, url, or base64 data url
+        if value.startswith("data:"):
+            # e.g., data:application/pdf;base64,...
+            match = re.match(r"^data:([^;]+);", value)
+            if match:
+                mime = match.group(1).lower()
+        else:
+            # simple path or url, check extension
+            match = re.search(r"\.([a-zA-Z0-9]+)(?:[?#]|$)", value)
+            if match:
+                ext = match.group(1).lower()
+    elif isinstance(value, dict):
+        mime = str(value.get("mime_type") or value.get("mimeType") or value.get("content_type") or "").lower()
+        file_name = str(value.get("file_name") or value.get("fileName") or value.get("name") or "").lower()
+        if file_name:
+            match = re.search(r"\.([a-zA-Z0-9]+)$", file_name)
+            if match:
+                ext = match.group(1)
+        # fallback to checking file path/url inside the dictionary
+        path_or_url = str(value.get("file_path") or value.get("filePath") or value.get("url") or "").lower()
+        if path_or_url and not ext:
+            match = re.search(r"\.([a-zA-Z0-9]+)(?:[?#]|$)", path_or_url)
+            if match:
+                ext = match.group(1)
+
+    if field_format == "pdf":
+        if ext and ext != "pdf":
+            errors.append(f"{path} must be a PDF file (.pdf)")
+        if mime and mime != "application/pdf":
+            errors.append(f"{path} must be application/pdf")
+            
+    elif field_format in {"doc", "docx"}:
+        if ext and ext not in {"doc", "docx"}:
+            errors.append(f"{path} must be a Word document (.doc, .docx)")
+        if mime and mime not in {"application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}:
+            errors.append(f"{path} must be a Word document mime-type")
+            
+    elif field_format == "image":
+        if ext and ext not in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}:
+            errors.append(f"{path} must be an image file (.png, .jpg, .jpeg, etc.)")
+        if mime and not mime.startswith("image/"):
+            errors.append(f"{path} must be an image mime-type (image/*)")
+            
+    return errors

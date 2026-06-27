@@ -486,3 +486,67 @@ def test_node_properties_resolved_with_generic_data_value():
     assert resolved_config["direct_data"] == "Hello from generic data!"
     assert resolved_config["custom_query"] == "{{query}}"
     assert resolved_config["any_other"] == "{{arbitrary_key}}"
+
+
+def test_ip_address_and_file_contracts():
+    contract = {
+        "type": "object",
+        "properties": {
+            "server_ip": {"type": "string", "format": "ip_address"},
+            "pdf_report": {"type": "file", "format": "pdf"},
+            "word_doc": {"type": "file", "format": "doc"},
+            "user_photo": {"type": "file", "format": "image"},
+            "generic_file": {"type": "file", "format": "file"},
+        },
+        "required": ["server_ip", "pdf_report"],
+    }
+
+    # 1. Valid payload
+    errors = validate_input_contract(
+        contract,
+        make_input(
+            {
+                "server_ip": "192.168.1.1",
+                "pdf_report": "http://localhost/downloads/report.pdf",
+                "word_doc": {
+                    "file_name": "resume.docx",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                },
+                "user_photo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+                "generic_file": "some_random_path.txt"
+            }
+        )
+    )
+    assert errors == []
+
+    # 2. Invalid IP payload
+    errors = validate_input_contract(
+        contract,
+        make_input({"server_ip": "invalid-ip", "pdf_report": "report.pdf"})
+    )
+    assert len(errors) > 0
+    assert any("server_ip" in e for e in errors)
+
+    # 3. Invalid PDF payload (extension mismatch)
+    errors = validate_input_contract(
+        contract,
+        make_input({"server_ip": "10.0.0.1", "pdf_report": "report.docx"})
+    )
+    assert len(errors) > 0
+    assert any("pdf_report" in e for e in errors)
+
+    # 4. Invalid Doc payload (mime-type mismatch)
+    errors = validate_input_contract(
+        contract,
+        make_input({
+            "server_ip": "10.0.0.1",
+            "pdf_report": "report.pdf",
+            "word_doc": {
+                "file_name": "resume.docx",
+                "mime_type": "application/pdf"
+            }
+        })
+    )
+    assert len(errors) > 0
+    assert any("word_doc" in e for e in errors)
+

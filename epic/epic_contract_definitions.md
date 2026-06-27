@@ -1,45 +1,43 @@
-# Epic: Review of Input and Output Contract Definition with Interactive JSON Selector
+# Technical and Visual Design: Input/Output Contract Definition
 
-**Status:** In Progress
-
----
-
-## 1. Description & Goal
-
-In the Enterprise LLM Gateway, nodes process diverse data payloads. To ensure workflow reliability and prevent runtime crashes, every node requires explicit validation of its incoming data. In the current implementation, input and output contracts are read-only JSON blocks that are hard for developers to construct manually.
-
-This Epic introduces:
-1. **Interactive JSON Payload Selector (Frontend):** A visual editor where developers can paste a sample JSON payload (e.g. webhook payloads, LLM outputs, or custom datasets), view it as a hierarchical tree, and toggle checkboxes/types to visually generate the node's input contract.
-2. **Support for Simple & Complex Types (Backend & Frontend):** Full schema validation support for simple types (`email`, `phone`, `ip_address`, `url`, `uuid`, `datetime`) and complex binary documents (`pdf`, `doc`, `docx`, `image`, `file`).
-3. **Strict Validation Pipeline:** Pre-execution schema checks that automatically halt workflow runs if constraints are violated, aligning our execution reliability with industry leaders like **n8n** and **Zapier**.
+This document details the complete technical design, visual UI/UX layout, and runtime execution flow for defining and validating simple and complex types, inspired by **n8n** and **Zapier**.
 
 ---
 
-## 2. User Stories
+## 1. Data Type Representation (n8n & Zapier Alignment)
 
-*   **As a workflow developer,** I want to paste a sample JSON output from a previous node and select which fields are expected in the next step, so that I don't have to manually write JSON schemas.
-*   **As a workflow developer,** I want to define specific rules for input fields, such as expecting a valid email, phone number, IP address, or specific file type (e.g., a PDF document), so that bad data is caught early.
-*   **As a system administrator,** I want the workflow execution engine to validate incoming data payloads and return clear violation messages if the input contract is violated, preventing downstream node failures.
+In modern workflow builders, data payloads contain both simple primitives and complex file objects. We map these to standard formats under the hood while maintaining a user-friendly field-selection interface.
+
+### Simple Types
+
+Simple types map to standard JSON Schema types with specific semantic formats for validation:
+
+- **String formats**: `email`, `phone`, `ip_address`, `url`, `uuid`, `date`, `datetime`.
+- **Numeric primitives**: `integer`, `number` (with min/max boundaries).
+- **Boolean & raw JSON**: `boolean`, `json` (generic parsed object).
+
+### Complex Types (Files & Binary Data)
+
+To handle files (like `pdf`, `doc`, `image`), we introduce a custom type alias `file`.
+A `file` in the gateway can be passed in two ways:
+
+1. **URI/Path String**: A path to local storage, a remote URL, or a `data:image/png;base64,...` data URI.
+2. **Metadata Dictionary**: A structured object containing file info:
+   ```json
+   {
+     "file_path": "path/to/file.pdf",
+     "file_name": "report.pdf",
+     "mime_type": "application/pdf",
+     "size": 10245
+   }
+   ```
+   Both formats are natively resolved and validated against the format specified (e.g. `pdf` checks if the extension is `.pdf` or mime-type is `application/pdf`).
 
 ---
 
-## 3. Key Requirements & Scope
+## 2. Sequence Diagram (Runtime Flow)
 
-### In-Scope
-1. **Visual Schema Generator Modal (Frontend):** Add a modal to the "Data Schema" tab of the node properties panel allowing user-pasted JSON to be parsed, shown in a tree view, and converted to a schema.
-2. **Hierarchical Tree Interaction (Frontend):** Support nesting, collapsible folders/objects, type selectors, and required field switches.
-3. **Complex Binary Type Validation (Backend):** Update backend contract validation to check `file` type objects (matching both strings and metadata dicts) for extensions and mime-types (`pdf`, `doc`/`docx`, `image`).
-4. **Enhanced Data Type Registry:** Register new simple formats (`ip_address`) and complex media formats (`pdf`, `doc`, `image`, `file`) across the schema builder.
-
-### Out-of-Scope (Deferred to Future Roadmap)
-*   **Auto-Correction of Mapped Payloads:** Automatically converting types (e.g. converting a string `"100"` to integer `100` if the contract specifies an integer).
-*   **Visual XML Schema Generator:** Visual builders for SOAP/XML data inputs.
-
----
-
-## 4. Sequence Diagram (Data Flow & Validation)
-
-The sequence diagram below visualizes the schema definition and validation lifecycle:
+The diagram below represents how contracts are defined in the builder and validated during runtime workflow execution:
 
 ```mermaid
 sequenceDiagram
@@ -80,9 +78,111 @@ sequenceDiagram
 
 ---
 
-## 5. Verification Criteria (Definition of Done)
+## 3. Visual UI Design (Wireframe & Layout)
 
-*   **Interactive Modal:** The visual JSON selector modal successfully parses valid JSON, renders collapsible trees, and generates standard contracts.
-*   **Type Coverage:** The schema creator supports simple types (`email`, `phone`, `ip_address`) and complex types (`pdf`, `doc`, `image`, `file`).
-*   **Run-Time Validation:** The backend halts execution and returns a `400` status with clear error messages if input fields violate type constraints or file rules.
-*   **Unit Tests:** Automate test cases verify email format, IP address matches, and valid/invalid file uploads.
+Below is the visual layout design for the interactive **JSON Payload Selector Modal** that will be built using modern, premium aesthetics (dark header, glassmorphism, clean typography, dynamic badge colors).
+
+```
++--------------------------------------------------------------------------------------------------+
+|  [Icon] Define Schema from JSON Sample                                                       [X] |
++--------------------------------------------------------------------------------------------------+
+| Paste a sample JSON payload below to automatically infer fields, toggle active data elements,   |
+| and configure verification types.                                                                |
++--------------------------------------------------------------------------------------------------+
+|  RAW JSON SOURCE TEXTAREA                        |  INTERACTIVE SCHEMA GENERATOR & TREE EXPLORER |
+|  +--------------------------------------------+  |  +-----------------------------------------+ |
+|  | {                                          |  |  | [x] data                   (object)     | |
+|  |   "data": {                                |  |  |   |-[x] chunks             (array)      | |
+|  |     "chunks": ["hello"],                   |  |  |   |-[x] chunk_count        (integer)    | |
+|  |     "chunk_count": 1,                      |  |  |   |-[x] strategy           (string)     | |
+|  |     "strategy": "recursive",               |  |  |   |-[x] chunk_size         (integer)    | |
+|  |     "chunk_size": 1000,                    |  |  |   \-[x] chunk_overlap      (integer)    | |
+|  |     "chunk_overlap": 200                   |  |  | [x] auth_token             (string)     | |
+|  |   },                                       |  |  | [x] source_system          (string)     | |
+|  |   "auth_token": "token",                   |  |  +-----------------------------------------+ |
+|  |   "source_system": "localhost"             |  |  SELECTED FIELD SETTINGS                   | |
+|  | }                                          |  |  +-----------------------------------------+ |
+|  +--------------------------------------------+  |  | Field Path: data.chunks                 | |
+|  | [Icon] Valid JSON Detected                 |  |  | Target Type: [ Array (string)  v ]      | |
+|  +--------------------------------------------+  |  | [ ] Required / Mandatory Field          | |
+|                                                  |  +-----------------------------------------+ |
++--------------------------------------------------------------------------------------------------+
+|                                                           [ Cancel ] [ Generate & Apply Schema ] |
++--------------------------------------------------------------------------------------------------+
+```
+
+### Aesthetic Specifications:
+
+1. **Interactive Tree**: Collapsible nested layers with visual guide lines (`|-`, `\-`) and colors matching our categories (indigo/emerald text, soft gray borders).
+2. **Dynamic Selection**: Checking a parent object automatically select/deselects children (with manual overrides allowed).
+3. **Type Badges**: Pill-shaped badges with custom tailwind gradients (e.g. `bg-purple-50 text-purple-600` for objects/arrays, `bg-blue-50 text-blue-600` for simple strings, and `bg-emerald-50 text-emerald-600` for file types).
+4. **Validation Preview**: A live JSON preview pane that updates in real-time as checkboxes are clicked, displaying the actual JSON schema output.
+
+---
+
+## 4. Inferred Contract Schema Output
+
+When the user pastes the example JSON and applies the schema, it generates the following normalized **JSON Schema Contract** that is saved on the node instance:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "chunk_count": { "type": "integer" },
+        "strategy": { "type": "string" },
+        "chunk_size": { "type": "integer" },
+        "chunk_overlap": { "type": "integer" }
+      },
+      "required": ["chunks", "chunk_count"]
+    },
+    "auth_token": { "type": "string" },
+    "source_system": { "type": "string" }
+  },
+  "required": ["data", "auth_token"]
+}
+```
+
+---
+
+## 5. Input-to-Output Mapping Protocol (Zapier & n8n Model)
+
+To connect adjacent nodes in the workflow, the output contract from a predecessor node must be mapped to the input contract of the successor node.
+
+### A. The Mapping Interface (Frontend)
+
+When the user maps outputs to inputs:
+
+1. They open the **Field Mapper Modal** (`FieldMapperModal`).
+2. The modal displays:
+   - **Target Fields (Input)**: Inferred/defined by the successor's `input_contract` (e.g. `data.chunks`, `auth_token`).
+   - **Source Fields Popover (Output)**: A dropdown populated by the predecessor's `output_contract` structure.
+3. The user selects a source field (e.g. `chunks`), which automatically inserts a Jinja2 template mapping expression:
+   - For direct predecessor data: `{{ input_data.data.chunks }}`
+   - For cross-node reference: `{{ nodes.node_id.output_key }}`
+
+### B. Mapping Resolution Engine (Backend Runtime)
+
+During execution of a node:
+
+1. The backend loads the node's properties, including `mapping_template` (a JSON dictionary/string defining the mapping).
+2. The backend constructs a `render_context` dictionary:
+   ```python
+   render_context = {
+       "data": previous_node_output,
+       "input_data": previous_node_output,
+       "nodes": all_preceding_node_outputs_dict,
+       "context": global_workflow_context,
+       "metadata": workflow_metadata
+   }
+   ```
+3. The backend resolves the templates for each mapped property:
+   - It iterates through the `mapping_template` dictionary recursively.
+   - For each string value containing `{{ ... }}`, it compiles and renders it using `Jinja2` within the `render_context`.
+4. The resolved dictionary becomes the node's payload (`inp.data`), which is then validated against B's `input_contract` before execution.

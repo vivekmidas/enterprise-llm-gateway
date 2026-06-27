@@ -459,6 +459,30 @@ async def save_workflow_to_store(
                             )
                         )
 
+                        # Sync contracts to CustomerNodeDB
+                        target_cust_id = customer_id or db_workflow.customer_id
+                        if target_cust_id and agent_name:
+                            from app.models.db_models import CustomerNodeDB
+                            cust_result = await session.execute(
+                                select(CustomerNodeDB).where(
+                                    CustomerNodeDB.customer_id == target_cust_id,
+                                    CustomerNodeDB.node_name == agent_name
+                                )
+                            )
+                            cust_node = cust_result.scalar_one_or_none()
+                            if not cust_node:
+                                cust_node = CustomerNodeDB(
+                                    customer_id=target_cust_id,
+                                    node_name=agent_name
+                                )
+                                session.add(cust_node)
+                            
+                            if "input_contract" in node_data and node_data["input_contract"]:
+                                cust_node.input_contract = node_data["input_contract"]
+                            if "output_contract" in node_data and node_data["output_contract"]:
+                                cust_node.output_contract = node_data["output_contract"]
+                            cust_node.updated_at = now_str
+
             # Critical: Invalidate Redis compiled graph cache
             await workflow_cache.invalidate_agent(definition.id)
             logger.info("workflow_saved_to_db", workflow_id=definition.id, version=definition.version)
