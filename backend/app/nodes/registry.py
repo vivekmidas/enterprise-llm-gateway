@@ -165,57 +165,15 @@ class NodesRegistry:
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                # 1. Sync Categories from data/node_categories.json if exists
-                # base_dir = Path(__file__).resolve().parent.parent.parent
-                # cat_file = base_dir / "data" / "node_categories.json"
-                # if cat_file.exists():
-                #     try:
-                #         with open(cat_file, "r") as f:
-                #             cats = json.load(f)
-                #             for cat in cats:
-                #                 stmt = select(CategoryDB).where(CategoryDB.group == cat.get("name"))
-                #                 result = await session.execute(stmt)
-                #                 db_cat = result.scalar_one_or_none()
-                #                 if not db_cat:
-                #                     session.add(CategoryDB(
-                #                         group=cat.get("name"),
-                #                         icon=cat.get("icon"),
-                #                         color=cat.get("color"),
-                #                         label=cat.get("label"),
-                #                         description=cat.get("description")
-                #                     ))
-                #                     cls.logger.info("category_created_in_db", name=cat.get("name"))
-                #     except Exception as e:
-                #         cls.logger.error("failed_to_sync_categories", error=str(e))
-
-                # Fetch all categories to build mapping
-                cat_result = await session.execute(select(CategoryDB))
-                categories_list = cat_result.scalars().all()
-                cat_map = {}
-                for c in categories_list:
-                    if c.group:
-                        cat_map[c.group.lower()] = str(c.id)
-                    if c.label:
-                        cat_map[c.label.lower()] = str(c.id)
-
                 # 2. Sync Discovered Nodes
                 for node_name, node in cls._nodes.items():
                     stmt = select(NodeDB).where(NodeDB.name == node_name)
                     result = await session.execute(stmt)
                     db_node = result.scalar_one_or_none()
 
-                    # # Load defaults from Python node class
-                    # user_props_code = node.user_properties or []
-                    # system_props_code = node.system_properties or {}
-
-                    # # Resolve node category ID from class name or label
-                    # node_cat = "1"
-                    # if node.category:
-                    #     resolved_cat = cat_map.get(node.category.lower())
-                    #     if resolved_cat:
-                    #         node_cat = resolved_cat
-                    #     elif node.category.isdigit():
-                    #         node_cat = node.category
+                    # Load defaults from Python node class
+                    user_props_code = node.user_properties or []
+                    system_props_code = node.system_properties or {}
 
                     if not db_node:
                         cls.logger.info("registering_new_node_to_db", name=node_name)
@@ -225,26 +183,20 @@ class NodesRegistry:
                             node_type=node.node_type.upper() if node.node_type else "NODE",
                             description=node.description,
                             version=node.version,
-                            category=node.category,
+                            category="1",
                             group=node.group,
-                            icon=node.icon or "bot",
+                            icon="bot",
                             color=node.color,
                             badge=node.badge,
                             sub_label=node.sub_label,
-                            user_properties=node.user_properties or [],
-                            system_properties=node.system_properties or {},
+                            user_properties=user_props_code,
+                            system_properties=system_props_code,
                             input_contract=node.input_contract,
                             output_contract=node.output_contract
                         )
                         session.add(new_db_node)
                     # else:
                     #     cls.logger.info("syncing_existing_node_schema_to_db", name=node_name)
-                    #     db_node.category = node.category
-                    #     db_node.group = node.group
-                    #     db_node.icon = node.icon or db_node.icon
-                    #     db_node.color = node.color or db_node.color
-                    #     db_node.label = node.label or db_node.label
-                    #     db_node.description = node.description or db_node.description
 
                     #     # Merge properties non-destructively
                     #     merged_user_props = merge_properties(db_node.user_properties, user_props_code)

@@ -1,5 +1,6 @@
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
+drop table categories;
 CREATE TABLE IF NOT EXISTS  categories (
 	id INTEGER NOT NULL, 
 	"group" VARCHAR, 
@@ -9,6 +10,7 @@ CREATE TABLE IF NOT EXISTS  categories (
 	description VARCHAR, 
 	PRIMARY KEY (id)
 );
+
 delete from categories;
 INSERT INTO categories VALUES(1,'LLM Engines','Brain','#8b5cf6','Large Language Model','Core language model execution points and agent instances');
 INSERT INTO categories VALUES(2,'Safety Guardrails','ShieldAlert','#ef4444','Guard Rails','Real-time validators for safety, compliance, and PII masking.');
@@ -19,6 +21,8 @@ INSERT INTO categories VALUES(6,'Control Logic','gitfork','#f59e0b','Logic','Con
 INSERT INTO categories VALUES(7,'Context & Memory','history','#3b82f6','Memory',unistr('Chat history managers and context injection helpers.\u0009Context Setter, Session Memory, RAG Embeddings\u000aAlerts\u0009Notifications\u0009Bell\u0009Orange (#f97316)\u0009Integration points for sending logs, emails, or chat alerts.\u0009Slack Notification, Send SMTP Mail, Audit Logger\u000a8. Alignment Implementation Steps\u000aDatabase Migration: Update backend/app/core/db.sql and run a schema migration to seed the categories table with the new IDs, colors, icons, and descriptions matching the grid above.\u000aFrontend Synchronization: Update frontend/app/components/component-categoriees.ts to map the CATEGORIES record to match the backend database labels and icons.\u000aPalette UI Revamp: Adjust the sidebar selector categories to display badges matching the Visual Theme colors for a clean cockpit feeling.\u000a'));
 INSERT INTO categories VALUES(9,'Alerts','bell','#f97316','Integration','Integration points for sending logs, emails, or chat alerts.');
 INSERT INTO categories VALUES(10,'Vector Databases','blocks','#10b981','Vector DB','Store and query high-dimensional vector embeddings.');
+
+DROP TABLE workflow_nodes;
 CREATE TABLE IF NOT EXISTS "workflow_nodes" (
 	id INTEGER NOT NULL, 
 	workflow_id VARCHAR NOT NULL, 
@@ -29,6 +33,8 @@ CREATE TABLE IF NOT EXISTS "workflow_nodes" (
 	properties JSON, 
 	PRIMARY KEY (id)
 );
+
+DROP TABLE credentials;
 CREATE TABLE IF NOT EXISTS credentials (
 	id INTEGER NOT NULL, 
 	name VARCHAR, 
@@ -39,6 +45,8 @@ CREATE TABLE IF NOT EXISTS credentials (
 	updated_at VARCHAR, 
 	PRIMARY KEY (id)
 );
+
+DROP TABLE oauth_providers;
 CREATE TABLE IF NOT EXISTS oauth_providers (
 	id INTEGER NOT NULL, 
 	name VARCHAR, 
@@ -63,6 +71,8 @@ CREATE TABLE IF NOT EXISTS customers (
 	dateupdated VARCHAR, 
 	PRIMARY KEY (id)
 );
+
+DROP TABLE users;
 CREATE TABLE IF NOT EXISTS "users" (
 	id INTEGER NOT NULL, 
 	username VARCHAR, 
@@ -80,6 +90,8 @@ INSERT INTO users VALUES(1,'admin@gateway.com','admin@gateway.com','$argon2id$v=
 INSERT INTO users VALUES(2,'vivek@midasminds.in','vivek@midasminds.in','$argon2id$v=19$m=1024,t=2,p=8$/0cgTA2yr5XSuEdFKV0PXA$LtUPEWod7A/RZ6C2Mjs4mPzYvHg53R/huF/R+4vT2xI','Vivek Jain',NULL,'active','user','2026-06-15T07:02:43.832758','2026-06-15T07:02:43.832776');
 INSERT INTO users VALUES(3,'test@test.com','test@test.com','$argon2id$v=19$m=1024,t=2,p=8$Dwx8YxEUwfFTRjZ1G9PAwQ$BpcCREYOMFO5IDAAhDXhvwYBH81YniJdxDDuaZXXFg8','test test',NULL,'active','user','2026-06-15T11:54:01.515901','2026-06-15T11:54:01.516496');
 INSERT INTO users VALUES(4,'test@example.com','test@example.com','$argon2id$v=19$m=1024,t=2,p=8$JaHhi49W9hp61Yn3sln5qg$VPC5u0pFyJ1yF8YsCFeah2vcuiqco1y4jPAoLEvsC4g','Test User',NULL,'active','user','2026-06-22T07:16:57.721383','2026-06-22T07:16:57.721407');
+
+DROP TABLE workflows;
 CREATE TABLE IF NOT EXISTS "workflows" (
 	id VARCHAR NOT NULL, 
 	name VARCHAR, 
@@ -95,6 +107,8 @@ CREATE TABLE IF NOT EXISTS "workflows" (
 	user_id varchar,
 	PRIMARY KEY (id)
 );
+
+DROP TABLE nodes;
 CREATE TABLE IF NOT EXISTS "nodes" (
 	id INTEGER NOT NULL, 
 	name VARCHAR, 
@@ -137,6 +151,8 @@ INSERT INTO nodes VALUES(19,'generic_llm_vector_db','Base Node for strong data t
 
 UPDATE nodes set node_type="NODE" where node_type ="DEFAULT";
 
+
+DROP TABLE workflow_node_properties;
 CREATE TABLE IF NOT EXISTS "workflow_node_properties" (
 	id INTEGER NOT NULL, 
 	workflow_id VARCHAR NOT NULL, 
@@ -145,6 +161,9 @@ CREATE TABLE IF NOT EXISTS "workflow_node_properties" (
 	properties JSON, 
 	PRIMARY KEY (id)
 );
+
+
+DROP TABLE customer_nodes;
 CREATE TABLE IF NOT EXISTS "customer_nodes" (
 	id INTEGER NOT NULL, 
 	customer_id INTEGER NOT NULL, 
