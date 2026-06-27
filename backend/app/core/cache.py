@@ -1,7 +1,8 @@
 import json
 import time
 import logging
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, ClassVar
+import redis.asyncio as redis
 
 from app.core.config import get_settings, get_redis_client
 
@@ -10,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 class WorkflowCache:
     """Handles hybrid caching for Compiled LangGraph objects."""
+    client: ClassVar[redis.Redis] = get_redis_client()
+
     def __init__(self):
-        self.client = get_redis_client()
         self.ttl = settings.REDIS_CACHE_TTL
         self._local_compiled_cache: Dict[str, Any] = {}
 
@@ -69,32 +71,65 @@ class WorkflowCache:
 
 class TraceStore:
     """Dedicated class for handling execution traces and observability data."""
-    def __init__(self):
-        self.client = get_redis_client()
+    client: ClassVar[redis.Redis] = get_redis_client()
 
     async def save_trace(self, trace_id: str, data: dict):
-        """Store execution trace with a 24-hour TTL and index it."""
+        """Store execution trace with a 24-hour TTL and index it by tenant, user, and globally."""
         key = f"trace:{trace_id}"
+        customer_id = data.get("customer_id")
+        user_id = data.get("user_id")
+        now = time.time()
         try:
             # Store trace details as JSON string (decode_responses=True handles this)
             await self.client.setex(key, 86400, json.dumps(data))
-            # Add to sorted set index for time-based retrieval
-            await self.client.zadd("traces:index", {trace_id: time.time()})
-            # Optional: Cleanup index for items older than 24h
-            await self.client.zremrangebyscore("traces:index", 0, time.time() - 86400)
+            
+            # 1. Global index (for system admins)
+            await self.client.zadd("traces:index", {trace_id: now})
+            await self.client.zremrangebyscore("traces:index", 0, now - 86400)
+            
+            # 2. Customer/Tenant index
+            if customer_id is not None:
+                cust_index_key = f"customer:{customer_id}:traces:index"
+                await self.client.zadd(cust_index_key, {trace_id: now})
+                await self.client.zremrangebyscore(cust_index_key, 0, now - 86400)
+                
+            # 3. User-specific index
+            if user_id:
+                user_index_key = f"user:{user_id}:traces:index"
+                await self.client.zadd(user_index_key, {trace_id: now})
+                await self.client.zremrangebyscore(user_index_key, 0, now - 86400)
+                
         except Exception as e:
             logger.error(f"Failed to save trace {trace_id}: {e}")
 
-    async def get_traces_in_range(self, start_time: float, limit: int = 100):
-        """Retrieve traces within a specific timestamp range."""
+    async def get_traces_in_range(
+        self, 
+        start_time: float, 
+        limit: int = 100,
+        customer_id: Optional[int] = None,
+        user_id: Optional[str] = None,
+        workflow_id: Optional[str] = None
+    ):
+        """Retrieve traces within a specific timestamp range, filtered by tenant/user and workflow."""
         try:
-            trace_ids = await self.client.zrevrangebyscore("traces:index", "+inf", start_time, start=0, num=limit)
+            # Determine which index to query based on role boundaries
+            if customer_id is not None:
+                index_key = f"customer:{customer_id}:traces:index"
+            elif user_id:
+                index_key = f"user:{user_id}:traces:index"
+            else:
+                index_key = "traces:index"
+                
+            trace_ids = await self.client.zrevrangebyscore(index_key, "+inf", start_time, start=0, num=limit)
             traces = []
             for tid in trace_ids:
-                # tid is already a string because decode_responses=True
                 data = await self.client.get(f"trace:{tid}")
                 if data:
-                    traces.append(json.loads(data))
+                    trace_dict = json.loads(data)
+                    # Filter by workflow_id in memory if specified
+                    if workflow_id and trace_dict.get("workflow_id") != workflow_id:
+                        continue
+                    traces.append(trace_dict)
             return traces
         except Exception as e:
             logger.error(f"Failed to get traces in range: {e}")

@@ -96,16 +96,29 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
     return node
 
 
+from typing import Optional
+
 @router.get("/customer/config")
 async def get_customer_node_configs(
+    customer_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves all custom configurations and status of nodes for the active customer."""
-    if current_user.role != "admin":
+    if current_user.role not in ["admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == current_user.customer_id)
+    target_customer_id = customer_id
+    if current_user.role == "admin":
+        target_customer_id = current_user.customer_id
+    elif current_user.role == "system_admin":
+        if target_customer_id is None:
+            raise HTTPException(status_code=400, detail="customer_id is required for system admin")
+            
+    if target_customer_id is None:
+        raise HTTPException(status_code=400, detail="customer_id is required")
+
+    stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == target_customer_id)
     result = await db.execute(stmt)
     configs = result.scalars().all()
     return {"configs": [
@@ -122,23 +135,40 @@ async def get_customer_node_configs(
 async def configure_customer_node(
     node_name: str,
     config_data: dict,
+    customer_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Saves node properties override and enabled status for the customer tenant."""
-    if current_user.role != "admin":
+    if current_user.role not in ["admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
         
+    target_customer_id = customer_id or config_data.get("customer_id") or config_data.get("customerId")
+    if current_user.role == "admin":
+        target_customer_id = current_user.customer_id
+    elif current_user.role == "system_admin":
+        if target_customer_id is None:
+            raise HTTPException(status_code=400, detail="customer_id is required for system admin")
+            
+    if target_customer_id is None:
+        raise HTTPException(status_code=400, detail="customer_id is required")
+        
     stmt = select(CustomerNodeDB).where(
-        CustomerNodeDB.customer_id == current_user.customer_id,
+        CustomerNodeDB.customer_id == target_customer_id,
         CustomerNodeDB.node_name == node_name
     )
     result = await db.execute(stmt)
     customer_node = result.scalar_one_or_none()
     
+    if current_user.role == "admin" and customer_node and not customer_node.is_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="This node is locked and cannot be configured because it has been disabled by the system administrator."
+        )
+    
     if not customer_node:
         customer_node = CustomerNodeDB(
-            customer_id=current_user.customer_id,
+            customer_id=target_customer_id,
             node_name=node_name
         )
         db.add(customer_node)
@@ -147,6 +177,10 @@ async def configure_customer_node(
         customer_node.properties = config_data["properties"]
     if "is_enabled" in config_data:
         customer_node.is_enabled = config_data["is_enabled"]
+    if "input_contract" in config_data:
+        customer_node.input_contract = config_data["input_contract"]
+    if "output_contract" in config_data:
+        customer_node.output_contract = config_data["output_contract"]
         
     customer_node.updated_at = datetime.utcnow().isoformat()
     await db.commit()
@@ -155,7 +189,9 @@ async def configure_customer_node(
     return {
         "node_name": customer_node.node_name,
         "properties": customer_node.properties,
-        "is_enabled": customer_node.is_enabled
+        "is_enabled": customer_node.is_enabled,
+        "input_contract": customer_node.input_contract,
+        "output_contract": customer_node.output_contract
     }
 
 
@@ -180,12 +216,21 @@ async def list_nodes(
             overrides = cust_node.properties if cust_node and cust_node.properties else {}
             merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
+            if cust_node:
+                if cust_node.input_contract is not None:
+                    merged["input_contract"] = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    merged["output_contract"] = cust_node.output_contract
             filtered_nodes.append(merged)
         else:
             if cust_node and cust_node.is_enabled:
                 overrides = cust_node.properties or {}
                 merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
                 merged["is_enabled"] = True
+                if cust_node.input_contract is not None:
+                    merged["input_contract"] = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    merged["output_contract"] = cust_node.output_contract
                 filtered_nodes.append(merged)
                 
     return {"nodes": filtered_nodes}
@@ -222,6 +267,11 @@ async def get_node(
     mask_sensitive = current_user.role not in ["system_admin", "admin"]
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
+    if cust_node:
+        if cust_node.input_contract is not None:
+            merged_node["input_contract"] = cust_node.input_contract
+        if cust_node.output_contract is not None:
+            merged_node["output_contract"] = cust_node.output_contract
     return {"node": merged_node}
 
 
@@ -254,6 +304,11 @@ async def get_node_by_id(
     mask_sensitive = current_user.role not in ["system_admin", "admin"]
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
+    if cust_node:
+        if cust_node.input_contract is not None:
+            merged_node["input_contract"] = cust_node.input_contract
+        if cust_node.output_contract is not None:
+            merged_node["output_contract"] = cust_node.output_contract
     return {"node": merged_node}
 
 
@@ -348,12 +403,23 @@ async def get_nodes_by_category(
 
         if current_user.role in ["system_admin", "admin"]:
             overrides = cust_node.properties if cust_node and cust_node.properties else {}
-            filtered_nodes.append(_merge_customer_config_into_node(node, overrides, mask_sensitive=False))
+            merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
+            merged["is_enabled"] = cust_node.is_enabled if cust_node else True
+            if cust_node:
+                if cust_node.input_contract is not None:
+                    merged["input_contract"] = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    merged["output_contract"] = cust_node.output_contract
+            filtered_nodes.append(merged)
         else:
             if cust_node and cust_node.is_enabled:
                 overrides = cust_node.properties or {}
-                filtered_nodes.append(_merge_customer_config_into_node(node, overrides, mask_sensitive=True))
-
+                merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
+                if cust_node.input_contract is not None:
+                    merged["input_contract"] = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    merged["output_contract"] = cust_node.output_contract
+                filtered_nodes.append(merged)
 
     return {"nodes": filtered_nodes}
 

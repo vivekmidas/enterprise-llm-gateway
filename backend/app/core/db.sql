@@ -151,6 +151,8 @@ CREATE TABLE IF NOT EXISTS "customer_nodes" (
 	node_name VARCHAR NOT NULL, 
 	properties JSON, 
 	is_enabled BOOLEAN DEFAULT 1, 
+	input_contract JSON,
+	output_contract JSON,
 	updated_at VARCHAR, 
 	PRIMARY KEY (id),
 	FOREIGN KEY(customer_id) REFERENCES customers (id)

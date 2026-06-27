@@ -22,10 +22,24 @@ def _refresh_workflow_node_properties_table(sync_conn):
 
     Base.metadata.tables["workflow_node_properties"].drop(sync_conn, checkfirst=True)
 
+
+def _refresh_customer_nodes_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("customer_nodes"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("customer_nodes")}
+    if "input_contract" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customer_nodes ADD COLUMN input_contract JSON")
+    if "output_contract" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customer_nodes ADD COLUMN output_contract JSON")
+
+
 async def init_db():
     """Initializes the database schema."""
     async with engine.begin() as conn:
         await conn.run_sync(_refresh_workflow_node_properties_table)
+        await conn.run_sync(_refresh_customer_nodes_table)
         await conn.run_sync(Base.metadata.create_all)
 
 async def get_db():

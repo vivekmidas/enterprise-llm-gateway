@@ -76,10 +76,15 @@ logger = structlog.get_logger("enterprise_llm_gateway")
 # ========================= TRACING (T in MELT) =========================
 def setup_tracing():
     """OpenTelemetry tracing setup"""
+    import os
     trace.set_tracer_provider(TracerProvider())
-    trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4317"))  # configurable later
-    )
+    if os.getenv("ENABLE_TRACING", "false").lower() == "true":
+        try:
+            trace.get_tracer_provider().add_span_processor(
+                BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4317"))
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize OTLPSpanExporter", error=str(e))
 
 
 # ========================= MAIN SETUP =========================

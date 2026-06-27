@@ -103,10 +103,15 @@ async def get_node_properties(
                 )
             )
             cust_node = result.scalar_one_or_none()
-            if cust_node and cust_node.properties:
-                # system properties default overrides
-                system_properties.update(cust_node.properties)
-                system_level_properties.update(cust_node.properties)
+            if cust_node:
+                if cust_node.properties:
+                    # system properties default overrides
+                    system_properties.update(cust_node.properties)
+                    system_level_properties.update(cust_node.properties)
+                if cust_node.input_contract is not None:
+                    input_contract = cust_node.input_contract
+                if cust_node.output_contract is not None:
+                    output_contract = cust_node.output_contract
 
             # user properties override system properties
             merged_properties = {**system_properties, **user_properties}

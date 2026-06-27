@@ -15,6 +15,10 @@ async def client() -> AsyncClient:
 
 @pytest.fixture(scope="module")
 async def system_admin_token() -> str:
+    from app.core.database import init_db
+    from app.nodes.registry import NodesRegistry
+    await init_db()
+    await NodesRegistry.node_auto_discover()
     async with AsyncSessionLocal() as session:
         stmt = select(UserDB).where(UserDB.email_id == "admin@gateway.com")
         result = await session.execute(stmt)
@@ -26,10 +30,15 @@ async def system_admin_token() -> str:
                 email_id="admin@gateway.com",
                 password=get_password_hash("password"),
                 name="System Admin",
-                role="admin",
+                role="system_admin",
                 customer_id=None,
                 status="active"
             )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        elif user.role != "system_admin":
+            user.role = "system_admin"
             session.add(user)
             await session.commit()
             await session.refresh(user)
