@@ -7,3 +7,4 @@ __pycache__
 ../frontend
 enterprise_gateway.db
 */qdrant_storage/*
+*/qdrant_data/*
