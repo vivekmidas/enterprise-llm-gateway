@@ -28,5 +28,14 @@ services:
     ports:
       - "6379:6379"
     volumes:
-       - redis_data:/data
-     restart: unless-stopped
+      - ./redis_data:/data
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: gateway-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    restart: unless-stopped

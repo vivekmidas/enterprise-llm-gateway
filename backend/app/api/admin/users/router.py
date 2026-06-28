@@ -22,7 +22,7 @@ async def list_users(
         raise HTTPException(status_code=403, detail="Admin permissions required")
         
     stmt = select(usersDb)
-    if current_user.customer_id is not None:
+    if current_user.role != "system_admin": #customer_id is not None:
         stmt = stmt.where(usersDb.customer_id == current_user.customer_id)
         
     result = await db.execute(stmt)
