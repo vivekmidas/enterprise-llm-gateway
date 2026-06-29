@@ -144,55 +144,168 @@ async def configure_customer_node(
         raise HTTPException(status_code=403, detail="Admin access required")
         
     target_customer_id = customer_id or config_data.get("customer_id") or config_data.get("customerId")
-    if current_user.role == "admin":
-        target_customer_id = current_user.customer_id
-    elif current_user.role == "system_admin":
-        if target_customer_id is None:
-            raise HTTPException(status_code=400, detail="customer_id is required for system admin")
-            
-    if target_customer_id is None:
+    if current_user.role == "system_admin" and target_customer_id is None:
         raise HTTPException(status_code=400, detail="customer_id is required")
+
+    if current_user.role == "admin":
+        # update specific customer node definitions
+        target_customer_id = current_user.customer_id
+        stmt = select(CustomerNodeDB).where(
+            CustomerNodeDB.customer_id == target_customer_id,
+            CustomerNodeDB.node_name == node_name
+        )
+        result = await db.execute(stmt)
+        customer_node = result.scalar_one_or_none()
+        if not customer_node:
+            # Check if base node exists first
+            node_exists_stmt = select(NodeDB).where(NodeDB.name == node_name)
+            node_exists_res = await db.execute(node_exists_stmt)
+            if not node_exists_res.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Node not found")
+            
+            customer_node = CustomerNodeDB(
+                customer_id=target_customer_id,
+                node_name=node_name,
+                is_enabled=True,
+                properties={}
+            )
+            db.add(customer_node)
+
+    elif current_user.role == "system_admin":
+        # update base system property for the node in NodeDB
+        stmt = select(NodeDB).where(NodeDB.name == node_name)
+        result = await db.execute(stmt)
+        customer_node = result.scalar_one_or_none()
+        if not customer_node:
+            raise HTTPException(status_code=404, detail="Node not found")
         
-    stmt = select(CustomerNodeDB).where(
-        CustomerNodeDB.customer_id == target_customer_id,
-        CustomerNodeDB.node_name == node_name
-    )
-    result = await db.execute(stmt)
-    customer_node = result.scalar_one_or_none()
-    
-    if current_user.role == "admin" and customer_node and not customer_node.is_enabled:
+    if current_user.role == "admin" and not customer_node.is_enabled:
         raise HTTPException(
             status_code=403,
             detail="This node is locked and cannot be configured because it has been disabled by the system administrator."
         )
-    
-    if not customer_node:
-        customer_node = CustomerNodeDB(
-            customer_id=target_customer_id,
-            node_name=node_name
-        )
-        db.add(customer_node)
         
     if "properties" in config_data:
-        customer_node.properties = config_data["properties"]
+        properties_data = config_data["properties"]
+        # Standardize updates list: list of (key, value) pairs
+        updates = []
+        if isinstance(properties_data, dict):
+            updates = list(properties_data.items())
+        elif isinstance(properties_data, list):
+            for item in properties_data:
+                if isinstance(item, dict) and "key" in item:
+                    val = item.get("value") if "value" in item else item.get("default")
+                    updates.append((item["key"], val))
+
+        if current_user.role == "system_admin":
+            # Update NodeDB columns: system_properties and user_properties
+            sys_props = customer_node.system_properties
+            if isinstance(sys_props, dict):
+                sys_props = dict(sys_props)
+            elif isinstance(sys_props, list):
+                sys_props = [
+                    dict(item) if isinstance(item, dict) else item 
+                    for item in sys_props
+                ]
+            else:
+                sys_props = {}
+            
+            user_props = customer_node.user_properties
+            if isinstance(user_props, list):
+                user_props = [
+                    dict(item) if isinstance(item, dict) else item 
+                    for item in user_props
+                ]
+            elif isinstance(user_props, dict):
+                user_props = dict(user_props)
+            else:
+                user_props = []
+
+            # Extract existing system keys to identify them even without prefix
+            if isinstance(sys_props, dict):
+                existing_sys_keys = set(sys_props.keys())
+            elif isinstance(sys_props, list):
+                existing_sys_keys = {
+                    item.get("key") 
+                    for item in sys_props 
+                    if isinstance(item, dict) and "key" in item
+                }
+            else:
+                existing_sys_keys = set()
+
+            for k, v in updates:
+                is_system = k.startswith("system-") or k in existing_sys_keys
+                actual_key = k[7:] if k.startswith("system-") else k
+
+                if is_system:
+                    if isinstance(sys_props, dict):
+                        sys_props[actual_key] = v
+                    elif isinstance(sys_props, list):
+                        found = False
+                        for item in sys_props:
+                            if isinstance(item, dict) and item.get("key") == actual_key:
+                                item["default"] = v
+                                item["value"] = v
+                                found = True
+                        if not found:
+                            sys_props.append({"key": actual_key, "default": v, "value": v})
+                else:
+                    if isinstance(user_props, dict):
+                        user_props[actual_key] = v
+                    elif isinstance(user_props, list):
+                        found = False
+                        for item in user_props:
+                            if isinstance(item, dict) and item.get("key") == actual_key:
+                                item["default"] = v
+                                item["value"] = v
+                                found = True
+                        if not found:
+                            user_props.append({"key": actual_key, "default": v, "value": v})
+            
+            customer_node.system_properties = sys_props
+            customer_node.user_properties = user_props
+        else:
+            # Update CustomerNodeDB properties column: merge the ones received
+            current_properties = dict(customer_node.properties or {})
+            for k, v in updates:
+                current_properties[k] = v
+            customer_node.properties = current_properties
+
     if "is_enabled" in config_data:
-        customer_node.is_enabled = config_data["is_enabled"]
+        if current_user.role == "admin":
+            customer_node.is_enabled = config_data["is_enabled"]
+            
     if "input_contract" in config_data:
         customer_node.input_contract = config_data["input_contract"]
     if "output_contract" in config_data:
         customer_node.output_contract = config_data["output_contract"]
         
-    customer_node.updated_at = datetime.utcnow().isoformat()
+    if current_user.role == "admin":
+        customer_node.updated_at = datetime.utcnow().isoformat()
+        
+    db.add(customer_node)
     await db.commit()
     await db.refresh(customer_node)
     
-    return {
-        "node_name": customer_node.node_name,
-        "properties": customer_node.properties,
-        "is_enabled": customer_node.is_enabled,
-        "input_contract": customer_node.input_contract,
-        "output_contract": customer_node.output_contract
-    }
+    if current_user.role == "system_admin":
+        return {
+            "node_name": customer_node.name,
+            "properties": {
+                **property_entries_to_dict(customer_node.system_properties),
+                **property_entries_to_dict(customer_node.user_properties)
+            },
+            "is_enabled": True,
+            "input_contract": customer_node.input_contract,
+            "output_contract": customer_node.output_contract
+        }
+    else:
+        return {
+            "node_name": customer_node.node_name,
+            "properties": customer_node.properties,
+            "is_enabled": customer_node.is_enabled,
+            "input_contract": customer_node.input_contract,
+            "output_contract": customer_node.output_contract
+        }
 
 
 @router.get("")

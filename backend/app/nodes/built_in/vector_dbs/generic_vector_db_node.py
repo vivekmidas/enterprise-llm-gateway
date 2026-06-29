@@ -228,7 +228,7 @@ class GenericLLMVectorDB(BaseNode):
         embed_key = config.get("embedding_api_key", "")
         similarity_threshold = float(config.get("similarity_threshold", 0.7))
         top_k = int(config.get("top_k", 5))
-
+        self.logger.info("generic_llm_vector_db_config", config=config)
         # 2. Extract input data from payload or properties
         payload_data = self.get_input_data(inp)
         input_text = ""
@@ -258,6 +258,7 @@ class GenericLLMVectorDB(BaseNode):
         try:
             # 3. Handle SEARCH operation
             if operation == "search":
+                self.logger.info("starting search operation", config=config, name=self.name, function=__name__)
                 if not input_text:
                     raise ValueError("Search operation requires 'Input Text' as a query.")
 
@@ -300,6 +301,7 @@ class GenericLLMVectorDB(BaseNode):
 
             # 4. Handle UPSERT operation
             else:
+                self.logger.info("starting upsert operation", config=config, name=self.name, function=__name__)
                 raw_text_to_chunk = input_text
                 
                 # Check for PDF
@@ -323,6 +325,7 @@ class GenericLLMVectorDB(BaseNode):
                         chunks = splitter.split_text(raw_text_to_chunk)
 
                 # Generate embeddings
+                self.logger.info("starting embedding generation", config=config, name=self.name, function=__name__)
                 embeddings = []
                 if chunks:
                     embeddings = await self._generate_embeddings(chunks, embed_url, embed_model, embed_key)
@@ -346,6 +349,7 @@ class GenericLLMVectorDB(BaseNode):
                 # Build upsert points list
                 points = []
                 # Case 1: Storing text chunks
+                self.logger.info("building points list", config=config, name=self.name, function=__name__)
                 for i, (chunk, vector) in enumerate(zip(chunks, embeddings)):
                     pt_payload = {
                         "text": chunk,
@@ -363,6 +367,7 @@ class GenericLLMVectorDB(BaseNode):
                     })
 
                 # Case 2: Image only (no text chunks)
+                self.logger.info("building points list", config=config, name=self.name, function=__name__)  
                 if not chunks and image_metadata:
                     # Generate a mock vector or use zeros if no text splits exist
                     vector_size = 1536  # Default size
@@ -387,6 +392,7 @@ class GenericLLMVectorDB(BaseNode):
 
                 # Write to Vector Database
                 if db_type == "qdrant":
+                    self.logger.info("writing points to qdrant", config=config, name=self.name, function=__name__)  
                     # Check and auto-create collection if needed
                     async with httpx.AsyncClient() as client:
                         # Check existence
@@ -407,7 +413,8 @@ class GenericLLMVectorDB(BaseNode):
 
                         # Upsert points
                         upsert_url = f"{db_url}/collections/{collection}/points"
-                        resp_upsert = await client.post(upsert_url, json={"points": points}, headers=qdrant_headers, timeout=30.0)
+                        self.logger.info("writing points to qdrant", upsert_url=upsert_url, config=config, name=self.name, function=__name__)
+                        resp_upsert = await client.put(upsert_url, json={"points": points}, headers=qdrant_headers, timeout=30.0)
                         resp_upsert.raise_for_status()
                 else:
                     # Mock write success for other databases

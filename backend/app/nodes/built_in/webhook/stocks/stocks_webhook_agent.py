@@ -19,6 +19,7 @@ class StocksWebhookAgent(BaseWebhookAgent):
         # Custom authorization logic
         expected_key = self.properties.get("api_key")
         if not expected_key:
+            
             return True
             
         provided_key = request.headers.get("X-Stock-Token")

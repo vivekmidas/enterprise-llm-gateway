@@ -24,7 +24,7 @@ class StocksApiRequestNode(ApiRequestNode):
         Optional validation logic. Can be overridden by nodes to perform
         pre-execution checks.
         """
-        self.logger.debug("Validating input", trace_id=inp.trace_id)
+        self.logger.debug("Validating input", trace_id=inp.trace_id,node_name=self.name,name=__name__)
         await super().validate_input(inp)
         if not inp.data:
             return NodeOutput(
@@ -32,7 +32,7 @@ class StocksApiRequestNode(ApiRequestNode):
                 data=inp.data,
                 status="failure",
                 error_code=400,
-                error_message="Content is required"
+                error_message="Input rules not matched"
             )
         return None
 
