@@ -57,8 +57,6 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
         node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
         overrides = (
             node_data.get("data", {}).get("user_properties")
-            or node_data.get("data", {}).get("properties")
-            or node_data.get("config")
             or {}
         )
         config = {**self.properties, **overrides}
@@ -81,7 +79,9 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
             existing_node_id, _ = self._active_routes[server_key][route_path]
             if existing_node_id != agent_node_id:
                 self.logger.error(
-                    "webhook_route_conflict",
+                    "webhook_route_conflict", workflow_id=workflow_config.get("name"),
+                    customer_id= workflow_config.get("customer_id"),
+                    workspace_id= workflow_config.get("workspace_id"),
                     path=route_path,
                     port=port,
                     existing_node=existing_node_id,

@@ -113,13 +113,15 @@ async def get_node_properties(
             # System properties are sacrosanct and cannot be overridden by tenant
             resolved_system = dict(global_system_defaults)
             
-            # User properties can be overridden by tenant (locking them) or by workflow instances (if not locked)
+            # User properties resolved with correct precedence (instance > tenant > global)
             resolved_user = {}
             for k, v in global_user_defaults.items():
-                if k in tenant_overrides:
+                if k in workflow_overrides:
+                    resolved_user[k] = workflow_overrides[k]
+                elif k in tenant_overrides:
                     resolved_user[k] = tenant_overrides[k]
                 else:
-                    resolved_user[k] = workflow_overrides.get(k, v)
+                    resolved_user[k] = v
 
             # Unified properties list
             resolved_properties = {**resolved_system, **resolved_user}

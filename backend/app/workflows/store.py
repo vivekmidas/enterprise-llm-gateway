@@ -180,13 +180,15 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
         # System properties are sacrosanct (no tenant overrides)
         resolved_system = dict(global_system_defaults)
         
-        # User properties resolved with correct precedence
+        # User properties resolved with correct precedence (instance > tenant > global)
         resolved_user = {}
         for k, v in global_user_defaults.items():
-            if k in tenant_overrides:
+            if k in workflow_overrides:
+                resolved_user[k] = workflow_overrides[k]
+            elif k in tenant_overrides:
                 resolved_user[k] = tenant_overrides[k]
             else:
-                resolved_user[k] = workflow_overrides.get(k, v)
+                resolved_user[k] = v
                 
         return {**resolved_system, **resolved_user}
 
@@ -311,17 +313,16 @@ async def _hydrate_workflow_definition(
         # Also clean out any system keys that might be present in instance_overrides by mistake
         for k in global_system_defaults.keys():
             instance_overrides.pop(k, None)
-            
-        for k in tenant_overrides.keys():
-            instance_overrides.pop(k, None)
 
-        # Resolve user properties with the correct inheritance chain
+        # Resolve user properties with the correct inheritance chain (instance > tenant > global)
         resolved_user = {}
         for k, v in global_user_defaults.items():
-            if k in tenant_overrides:
+            if k in instance_overrides:
+                resolved_user[k] = instance_overrides[k]
+            elif k in tenant_overrides:
                 resolved_user[k] = tenant_overrides[k]
             else:
-                resolved_user[k] = instance_overrides.get(k, v)
+                resolved_user[k] = v
 
         if catalog_node:
             input_contract = catalog_node.input_contract or {}
