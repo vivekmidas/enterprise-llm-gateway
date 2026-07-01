@@ -4,6 +4,7 @@ from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+from app.nodes.properties import safe_int
 
 class DatabaseNode(BaseNode):
     """
@@ -50,7 +51,7 @@ class DatabaseNode(BaseNode):
             username=config.get("username"),
             password=config.get("password"),
             host=config.get("host"),
-            port=int(config.get("port", 5432)),
+            port=safe_int(config.get("port"), 5432),
             database=config.get("database")
             )
         )

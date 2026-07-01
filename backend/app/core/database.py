@@ -33,6 +33,8 @@ def _refresh_customer_nodes_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE customer_nodes ADD COLUMN input_contract JSON")
     if "output_contract" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE customer_nodes ADD COLUMN output_contract JSON")
+    if "label" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customer_nodes ADD COLUMN label VARCHAR")
 
 
 async def init_db():

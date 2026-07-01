@@ -8,6 +8,7 @@ import abc
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from app.utils.http_client import HttpClient, ApiResponse
+from app.nodes.properties import safe_int, safe_float
 from pydantic import BaseModel, Field
 
 class ApiRequestConfig(BaseModel):
@@ -360,8 +361,8 @@ class ApiRequestNode(BaseNode, abc.ABC):
                     data_body = message_val if isinstance(message_val, str) else json.dumps(message_val)
 
         # HTTP Execution with Retries
-        retries = int(config.get("retries", 1))
-        retry_backoff = float(config.get("retry_backoff", 1.0))
+        retries = safe_int(config.get("retries"), 1)
+        retry_backoff = safe_float(config.get("retry_backoff"), 1.0)
         http_client = HttpClient()
 
         last_error = None

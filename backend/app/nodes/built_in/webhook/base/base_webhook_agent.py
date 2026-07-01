@@ -13,6 +13,7 @@ from uvicorn.config import Config
 
 from app.core.types.common import NodeInput, NodeOutput
 from app.nodes.base import TriggerNode
+from app.nodes.properties import safe_int
 
 
 class BaseWebhookAgent(TriggerNode, abc.ABC):
@@ -62,8 +63,10 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
         )
         config = {**self.properties, **overrides}
 
-        port = int(config.get("port", 8888))
-        host = config.get("host", "0.0.0.0")
+        port = safe_int(config.get("port"), 8888)
+        host = config.get("host") or "0.0.0.0"
+        if not host.strip():
+            host = "0.0.0.0"
         base_path = config.get("base_path", "").strip("/")
         self.logger.info("webhook config", port=port, host=host, base_path=base_path,name=self.name)
         server_key = (host, port)

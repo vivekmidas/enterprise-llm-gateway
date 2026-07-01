@@ -4,6 +4,7 @@ import subprocess
 from typing import Any, Dict, List
 from app.nodes.base import TriggerNode
 from app.core.types.common import NodeInput, NodeOutput
+from app.nodes.properties import safe_float
 
 class SchedulerAgent(TriggerNode):
     """
@@ -43,7 +44,7 @@ class SchedulerAgent(TriggerNode):
         config = {**self.properties, **overrides}
 
         # Calculate delay based on interval and unit (seconds vs minutes)
-        interval = float(config.get("interval", 60))
+        interval = safe_float(config.get("interval"), 60.0)
         unit = config.get("unit", "seconds")
         delay = interval if unit == "seconds" else interval * 60
 

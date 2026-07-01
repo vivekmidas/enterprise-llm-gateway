@@ -4,6 +4,7 @@ import datetime
 import abc
 from app.nodes.base import TriggerNode
 from pydantic import PrivateAttr, Field
+from app.nodes.properties import safe_int
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import CredentialDB
 from sqlalchemy import select
@@ -74,7 +75,7 @@ class EmailTriggerNode(TriggerNode, abc.ABC):
 
     async def _polling_loop(self, agent_node_id: str, config: Dict[str, Any]):
         """Generic loop that executes the specific _check_emails logic."""
-        interval = max(int(config.get("check_interval", 60)), 10)
+        interval = max(safe_int(config.get("check_interval"), 60), 10)
         while True:
             try:
                 await self._check_emails(agent_node_id, config)

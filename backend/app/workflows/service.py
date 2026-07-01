@@ -65,9 +65,14 @@ async def workflow_auto_discover():
     logger.info("workflow_auto_discover_started")
     try:
         workflows = await list_workflows_from_store()
+        logger.info("workflows", workflows_count=workflows.__len__())
         for workflow in workflows:
+            logger.info("workflow_auto_discover_node", workflow=workflow.name)
             if workflow.is_enabled:
+                logger.info("activating workflow", workflow_name=workflow.name)
                 await activate_workflow(workflow)
+            else:
+                logger.info("workflow not enabled", workflow_name=workflow.name)    
         logger.info("workflow_auto_discover_completed", count=len(workflows))
     except Exception as e:
         logger.error("workflow_auto_discover_failed", error=str(e))

@@ -312,19 +312,33 @@ async def get_customer_nodes(
     if not cust_res.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    from app.models.db_models import CustomerNodeDB
+    from app.models.db_models import CustomerNodeDB, NodeDB
+    from app.nodes.properties import property_entries_to_dict
     stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == customer_id)
     result = await db.execute(stmt)
     configs = result.scalars().all()
     
-    return {"configs": [
-        {
+    resolved_configs = []
+    for c in configs:
+        node_res = await db.execute(select(NodeDB).where(NodeDB.name == c.node_name))
+        node = node_res.scalar_one_or_none()
+        
+        global_defaults = {}
+        if node:
+            global_defaults = {
+                **property_entries_to_dict(node.system_properties),
+                **property_entries_to_dict(node.user_properties)
+            }
+            
+        merged_properties = {**global_defaults, **(c.properties or {})}
+        resolved_configs.append({
             "node_name": c.node_name,
-            "properties": c.properties,
+            "properties": merged_properties,
             "is_enabled": c.is_enabled,
             "updated_at": c.updated_at
-        } for c in configs
-    ]}
+        })
+        
+    return {"configs": resolved_configs}
 
 
 @router.put("/customers/{customer_id}/nodes", response_model=dict)

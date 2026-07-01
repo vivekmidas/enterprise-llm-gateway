@@ -305,7 +305,103 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
     )
     assert sa_get_fail_res.status_code == 400
 
-    # 8. Clean up
+    # 5. Re-enable the node via system admin bulk config
+    enable_bulk_res = await client.put(
+        f"/admin/customers/{acme_customer_id}/nodes",
+        json={"nodes": [{"node_name": "generic_llm_agent", "is_enabled": True}]},
+        headers=system_admin_headers
+    )
+    assert enable_bulk_res.status_code == 200
+
+    # 6. Test Tenant Admin (Acme) updating the custom label for their node
+    tenant_label_res = await client.put(
+        "/nodes/customer/config/generic_llm_agent",
+        json={"is_enabled": True, "label": "Custom Acme LLM Node"},
+        headers=acme_admin_headers
+    )
+    assert tenant_label_res.status_code == 200
+    assert tenant_label_res.json()["label"] == "Custom Acme LLM Node"
+
+    # 7. Test getting custom configs shows the new label for Acme Admin
+    acme_get_res = await client.get(
+        "/nodes/customer/config",
+        headers=acme_admin_headers
+    )
+    assert acme_get_res.status_code == 200
+    acme_config = next(c for c in acme_get_res.json()["configs"] if c["node_name"] == "generic_llm_agent")
+    assert acme_config["label"] == "Custom Acme LLM Node"
+
+    # 8. Test listing nodes (GET /nodes) overrides the label with the custom label for Acme admin/users
+    acme_list_res = await client.get(
+        "/nodes",
+        headers=acme_admin_headers
+    )
+    assert acme_list_res.status_code == 200
+    acme_node = next(n for n in acme_list_res.json()["nodes"] if n["name"] == "generic_llm_agent")
+    assert acme_node["label"] == "Custom Acme LLM Node"
+
+    # 9. Test property updates & deletion for Tenant Admin (role == admin)
+    # A. Configure with initial properties
+    override_res1 = await client.put(
+        "/nodes/customer/config/generic_llm_agent",
+        json={"is_enabled": True, "properties": {"api_key": "acme-api-key", "temperature": 0.7}},
+        headers=acme_admin_headers
+    )
+    assert override_res1.status_code == 200
+    assert override_res1.json()["properties"]["api_key"] == "acme-api-key"
+    assert override_res1.json()["properties"]["temperature"] == 0.7
+
+    # B. Update and delete one property by omitting it from incoming payload
+    override_res2 = await client.put(
+        "/nodes/customer/config/generic_llm_agent",
+        json={"is_enabled": True, "properties": {"api_key": "acme-api-key-new"}},
+        headers=acme_admin_headers
+    )
+    assert override_res2.status_code == 200
+    assert override_res2.json()["properties"]["api_key"] == "acme-api-key-new"
+    assert "temperature" not in override_res2.json()["properties"]
+
+    # C. Delete all properties (empty payload)
+    override_res3 = await client.put(
+        "/nodes/customer/config/generic_llm_agent",
+        json={"is_enabled": True, "properties": {}},
+        headers=acme_admin_headers
+    )
+    assert override_res3.status_code == 200
+    assert override_res3.json()["properties"] == {}
+
+    # 10. Test property updates & deletion for System Admin (role == system_admin)
+    # A. Set initial properties for system_admin
+    sa_prop_res1 = await client.put(
+        f"/nodes/customer/config/generic_llm_agent?customer_id={acme_customer_id}",
+        json={"is_enabled": True, "properties": {"api_key": "system-api-key", "system-timeout": 15}},
+        headers=system_admin_headers
+    )
+    assert sa_prop_res1.status_code == 200
+    # System Admin response contains merged properties dictionary
+    assert sa_prop_res1.json()["properties"]["api_key"] == "system-api-key"
+    assert sa_prop_res1.json()["properties"]["timeout"] == 15
+
+    # B. Update and delete one property by omitting it
+    sa_prop_res2 = await client.put(
+        f"/nodes/customer/config/generic_llm_agent?customer_id={acme_customer_id}",
+        json={"is_enabled": True, "properties": {"api_key": "system-api-key-new"}},
+        headers=system_admin_headers
+    )
+    assert sa_prop_res2.status_code == 200
+    assert sa_prop_res2.json()["properties"]["api_key"] == "system-api-key-new"
+    assert "timeout" not in sa_prop_res2.json()["properties"]
+
+    # C. Delete all properties
+    sa_prop_res3 = await client.put(
+        f"/nodes/customer/config/generic_llm_agent?customer_id={acme_customer_id}",
+        json={"is_enabled": True, "properties": {}},
+        headers=system_admin_headers
+    )
+    assert sa_prop_res3.status_code == 200
+    assert sa_prop_res3.json()["properties"] == {}
+
+    # 11. Clean up
     from app.models.db_models import CustomerNodeDB
     async with AsyncSessionLocal() as session:
         await session.execute(delete(UserDB).where(UserDB.email_id.in_([

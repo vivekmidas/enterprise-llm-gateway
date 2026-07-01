@@ -35,3 +35,22 @@ def property_entries_to_dict(value: Any) -> dict:
         return result
 
     return {}
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+

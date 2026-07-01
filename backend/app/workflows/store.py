@@ -151,10 +151,44 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
         if not workflow_node:
             raise HTTPException(status_code=404, detail="Workflow node not found")
         
-        user_node_properties = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+        # Load workflow metadata to get customer_id
+        stmt = select(WorkflowDB).where(WorkflowDB.id == workflow_id)
+        result = await session.execute(stmt)
+        db_workflow = result.scalar_one_or_none()
+        customer_id = db_workflow.customer_id if db_workflow else None
+        
+        # Load tenant overrides
+        tenant_overrides = {}
+        if customer_id is not None and workflow_node.agent_name:
+            from app.models.db_models import CustomerNodeDB
+            cust_res = await session.execute(
+                select(CustomerNodeDB).where(
+                    CustomerNodeDB.customer_id == customer_id,
+                    CustomerNodeDB.node_name == workflow_node.agent_name
+                )
+            )
+            cust_node = cust_res.scalar_one_or_none()
+            if cust_node and cust_node.properties:
+                tenant_overrides = cust_node.properties
+
+        workflow_overrides = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
         system_node_properties = await _get_workflow_node_details(session, workflow_node.agent_name)
-        system_props = property_entries_to_dict(system_node_properties.system_properties) if system_node_properties else {}
-        return {**system_props, **user_node_properties}
+        
+        global_system_defaults = property_entries_to_dict(system_node_properties.system_properties) if system_node_properties else {}
+        global_user_defaults = property_entries_to_dict(system_node_properties.user_properties) if system_node_properties else {}
+
+        # System properties are sacrosanct (no tenant overrides)
+        resolved_system = dict(global_system_defaults)
+        
+        # User properties resolved with correct precedence
+        resolved_user = {}
+        for k, v in global_user_defaults.items():
+            if k in tenant_overrides:
+                resolved_user[k] = tenant_overrides[k]
+            else:
+                resolved_user[k] = workflow_overrides.get(k, v)
+                
+        return {**resolved_system, **resolved_user}
 
 async def get_nodes_properties(agent_name: str) -> dict:
     async with AsyncSessionLocal() as session:
@@ -250,12 +284,15 @@ async def _hydrate_workflow_definition(
 
         catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
         catalog_node = catalog_result.scalar_one_or_none()
-        defaults = _default_properties_from_node_definition(catalog_node)
-        user_properties = dict(defaults)
-        system_properties = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
+        global_system_defaults = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
+        global_user_defaults = _default_properties_from_node_definition(catalog_node)
+        
+        # System properties are sacrosanct and cannot be overridden by tenant
+        resolved_system = dict(global_system_defaults)
 
+        tenant_overrides = {}
         # Merge customer admin overrides if customer_id is provided
-        if customer_id and agent_name:
+        if customer_id is not None and agent_name:
             from app.models.db_models import CustomerNodeDB
             result = await session.execute(
                 select(CustomerNodeDB).where(
@@ -265,19 +302,26 @@ async def _hydrate_workflow_definition(
             )
             cust_node = result.scalar_one_or_none()
             if cust_node and cust_node.properties:
-                user_properties.update(cust_node.properties)
-                system_properties.update(cust_node.properties)
+                tenant_overrides = cust_node.properties
 
         # Load instance-specific overrides for user properties from the store
         instance_overrides = await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))
         
-        # Prevent standard users from overriding admin properties
-        if customer_id and agent_name:
-            if 'cust_node' in locals() and cust_node and cust_node.properties:
-                for k in cust_node.properties.keys():
-                    instance_overrides.pop(k, None)
+        # Prevent standard users from overriding admin/tenant-locked properties
+        # Also clean out any system keys that might be present in instance_overrides by mistake
+        for k in global_system_defaults.keys():
+            instance_overrides.pop(k, None)
+            
+        for k in tenant_overrides.keys():
+            instance_overrides.pop(k, None)
 
-        user_properties.update(instance_overrides)
+        # Resolve user properties with the correct inheritance chain
+        resolved_user = {}
+        for k, v in global_user_defaults.items():
+            if k in tenant_overrides:
+                resolved_user[k] = tenant_overrides[k]
+            else:
+                resolved_user[k] = instance_overrides.get(k, v)
 
         if catalog_node:
             input_contract = catalog_node.input_contract or {}
@@ -289,8 +333,9 @@ async def _hydrate_workflow_definition(
                     output_contract = cust_node.output_contract
             data["input_contract"] = input_contract
             data["output_contract"] = output_contract
-        data["user_properties"] = user_properties
-        data["system_properties"] = system_properties
+        data["user_properties"] = resolved_user
+        data["system_properties"] = resolved_system
+        data["properties"] = {**resolved_system, **resolved_user}
 
         n_dict["data"] = data
         hydrated_nodes.append(NodeConfig.model_validate(n_dict))
@@ -413,7 +458,7 @@ async def save_workflow_to_store(
                     if target_user_id:
                         db_workflow.user_id = target_user_id
                         
-                    if customer_id:
+                    if customer_id is not None:
                         db_workflow.customer_id = customer_id
                         
                     db_workflow.updated_at = datetime.utcnow().isoformat()
@@ -532,7 +577,7 @@ async def list_workflows_from_store(customer_id: Optional[int] = None) -> list:
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB)
-                if customer_id:
+                if customer_id is not None:
                     stmt = stmt.where(WorkflowDB.customer_id == customer_id)
                 result = await session.execute(stmt)
                 workflows = []

@@ -11,6 +11,7 @@ import structlog
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from app.utils.text_splitter import RecursiveCharacterTextSplitter
+from app.nodes.properties import safe_int, safe_float
 
 logger = structlog.get_logger(__name__)
 
@@ -99,7 +100,7 @@ class GenericLLMVectorDB(BaseNode):
             "default": 0.7
         },
         {
-            "key": "top_k",
+            "key": "    ",
             "label": "Top K Results",
             "type": "number",
             "default": 5
@@ -221,13 +222,13 @@ class GenericLLMVectorDB(BaseNode):
         collection = config.get("collection_name", "documents")
         operation = config.get("operation", "upsert")
         strategy = config.get("chunking_strategy", "recursive")
-        chunk_size = int(config.get("chunk_size", 1000))
-        chunk_overlap = int(config.get("chunk_overlap", 200))
+        chunk_size = safe_int(config.get("chunk_size"), 1000)
+        chunk_overlap = safe_int(config.get("chunk_overlap"), 200)
         embed_url = config.get("embedding_api_url", "http://127.0.0.1:11434/v1/embeddings")
         embed_model = config.get("embedding_model", "nomic-embed-text")
         embed_key = config.get("embedding_api_key", "")
-        similarity_threshold = float(config.get("similarity_threshold", 0.7))
-        top_k = int(config.get("top_k", 5))
+        similarity_threshold = safe_float(config.get("similarity_threshold"), 0.7)
+        top_k = safe_int(config.get("top_k"), 5)
         self.logger.info("generic_llm_vector_db_config", config=config)
         # 2. Extract input data from payload or properties
         payload_data = self.get_input_data(inp)

@@ -3,6 +3,7 @@ import json
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from app.utils.text_splitter import RecursiveCharacterTextSplitter
+from app.nodes.properties import safe_int
 
 class TextChunkerNode(BaseNode):
     name: str = "text_chunker_node"
@@ -51,8 +52,8 @@ class TextChunkerNode(BaseNode):
         config = inp.config
         
         strategy = config.get("chunking_strategy", "recursive")
-        chunk_size = int(config.get("chunk_size", 1000))
-        chunk_overlap = int(config.get("chunk_overlap", 200))
+        chunk_size = safe_int(config.get("chunk_size"), 1000)
+        chunk_overlap = safe_int(config.get("chunk_overlap"), 200)
 
         # Get input text from payload or config
         data_val = self.get_input_data(inp)

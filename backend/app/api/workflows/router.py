@@ -49,7 +49,7 @@ async def get_workflow_by_id(
     logger.info("get_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
     try:
         workflow = await get_workflow(workflow_id, version)
-        if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+        if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
             raise HTTPException(status_code=403, detail="Access denied to this workflow")
         logger.info("get_workflow_response_success", workflow_id=workflow_id)
         return workflow
@@ -77,20 +77,20 @@ async def get_node_properties(
             
             # Verify authorization
             workflow = await get_workflow(workflow_id)
-            if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+            if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
                 raise HTTPException(status_code=403, detail="Access denied to this workflow")
             
-            user_properties = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+            workflow_overrides = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
             agent_name = str(workflow_node.agent_name) if workflow_node.agent_name else ""
             db_node = await _get_workflow_node_details(session, agent_name)
             
-            system_properties = {}
-            system_level_properties = {}
+            global_system_defaults = {}
+            global_user_defaults = {}
             input_contract = {}
             output_contract = {}
             if db_node:
-                system_properties = property_entries_to_dict(db_node.user_properties)
-                system_level_properties = property_entries_to_dict(db_node.system_properties)
+                global_system_defaults = property_entries_to_dict(db_node.system_properties)
+                global_user_defaults = property_entries_to_dict(db_node.user_properties)
                 input_contract = db_node.input_contract or {}
                 output_contract = db_node.output_contract or {}
 
@@ -103,31 +103,38 @@ async def get_node_properties(
                 )
             )
             cust_node = result.scalar_one_or_none()
+            tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
             if cust_node:
-                if cust_node.properties:
-                    # system properties default overrides
-                    system_properties.update(cust_node.properties)
-                    system_level_properties.update(cust_node.properties)
                 if cust_node.input_contract is not None:
                     input_contract = cust_node.input_contract
                 if cust_node.output_contract is not None:
                     output_contract = cust_node.output_contract
 
-            # user properties override system properties
-            merged_properties = {**system_properties, **user_properties}
+            # System properties are sacrosanct and cannot be overridden by tenant
+            resolved_system = dict(global_system_defaults)
+            
+            # User properties can be overridden by tenant (locking them) or by workflow instances (if not locked)
+            resolved_user = {}
+            for k, v in global_user_defaults.items():
+                if k in tenant_overrides:
+                    resolved_user[k] = tenant_overrides[k]
+                else:
+                    resolved_user[k] = workflow_overrides.get(k, v)
+
+            # Unified properties list
+            resolved_properties = {**resolved_system, **resolved_user}
 
             if current_user.role not in ["system_admin", "admin"]:
-                merged_properties = _mask_sensitive_properties(merged_properties)
-                user_properties = _mask_sensitive_properties(user_properties)
-                system_properties = _mask_sensitive_properties(system_properties)
-                system_level_properties = _mask_sensitive_properties(system_level_properties)
+                resolved_properties = _mask_sensitive_properties(resolved_properties)
+                resolved_user = _mask_sensitive_properties(resolved_user)
+                resolved_system = _mask_sensitive_properties(resolved_system)
 
             logger.info("get_workflow_properties_response_success", workflow_id=workflow_id)
             return {
-                "user_properties": user_properties,
-                "system_properties": system_properties,
-                "system_level_properties": system_level_properties,
-                "properties": merged_properties,
+                "user_properties": resolved_user,
+                "system_properties": resolved_system,
+                "system_level_properties": resolved_system,
+                "properties": resolved_properties,
                 "input_contract": input_contract,
                 "output_contract": output_contract
             }
@@ -147,7 +154,7 @@ async def update_node_properties(
     
     # Verify authorization
     workflow = await get_workflow(workflow_id)
-    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
         
     # Prevent standard users from modifying admin-configured keys
@@ -181,7 +188,7 @@ async def update_node_properties(
 async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(get_current_user)):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
     workflow = await get_workflow(workflow_id)
-    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
     try:
         return await toggle_workflow_in_store(workflow_id)
@@ -231,7 +238,7 @@ async def remove_workflow(workflow_id: str, version: Optional[str] = None, curre
     except Exception:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    if workflow.customer_id and workflow.customer_id != current_user.customer_id:
+    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
 
     # 2. Authorization: Only the creator (user_id) or an admin can delete

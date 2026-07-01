@@ -68,6 +68,7 @@ class CustomerNodeDB(Base):
     is_enabled = Column(Boolean, default=True)
     input_contract = Column(JSON, nullable=True)
     output_contract = Column(JSON, nullable=True)
+    label = Column(String, nullable=True)
     updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
 

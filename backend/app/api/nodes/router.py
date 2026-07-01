@@ -121,14 +121,30 @@ async def get_customer_node_configs(
     stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == target_customer_id)
     result = await db.execute(stmt)
     configs = result.scalars().all()
-    return {"configs": [
-        {
+    
+    resolved_configs = []
+    for c in configs:
+        # Load global node definition
+        node_res = await db.execute(select(NodeDB).where(NodeDB.name == c.node_name))
+        node = node_res.scalar_one_or_none()
+        
+        global_defaults = {}
+        if node:
+            global_defaults = {
+                **property_entries_to_dict(node.system_properties),
+                **property_entries_to_dict(node.user_properties)
+            }
+        
+        merged_properties = {**global_defaults, **(c.properties or {})}
+        resolved_configs.append({
             "node_name": c.node_name,
-            "properties": c.properties,
+            "properties": merged_properties,
             "is_enabled": c.is_enabled,
+            "label": c.label,
             "updated_at": c.updated_at
-        } for c in configs
-    ]}
+        })
+        
+    return {"configs": resolved_configs}
 
 
 @router.put("/customer/config/{node_name}")
@@ -143,10 +159,11 @@ async def configure_customer_node(
     if current_user.role not in ["admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
         
-    target_customer_id = customer_id or config_data.get("customer_id") or config_data.get("customerId")
+    target_customer_id = customer_id
     if current_user.role == "system_admin" and target_customer_id is None:
         raise HTTPException(status_code=400, detail="customer_id is required")
 
+    base_node = None
     if current_user.role == "admin":
         # update specific customer node definitions
         target_customer_id = current_user.customer_id
@@ -156,13 +173,15 @@ async def configure_customer_node(
         )
         result = await db.execute(stmt)
         customer_node = result.scalar_one_or_none()
-        if not customer_node:
-            # Check if base node exists first
-            node_exists_stmt = select(NodeDB).where(NodeDB.name == node_name)
-            node_exists_res = await db.execute(node_exists_stmt)
-            if not node_exists_res.scalar_one_or_none():
-                raise HTTPException(status_code=404, detail="Node not found")
+        
+        # Check if base node exists first
+        node_exists_stmt = select(NodeDB).where(NodeDB.name == node_name)
+        node_exists_res = await db.execute(node_exists_stmt)
+        base_node = node_exists_res.scalar_one_or_none()
+        if not base_node:
+            raise HTTPException(status_code=404, detail="Node not found")
             
+        if not customer_node:
             customer_node = CustomerNodeDB(
                 customer_id=target_customer_id,
                 node_name=node_name,
@@ -197,6 +216,12 @@ async def configure_customer_node(
                     val = item.get("value") if "value" in item else item.get("default")
                     updates.append((item["key"], val))
 
+        # Get the set of keys that should remain
+        incoming_keys = set()
+        for k, _ in updates:
+            actual_key = k[7:] if k.startswith("system-") else k
+            incoming_keys.add(actual_key)
+
         if current_user.role == "system_admin":
             # Update NodeDB columns: system_properties and user_properties
             sys_props = customer_node.system_properties
@@ -220,6 +245,23 @@ async def configure_customer_node(
                 user_props = dict(user_props)
             else:
                 user_props = []
+
+            # Delete properties that are NOT in incoming_keys
+            if isinstance(sys_props, dict):
+                sys_props = {k: v for k, v in sys_props.items() if k in incoming_keys}
+            elif isinstance(sys_props, list):
+                sys_props = [
+                    item for item in sys_props
+                    if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
+                ]
+
+            if isinstance(user_props, dict):
+                user_props = {k: v for k, v in user_props.items() if k in incoming_keys}
+            elif isinstance(user_props, list):
+                user_props = [
+                    item for item in user_props
+                    if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
+                ]
 
             # Extract existing system keys to identify them even without prefix
             if isinstance(sys_props, dict):
@@ -265,11 +307,9 @@ async def configure_customer_node(
             customer_node.system_properties = sys_props
             customer_node.user_properties = user_props
         else:
-            # Update CustomerNodeDB properties column: merge the ones received
-            current_properties = dict(customer_node.properties or {})
-            for k, v in updates:
-                current_properties[k] = v
-            customer_node.properties = current_properties
+            # Update CustomerNodeDB properties column: replace it entirely with incoming overrides, excluding system properties
+            sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()
+            customer_node.properties = {k: v for k, v in updates if k not in sys_prop_keys}
 
     if "is_enabled" in config_data:
         if current_user.role == "admin":
@@ -279,6 +319,9 @@ async def configure_customer_node(
         customer_node.input_contract = config_data["input_contract"]
     if "output_contract" in config_data:
         customer_node.output_contract = config_data["output_contract"]
+    if "label" in config_data:
+        if current_user.role == "admin":
+            customer_node.label = config_data["label"]
         
     if current_user.role == "admin":
         customer_node.updated_at = datetime.utcnow().isoformat()
@@ -303,6 +346,7 @@ async def configure_customer_node(
             "node_name": customer_node.node_name,
             "properties": customer_node.properties,
             "is_enabled": customer_node.is_enabled,
+            "label": customer_node.label,
             "input_contract": customer_node.input_contract,
             "output_contract": customer_node.output_contract
         }
@@ -334,6 +378,8 @@ async def list_nodes(
                     merged["input_contract"] = cust_node.input_contract
                 if cust_node.output_contract is not None:
                     merged["output_contract"] = cust_node.output_contract
+                if getattr(cust_node, "label", None) is not None:
+                    merged["label"] = cust_node.label
             filtered_nodes.append(merged)
         else:
             if cust_node and cust_node.is_enabled:
@@ -344,6 +390,8 @@ async def list_nodes(
                     merged["input_contract"] = cust_node.input_contract
                 if cust_node.output_contract is not None:
                     merged["output_contract"] = cust_node.output_contract
+                if getattr(cust_node, "label", None) is not None:
+                    merged["label"] = cust_node.label
                 filtered_nodes.append(merged)
                 
     return {"nodes": filtered_nodes}
@@ -385,6 +433,8 @@ async def get_node(
             merged_node["input_contract"] = cust_node.input_contract
         if cust_node.output_contract is not None:
             merged_node["output_contract"] = cust_node.output_contract
+        if getattr(cust_node, "label", None) is not None:
+            merged_node["label"] = cust_node.label
     return {"node": merged_node}
 
 
@@ -422,6 +472,8 @@ async def get_node_by_id(
             merged_node["input_contract"] = cust_node.input_contract
         if cust_node.output_contract is not None:
             merged_node["output_contract"] = cust_node.output_contract
+        if getattr(cust_node, "label", None) is not None:
+            merged_node["label"] = cust_node.label
     return {"node": merged_node}
 
 
@@ -464,6 +516,8 @@ async def update_node(
     defaults = _defaults_from_payload(node_data)
 
     for key, value in node_data.items():
+        if key in ["id", "name"]:
+            continue
         if hasattr(node, key):
             setattr(node, key, value)
 
@@ -485,7 +539,7 @@ async def create_node(
     if "category" in node_data and node_data["category"]:
         node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
 
-    new_node = NodeDB(**{key: value for key, value in node_data.items() if hasattr(NodeDB, key)})
+    new_node = NodeDB(**{key: value for key, value in node_data.items() if key != "id" and hasattr(NodeDB, key)})
     db.add(new_node)
     await db.commit()
     await db.refresh(new_node)
@@ -523,6 +577,8 @@ async def get_nodes_by_category(
                     merged["input_contract"] = cust_node.input_contract
                 if cust_node.output_contract is not None:
                     merged["output_contract"] = cust_node.output_contract
+                if getattr(cust_node, "label", None) is not None:
+                    merged["label"] = cust_node.label
             filtered_nodes.append(merged)
         else:
             if cust_node and cust_node.is_enabled:
@@ -532,6 +588,8 @@ async def get_nodes_by_category(
                     merged["input_contract"] = cust_node.input_contract
                 if cust_node.output_contract is not None:
                     merged["output_contract"] = cust_node.output_contract
+                if getattr(cust_node, "label", None) is not None:
+                    merged["label"] = cust_node.label
                 filtered_nodes.append(merged)
 
     return {"nodes": filtered_nodes}
