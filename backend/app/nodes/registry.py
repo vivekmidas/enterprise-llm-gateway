@@ -138,8 +138,29 @@ class NodesRegistry:
             if isinstance(code_props, dict):
                 code_list = [{"key": k, "default": v} for k, v in code_props.items()]
 
-            db_keys = {item.get("key"): item for item in db_list if isinstance(item, dict) and "key" in item}
-            code_keys = {item.get("key"): item for item in code_list if isinstance(item, dict) and "key" in item}
+            # Decode stringified items if they exist
+            parsed_db_list = []
+            for item in db_list:
+                if isinstance(item, str):
+                    try:
+                        parsed_db_list.append(json.loads(item))
+                    except Exception:
+                        pass
+                elif isinstance(item, dict):
+                    parsed_db_list.append(item)
+
+            parsed_code_list = []
+            for item in code_list:
+                if isinstance(item, str):
+                    try:
+                        parsed_code_list.append(json.loads(item))
+                    except Exception:
+                        pass
+                elif isinstance(item, dict):
+                    parsed_code_list.append(item)
+
+            db_keys = {item.get("key"): item for item in parsed_db_list if isinstance(item, dict) and "key" in item}
+            code_keys = {item.get("key"): item for item in parsed_code_list if isinstance(item, dict) and "key" in item}
 
             merged_list = []
 
@@ -171,19 +192,59 @@ class NodesRegistry:
                     result = await session.execute(stmt)
                     db_node = result.scalar_one_or_none()
 
-                    # Load defaults from Python node class
-                    user_props_code = node.user_properties or []
-                    system_props_code = node.system_properties or {}
+                    # Load original, unmutated defaults from Python node class definition
+                    user_props_code = []
+                    system_props_code = []
+
+                    def get_clean_default(field_obj):
+                        if not field_obj:
+                            return []
+                        val = getattr(field_obj, "default", [])
+                        if val is None or "Undefined" in val.__class__.__name__:
+                            factory = getattr(field_obj, "default_factory", None)
+                            if factory is not None:
+                                try:
+                                    val = factory()
+                                except Exception:
+                                    val = []
+                            else:
+                                val = []
+                        return val
+
+                    if hasattr(node.__class__, "model_fields"):
+                        user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
+                        system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
+                    elif hasattr(node.__class__, "__fields__"):
+                        user_props_code = get_clean_default(node.__class__.__fields__.get("user_properties"))
+                        system_props_code = get_clean_default(node.__class__.__fields__.get("system_properties"))
+                    else:
+                        user_props_code = node.user_properties or []
+                        system_props_code = node.system_properties or []
 
                     if not db_node:
                         cls.logger.info("registering_new_node_to_db", name=node_name)
+                        
+                        # Dynamically map node category string to database category ID
+                        node_category = getattr(node, "category", "") or "Custom"
+                        category_id = "1"
+                        if node_category.lower() in ["guardrails", "safety guardrails"]:
+                            category_id = "2"
+                        elif node_category.lower() in ["external systems", "external"]:
+                            category_id = "3"
+                        elif node_category.lower() in ["data operations", "transform"]:
+                            category_id = "4"
+                        elif node_category.lower() in ["databases", "database"]:
+                            category_id = "5"
+                        elif node_category.lower() in ["triggers", "trigger"]:
+                            category_id = "6"
+
                         new_db_node = NodeDB(
                             name=node.name,
                             label=node.label,
                             node_type=node.node_type.upper() if node.node_type else "NODE",
                             description=node.description,
                             version=node.version,
-                            category="1",
+                            category=category_id,
                             group=node.group,
                             icon="bot",
                             color=node.color,

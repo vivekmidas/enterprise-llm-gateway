@@ -68,7 +68,7 @@ class GenericMySQLDBExecutor(DBExecutor):
 
         try:
             conn = mysql.connector.connect(
-                host=connection_config.get("host", "localhost"),
+                host=connection_config.get("host", "127.0.0.1"),
                 user=connection_config.get("user", "root"),
                 passwd=connection_config.get("password", ""),
                 database=connection_config.get("database", ""),
