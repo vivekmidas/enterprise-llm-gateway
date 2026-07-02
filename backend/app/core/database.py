@@ -18,9 +18,12 @@ def _refresh_workflow_node_properties_table(sync_conn):
     expected_columns = {"workflow_id", "agent_node_id", "agent_name", "properties"}
     legacy_columns = {"workflow_node_id", "key", "value"}
     if expected_columns.issubset(columns) and columns.isdisjoint(legacy_columns):
+        if "label" not in columns:
+            sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN label VARCHAR")
         return
 
     Base.metadata.tables["workflow_node_properties"].drop(sync_conn, checkfirst=True)
+
 
 
 def _refresh_customer_nodes_table(sync_conn):

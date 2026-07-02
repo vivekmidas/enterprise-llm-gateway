@@ -159,6 +159,9 @@ async def update_node_properties(
     if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
         
+    # Pop out label to store separately under its own database field
+    label = properties.pop("label", None)
+
     # Prevent standard users from modifying admin-configured keys
     if current_user.role not in ["system_admin", "admin"]:
         from app.core.database import AsyncSessionLocal
@@ -183,7 +186,8 @@ async def update_node_properties(
                         else:
                             properties.pop(k, None)
 
-    return await update_workflow_node_properties(workflow_id, agent_node_id, properties)
+    return await update_workflow_node_properties(workflow_id, agent_node_id, properties, label=label)
+
 
 
 @router.patch("/{workflow_id}/toggle", response_model=dict)

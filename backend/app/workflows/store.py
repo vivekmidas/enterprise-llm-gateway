@@ -203,12 +203,23 @@ async def update_workflow_node_properties(
     workflow_id: str,
     agent_node_id: str,
     properties: dict,
+    label: Optional[str] = None,
 ) -> dict:
     async with AsyncSessionLocal() as session:
         async with session.begin():
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
             if not workflow_node:
                 raise HTTPException(status_code=404, detail="Workflow node not found")
+
+            # Get existing label first, fallback to passed label
+            existing_result = await session.execute(
+                select(WorkflowNodePropertyDB.label).where(
+                    WorkflowNodePropertyDB.workflow_id == workflow_id,
+                    WorkflowNodePropertyDB.agent_node_id == agent_node_id
+                )
+            )
+            existing_label = existing_result.scalar_one_or_none()
+            final_label = label if label is not None else existing_label
 
             await session.execute(
                 delete(WorkflowNodePropertyDB).where(
@@ -222,8 +233,10 @@ async def update_workflow_node_properties(
                     agent_node_id=agent_node_id,
                     agent_name=workflow_node.agent_name,
                     properties=properties,
+                    label=final_label,
                 )
             )
+
 
         await workflow_cache.invalidate_agent(workflow_id)
         return {"workflow_id": workflow_id, "agent_node_id": agent_node_id, "properties": properties}
@@ -306,8 +319,24 @@ async def _hydrate_workflow_definition(
             if cust_node and cust_node.properties:
                 tenant_overrides = cust_node.properties
 
-        # Load instance-specific overrides for user properties from the store
-        instance_overrides = await _load_workflow_node_properties(session, definition.id, n_dict.get("id"))
+        # Load instance-specific overrides for user properties and label from the store
+        prop_result = await session.execute(
+            select(WorkflowNodePropertyDB).where(
+                WorkflowNodePropertyDB.workflow_id == definition.id,
+                WorkflowNodePropertyDB.agent_node_id == n_dict.get("id"),
+            )
+        )
+        prop_row = prop_result.scalar_one_or_none()
+        print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
+        instance_overrides = {}
+        if prop_row:
+            if prop_row.properties:
+                instance_overrides = prop_row.properties if isinstance(prop_row.properties, dict) else _safe_json_loads(prop_row.properties, {})
+            if prop_row.label:
+                data["label"] = prop_row.label
+                print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
+
+
         
         # Prevent standard users from overriding admin/tenant-locked properties
         # Also clean out any system keys that might be present in instance_overrides by mistake
@@ -502,6 +531,7 @@ async def save_workflow_to_store(
                                 agent_node_id=n_dict.get("id"),
                                 agent_name=agent_name,
                                 properties=instance_properties,
+                                label=node_data.get("label") or n_dict.get("label"),
                             )
                         )
 
