@@ -17,40 +17,40 @@ class GenericMySQLDBExecutor(DBExecutor):
     description: str = "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating."
 
     # Define connection properties so they are exposed to the UI Builder
-    user_properties: List[Dict[str, Any]] = [
-        {"key": "host", "label": "Host", "type": "string", "default": "localhost", "required": True},
-        {"key": "port", "label": "Port", "type": "number", "default": 3306, "required": True},
-        {"key": "user", "label": "Username", "type": "string", "default": "root", "required": True},
-        {"key": "password", "label": "Password", "type": "password", "default": "", "required": False},
-        {"key": "database", "label": "Database Name", "type": "string", "default": "", "required": True}
-    ]
+    # user_properties: List[Dict[str, Any]] = [
+    #     {"key": "db_host", "label": "Host", "type": "string", "default": "127.0.0.1", "required": True},
+    #     {"key": "db_port", "label": "Port", "type": "number", "default": 3306, "required": True},
+    #     {"key": "username", "label": "Username", "type": "string", "default": "root", "required": True},
+    #     {"key": "password", "label": "Password", "type": "password", "default": "password", "required": False},
+    #     {"key": "database", "label": "Database Name", "type": "string", "default": "test", "required": True}
+    # ]
 
     # Input contract defining the payload structure for the execute step (flat rules format)
-    input_contract: Dict[str, Any] = {
-        "version": "1.0",
-        "rules": [
-            {"field_name": "query_type", "field_type": "string", "required": False},
-            {"field_name": "query", "field_type": "string", "required": False},
-            {"field_name": "table_name", "field_type": "string", "required": False},
-            {"field_name": "fields", "field_type": "object", "required": False},
-            {"field_name": "field_names", "field_type": "array", "required": False},
-            {"field_name": "field_values", "field_type": "array", "required": False},
-            {"field_name": "condition", "field_type": "string", "required": False},
-            {"field_name": "condition_params", "field_type": "array", "required": False},
-            {"field_name": "params", "field_type": "object", "required": False}
-        ],
-        "additional_fields": True
-    }
+    # input_contract: Dict[str, Any] = {
+    #     "version": "1.0",
+    #     "rules": [
+    #         {"field_name": "query_type", "field_type": "string", "required": False},
+    #         {"field_name": "query", "field_type": "string", "required": False},
+    #         {"field_name": "table_name", "field_type": "string", "required": False},
+    #         {"field_name": "fields", "field_type": "object", "required": False},
+    #         {"field_name": "field_names", "field_type": "array", "required": False},
+    #         {"field_name": "field_values", "field_type": "array", "required": False},
+    #         {"field_name": "condition", "field_type": "string", "required": False},
+    #         {"field_name": "condition_params", "field_type": "array", "required": False},
+    #         {"field_name": "params", "field_type": "object", "required": False}
+    #     ],
+    #     "additional_fields": True
+    # }
 
     # Output contract defining the response format (flat rules format)
-    output_contract: Dict[str, Any] = {
-        "version": "1.0",
-        "rules": [
-            {"field_name": "rowcount", "field_type": "integer", "required": False},
-            {"field_name": "lastrowid", "field_type": "integer", "required": False}
-        ],
-        "additional_fields": True
-    }
+    # output_contract: Dict[str, Any] = {
+    #     "version": "1.0",
+    #     "rules": [
+    #         {"field_name": "rowcount", "field_type": "integer", "required": False},
+    #         {"field_name": "lastrowid", "field_type": "integer", "required": False}
+    #     ],
+    #     "additional_fields": True
+    # }
 
     def _quote_identifier(self, identifier: str) -> str:
         """Quotes an identifier to prevent SQL injection for table/column names."""
@@ -70,8 +70,8 @@ class GenericMySQLDBExecutor(DBExecutor):
             conn = mysql.connector.connect(
                 host=connection_config.get("host", "127.0.0.1"),
                 user=connection_config.get("user", "root"),
-                passwd=connection_config.get("password", ""),
-                database=connection_config.get("database", ""),
+                passwd=connection_config.get("password", "password"),
+                database=connection_config.get("database", "test"),
                 port=port
             )
             self.logger.info("mysql_connection_acquired", database=connection_config.get("database"))
