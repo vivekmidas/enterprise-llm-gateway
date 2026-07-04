@@ -12,12 +12,12 @@ logger = structlog.get_logger(__name__)
 def debug_log(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        logger.debug(
-            "contracts_function_call",
-            function=func.__name__,
-            args=[type(arg).__name__ for arg in args],
-            kwargs=list(kwargs.keys()),
-        )
+        # logger.debug(
+        #     "contracts_function_call",
+        #     function=func.__name__,
+        #     args=[type(arg).__name__ for arg in args],
+        #     kwargs=list(kwargs.keys()),
+        # )
         return func(*args, **kwargs)
 
     return wrapper
@@ -111,8 +111,14 @@ def normalize_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 @debug_log
-def validate_input_contract(contract: Dict[str, Any], inp: NodeInput, node_name: str = "node") -> List[str]:
-    logger.info("starting validate_input_contract", contract=contract, input=inp, name=node_name)
+def validate_input_contract(
+    contract: Dict[str, Any],
+    inp: NodeInput,
+    node_name: str = "node",
+    predecessor_output: Optional[Any] = None,
+    workflow_input: Optional[Any] = None
+) -> List[str]:
+    logger.info("starting validate_input_contract", contract=contract.get("rules"), input=inp.data, name=node_name)
     schema = normalize_contract(contract)
     if not schema:
         return []
@@ -121,6 +127,40 @@ def validate_input_contract(contract: Dict[str, Any], inp: NodeInput, node_name:
     logger.info("End validate_input_contract", errors=errors)
     if errors:
         return errors
+
+    # Parse predecessor_output and workflow_input if strings
+    parsed_output = predecessor_output
+    if isinstance(parsed_output, str):
+        try:
+            parsed_output = json.loads(parsed_output)
+        except Exception:
+            pass
+
+    parsed_input = workflow_input
+    if isinstance(parsed_input, str):
+        try:
+            parsed_input = json.loads(parsed_input)
+        except Exception:
+            pass
+
+    render_context = {
+        "output": parsed_output,
+        "data": parsed_output,
+        "inputdata": parsed_input,
+        "input_data": parsed_input,
+        "nodes": inp.context.get("nodes", {}) if (inp and getattr(inp, "context", None)) else {},
+    }
+
+    # Resolve templates in the body
+    resolved_body = resolve_jinja_templates_in_data(body, render_context)
+    body = resolved_body
+
+    # Update inp.data to propagate resolved values
+    if isinstance(resolved_body, (dict, list)):
+        inp.data = json.dumps(resolved_body)
+    else:
+        inp.data = str(resolved_body)
+
     if (
         schema.get("type") == "object"
         and isinstance(body, dict)
@@ -562,3 +602,231 @@ def _validate_file_constraints(value: Any, schema: Dict[str, Any], path: str) ->
             errors.append(f"{path} must be an image mime-type (image/*)")
             
     return errors
+
+
+@debug_log
+def validate_output_contract(
+    contract: Dict[str, Any],
+    output: Any,  # NodeOutput or dict or str
+    node_name: str = "node",
+    predecessor_output: Optional[Any] = None,
+    workflow_input: Optional[Any] = None,
+    context_nodes: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    logger.info("starting validate_output_contract", contract=contract, output=output, name=node_name)
+    schema = normalize_contract(contract)
+    if not schema:
+        return []
+
+    from app.core.types.common import NodeOutput
+    if isinstance(output, NodeOutput):
+        body_str = output.data
+    else:
+        body_str = output
+
+    body = body_str
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    parsed_output = predecessor_output
+    if isinstance(parsed_output, str):
+        try:
+            parsed_output = json.loads(parsed_output)
+        except Exception:
+            pass
+
+    parsed_input = workflow_input
+    if isinstance(parsed_input, str):
+        try:
+            parsed_input = json.loads(parsed_input)
+        except Exception:
+            pass
+
+    render_context = {
+        "output": parsed_output,
+        "data": parsed_output,
+        "inputdata": parsed_input,
+        "input_data": parsed_input,
+        "nodes": context_nodes or {},
+    }
+
+    resolved_body = resolve_jinja_templates_in_data(body, render_context)
+    body = resolved_body
+
+    # Update output data representation
+    if isinstance(output, NodeOutput):
+        if isinstance(resolved_body, (dict, list)):
+            output.data = json.dumps(resolved_body)
+        else:
+            output.data = str(resolved_body)
+    elif isinstance(output, dict):
+        output.clear()
+        if isinstance(resolved_body, dict):
+            output.update(resolved_body)
+
+    if (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and set(schema.get("properties", {}).keys()) == {"data"}
+        and "data" not in body
+    ):
+        body = {"data": body}
+
+    if (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and "data" in body
+        and isinstance(body["data"], dict)
+        and "data" not in schema.get("properties", {})
+    ):
+        body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+
+    return _validate_value(body, schema, "$")
+
+
+def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:
+    expr = expr.strip()
+    
+    # Support root[].field or similar path extraction
+    if '[]' in expr:
+        resolved = _extract_list_values(expr, context)
+        if resolved is not None:
+            return resolved
+            
+    # Try to resolve directly via dotted path lookup first
+    if '.' in expr or expr in context:
+        if not any(c in expr for c in ['"', "'", '(', ')']):
+            resolved = _resolve_dotted_path(expr, context)
+            if resolved is not None:
+                return resolved
+                
+    # Otherwise, fall back to standard Jinja NativeTemplate render
+    try:
+        try:
+            from jinja2.nativetypes import NativeTemplate
+        except ImportError:
+            from jinja2 import Template as NativeTemplate
+        from jinja2 import Undefined
+        
+        tpl = NativeTemplate(f"{{{{ {expr} }}}}")
+        rendered = tpl.render(**context)
+        if isinstance(rendered, Undefined):
+            return None
+        return rendered
+    except Exception:
+        return None
+
+
+def _resolve_dotted_path(dotted_path: str, obj: Any) -> Any:
+    parts = [p.strip() for p in dotted_path.split('.') if p.strip()]
+    current = obj
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif hasattr(current, part):
+            current = getattr(current, part)
+        else:
+            return None
+    return current
+
+
+def _extract_list_values(expr: str, context: Dict[str, Any]) -> Optional[List[Any]]:
+    path = expr.strip().strip("'\"")
+    if '[]' not in path:
+        return None
+        
+    left_part, right_part = path.split('[]', 1)
+    left_part = left_part.strip()
+    right_part = right_part.strip()
+    
+    if right_part.startswith('.'):
+        field_name = right_part[1:]
+    else:
+        field_name = right_part
+        
+    target_list = None
+    if left_part:
+        target_list = _resolve_dotted_path(left_part, context)
+        if target_list is None:
+            for candidate in ["input_data", "inputdata", "data", "output"]:
+                cand_ctx = context.get(candidate)
+                if cand_ctx:
+                    target_list = _resolve_dotted_path(left_part, cand_ctx)
+                    if target_list is not None:
+                        break
+                        
+    if target_list is None or not isinstance(target_list, list):
+        for candidate in ["input_data", "inputdata", "data", "output"]:
+            cand_ctx = context.get(candidate)
+            if isinstance(cand_ctx, list):
+                target_list = cand_ctx
+                break
+            elif isinstance(cand_ctx, dict):
+                if left_part and left_part in cand_ctx and isinstance(cand_ctx[left_part], list):
+                    target_list = cand_ctx[left_part]
+                    break
+                elif 'data' in cand_ctx and isinstance(cand_ctx['data'], list):
+                    target_list = cand_ctx['data']
+                    break
+                elif 'root' in cand_ctx and isinstance(cand_ctx['root'], list):
+                    target_list = cand_ctx['root']
+                    break
+                    
+    if target_list is None or not isinstance(target_list, list):
+        if isinstance(context, list):
+            target_list = context
+        elif isinstance(context, dict):
+            for v in context.values():
+                if isinstance(v, list):
+                    target_list = v
+                    break
+                    
+    if not isinstance(target_list, list):
+        return None
+        
+    result = []
+    for item in target_list:
+        if isinstance(item, dict):
+            if field_name:
+                val = _resolve_dotted_path(field_name, item)
+                result.append(val)
+            else:
+                result.append(item)
+        else:
+            result.append(item)
+    return result
+
+
+def resolve_jinja_templates_in_data(template: Any, render_context: Dict[str, Any]) -> Any:
+    if isinstance(template, dict):
+        return {k: resolve_jinja_templates_in_data(v, render_context) for k, v in template.items()}
+    elif isinstance(template, list):
+        return [resolve_jinja_templates_in_data(i, render_context) for i in template]
+    elif isinstance(template, str) and "{{" in template and "}}" in template:
+        match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
+        if match:
+            expr = match.group(1)
+            resolved = _resolve_single_expression(expr, render_context)
+            if resolved is not None:
+                return resolved
+            return template
+            
+        pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+        def replace_match(m):
+            expr = m.group(1)
+            resolved = _resolve_single_expression(expr, render_context)
+            if resolved is not None:
+                if isinstance(resolved, (list, dict)):
+                    return json.dumps(resolved)
+                return str(resolved)
+            return m.group(0)
+        try:
+            return pattern.sub(replace_match, template)
+        except Exception:
+            return template
+    return template
+
+

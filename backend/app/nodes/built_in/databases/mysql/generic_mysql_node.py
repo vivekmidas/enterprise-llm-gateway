@@ -17,6 +17,17 @@ class GenericMySQLDBExecutor(DBExecutor):
     description: str = "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating."
 
     # Define connection properties so they are exposed to the UI Builder
+    #   [
+    #       {
+    #           "date": "2025-07-03",
+    #           "open": 212.15,
+    #           "high": 214.65,
+    #           "low": 211.81,
+    #           "close": 213.55,
+    #           "adjusted_close": 212.7061,
+    #           "volume": 34955800
+    #       }
+    # ]
     # user_properties: List[Dict[str, Any]] = [
     #     {"key": "db_host", "label": "Host", "type": "string", "default": "127.0.0.1", "required": True},
     #     {"key": "db_port", "label": "Port", "type": "number", "default": 3306, "required": True},
@@ -131,7 +142,7 @@ class GenericMySQLDBExecutor(DBExecutor):
         quoted_table_name = self._quote_identifier(table_name)
         sql_params: List[Any] = []
 
-        if query_type == "insert":
+        if query_type.lower() == "insert":
             if not field_names or not field_values or len(field_names) != len(field_values):
                 raise ValueError("For INSERT, field_names and field_values must be provided and match in length.")
             

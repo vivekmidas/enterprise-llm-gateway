@@ -3,7 +3,7 @@ from functools import lru_cache
 import redis.asyncio as redis
 
 class Settings(BaseSettings):
-    REDIS_HOST: str = "localhost"
+    REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str | None = None
@@ -20,15 +20,37 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
-@lru_cache()
+_loop_redis_clients = {}
+
 def get_redis_client():
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
     settings = get_settings()
-    return redis.Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        db=settings.REDIS_DB,
-        password=settings.REDIS_PASSWORD,
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-    )
+    
+    if loop:
+        loop_id = id(loop)
+        if loop_id not in _loop_redis_clients:
+            _loop_redis_clients[loop_id] = redis.Redis(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                db=settings.REDIS_DB,
+                password=settings.REDIS_PASSWORD,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
+        return _loop_redis_clients[loop_id]
+    else:
+        return redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=settings.REDIS_DB,
+            password=settings.REDIS_PASSWORD,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )

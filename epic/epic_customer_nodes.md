@@ -232,14 +232,30 @@ When a workflow is built, loaded, or executed, the system resolves its nodes' co
 
 ### B. Access Control & Hybrid Editing Permissions
 
-To prevent schema drift and protect workflow execution integrity, editing capabilities are scoped by user role:
+To prevent schema drift, secure infrastructure credentials, and protect workflow execution integrity, editing capabilities are scoped by user role:
 
 | Action / Capability | System Admin | Tenant Admin | Standard User |
 | :--- | :--- | :--- | :--- |
 | Edit Global Node Registry Contracts | **Yes** | No | No |
 | Edit Tenant-wide Override Contracts | **Yes** (on behalf of tenant) | **Yes** | No |
 | Override core schema structure in workflow | No | No | No |
-| Customize properties & map fields | Yes | Yes | **Yes** (via local `properties` mapper) |
+| Configure `system_properties` (e.g. credentials, endpoints) | **Yes** | No (Read-Only) | No (Read-Only) |
+| Configure `user_properties` (e.g. queries, table names) | **Yes** | **Yes** | **Yes** |
 
-* **Standard User Restrictions**: Standard users are not allowed to change core input or output schemas (contracts) for node instances. Consequently, the `workflow_node_properties` table does NOT contain columns for `input_contract` and `output_contract`. Instead, standard users build workflows adhering strictly to the tenant-wide contracts. If field mapping is required (e.g., matching a dynamic database output to an input), the mapper saves the mappings inside the local instance `properties` (e.g. under `mapping_template`), leaving the contract schema intact.
-* **Tenant Admin Capabilities**: Tenant Admins can override the default contract schema for any node allocated to their tenant using the administration panel, which saves the custom JSON schemas directly to `CustomerNodeDB.input_contract` and `CustomerNodeDB.output_contract`.
+#### Property Precedence & Resolution Hierarchy
+When resolving the value of any node property at runtime or design-time, the system respects the following precedence order:
+```
+[Workflow Node Instance Overrides (workflow_node_properties.properties)] (Highest Precedence)
+            │
+            ▼ (Falls back to)
+[Tenant-wide Node Overrides (customer_nodes.properties)]
+            │
+            ▼ (Falls back to)
+[Global Catalog Default Properties (nodes.user_properties / nodes.system_properties)] (Lowest Precedence)
+```
+
+- **`system_properties` (Read-only for Admins & Users)**: System-level properties (such as ports, hosts, workers, and database credentials) represent tenant infrastructure settings. They are read-only for customer/tenant administrators and standard users. Only a System Administrator can edit them.
+- **`user_properties` (Editable by Admins & Users)**: User-level properties (such as database query types, table names, custom prompt templates, or mapping schemas) can be configured freely by both tenant admins and standard users.
+- **Standard User Restrictions**: Standard users are not allowed to change core input or output schemas (contracts) for node instances. Consequently, the `workflow_node_properties` table does NOT contain columns for `input_contract` and `output_contract`. Instead, standard users build workflows adhering strictly to the tenant-wide contracts. If field mapping is required (e.g., matching a dynamic database output to an input), the mapper saves the mappings inside the local instance `properties` (e.g. under `mapping_template`), leaving the contract schema intact.
+- **Tenant Admin Capabilities**: Tenant Admins can override the default contract schema for any node allocated to their tenant using the administration panel, which saves the custom JSON schemas directly to `CustomerNodeDB.input_contract` and `CustomerNodeDB.output_contract`. They can also define tenant-wide default values for `user_properties`.
+

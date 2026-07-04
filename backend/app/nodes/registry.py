@@ -190,7 +190,7 @@ class NodesRegistry:
                 for node_name, node in cls._nodes.items():
                     stmt = select(NodeDB).where(NodeDB.name == node_name)
                     result = await session.execute(stmt)
-                    db_node = result.scalar_one_or_none()
+                    db_node = result.scalars().first()
 
                     # Load original, unmutated defaults from Python node class definition
                     user_props_code = []
@@ -225,7 +225,7 @@ class NodesRegistry:
                         cls.logger.info("registering_new_node_to_db", name=node_name)
                         
                         # Dynamically map node category string to database category ID
-                        node_category = getattr(node, "category", "") or "Custom"
+                        node_category = str(getattr(node, "category", "") or "Custom")
                         category_id = "1"
                         if node_category.lower() in ["guardrails", "safety guardrails"]:
                             category_id = "2"

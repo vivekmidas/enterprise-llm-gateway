@@ -172,12 +172,12 @@ async def configure_customer_node(
             CustomerNodeDB.node_name == node_name
         )
         result = await db.execute(stmt)
-        customer_node = result.scalar_one_or_none()
+        customer_node = result.scalars().first()
         
         # Check if base node exists first
         node_exists_stmt = select(NodeDB).where(NodeDB.name == node_name)
         node_exists_res = await db.execute(node_exists_stmt)
-        base_node = node_exists_res.scalar_one_or_none()
+        base_node = node_exists_res.scalars().first()
         if not base_node:
             raise HTTPException(status_code=404, detail="Node not found")
             
@@ -194,7 +194,7 @@ async def configure_customer_node(
         # update base system property for the node in NodeDB
         stmt = select(NodeDB).where(NodeDB.name == node_name)
         result = await db.execute(stmt)
-        customer_node = result.scalar_one_or_none()
+        customer_node = result.scalars().first()
         if not customer_node:
             raise HTTPException(status_code=404, detail="Node not found")
         
@@ -204,8 +204,8 @@ async def configure_customer_node(
             detail="This node is locked and cannot be configured because it has been disabled by the system administrator."
         )
         
-    if "properties" in config_data:
-        properties_data = config_data["properties"]
+    if "properties" in config_data or "user_properties" in config_data or "system_properties" in config_data:
+        properties_data = config_data.get("properties", {})
         # Standardize updates list: list of (key, value) pairs
         updates = []
         if isinstance(properties_data, dict):
@@ -223,89 +223,123 @@ async def configure_customer_node(
             incoming_keys.add(actual_key)
 
         if current_user.role == "system_admin":
-            # Update NodeDB columns: system_properties and user_properties
-            sys_props = customer_node.system_properties
-            if isinstance(sys_props, dict):
-                sys_props = dict(sys_props)
-            elif isinstance(sys_props, list):
-                sys_props = [
-                    dict(item) if isinstance(item, dict) else item 
-                    for item in sys_props
-                ]
+            if "user_properties" in config_data or "system_properties" in config_data:
+                def sync_properties(db_list, payload_list):
+                    if not isinstance(payload_list, list):
+                        return db_list
+                    if not db_list:
+                        db_list = []
+                    elif isinstance(db_list, dict):
+                        db_list = [{"key": k, **v} if isinstance(v, dict) else {"key": k} for k, v in db_list.items()]
+                    else:
+                        db_list = [dict(item) if isinstance(item, dict) else item for item in db_list]
+                    payload_keys = {item.get("key") for item in payload_list if isinstance(item, dict) and "key" in item}
+                    # Delete properties not in payload
+                    updated_list = [
+                        item for item in db_list 
+                        if isinstance(item, dict) and item.get("key") in payload_keys
+                    ]
+                    db_keys = {item.get("key") for item in updated_list if isinstance(item, dict) and "key" in item}
+                    for item in payload_list:
+                        if not isinstance(item, dict) or "key" not in item:
+                            continue
+                        key = item["key"]
+                        if key in db_keys:
+                            for db_item in updated_list:
+                                if isinstance(db_item, dict) and db_item.get("key") == key:
+                                    db_item.update(item)
+                        else:
+                            updated_list.append(item)
+                    return updated_list
+
+                if "user_properties" in config_data:
+                    customer_node.user_properties = sync_properties(customer_node.user_properties, config_data["user_properties"])
+                if "system_properties" in config_data:
+                    customer_node.system_properties = sync_properties(customer_node.system_properties, config_data["system_properties"])
             else:
-                sys_props = {}
-            
-            user_props = customer_node.user_properties
-            if isinstance(user_props, list):
-                user_props = [
-                    dict(item) if isinstance(item, dict) else item 
-                    for item in user_props
-                ]
-            elif isinstance(user_props, dict):
-                user_props = dict(user_props)
-            else:
-                user_props = []
-
-            # Delete properties that are NOT in incoming_keys
-            if isinstance(sys_props, dict):
-                sys_props = {k: v for k, v in sys_props.items() if k in incoming_keys}
-            elif isinstance(sys_props, list):
-                sys_props = [
-                    item for item in sys_props
-                    if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
-                ]
-
-            if isinstance(user_props, dict):
-                user_props = {k: v for k, v in user_props.items() if k in incoming_keys}
-            elif isinstance(user_props, list):
-                user_props = [
-                    item for item in user_props
-                    if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
-                ]
-
-            # Extract existing system keys to identify them even without prefix
-            if isinstance(sys_props, dict):
-                existing_sys_keys = set(sys_props.keys())
-            elif isinstance(sys_props, list):
-                existing_sys_keys = {
-                    item.get("key") 
-                    for item in sys_props 
-                    if isinstance(item, dict) and "key" in item
-                }
-            else:
-                existing_sys_keys = set()
-
-            for k, v in updates:
-                is_system = k.startswith("system-") or k in existing_sys_keys
-                actual_key = k[7:] if k.startswith("system-") else k
-
-                if is_system:
-                    if isinstance(sys_props, dict):
-                        sys_props[actual_key] = v
-                    elif isinstance(sys_props, list):
-                        found = False
-                        for item in sys_props:
-                            if isinstance(item, dict) and item.get("key") == actual_key:
-                                item["default"] = v
-                                item["value"] = v
-                                found = True
-                        if not found:
-                            sys_props.append({"key": actual_key, "default": v, "value": v})
+                # Update NodeDB columns: system_properties and user_properties
+                sys_props = customer_node.system_properties
+                if isinstance(sys_props, dict):
+                    sys_props = dict(sys_props)
+                elif isinstance(sys_props, list):
+                    sys_props = [
+                        dict(item) if isinstance(item, dict) else item 
+                        for item in sys_props
+                    ]
                 else:
-                    if isinstance(user_props, dict):
-                        user_props[actual_key] = v
-                    elif isinstance(user_props, list):
-                        found = False
-                        for item in user_props:
-                            if isinstance(item, dict) and item.get("key") == actual_key:
-                                item["default"] = v
-                                item["value"] = v
-                                found = True
-                        if not found:
-                            user_props.append({"key": actual_key, "default": v, "value": v})
-            
-            customer_node.system_properties = sys_props
-            customer_node.user_properties = user_props
+                    sys_props = {}
+                
+                user_props = customer_node.user_properties
+                if isinstance(user_props, list):
+                    user_props = [
+                        dict(item) if isinstance(item, dict) else item 
+                        for item in user_props
+                    ]
+                elif isinstance(user_props, dict):
+                    user_props = dict(user_props)
+                else:
+                    user_props = []
+
+                # Delete properties that are NOT in incoming_keys
+                if isinstance(sys_props, dict):
+                    sys_props = {k: v for k, v in sys_props.items() if k in incoming_keys}
+                elif isinstance(sys_props, list):
+                    sys_props = [
+                        item for item in sys_props
+                        if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
+                    ]
+
+                if isinstance(user_props, dict):
+                    user_props = {k: v for k, v in user_props.items() if k in incoming_keys}
+                elif isinstance(user_props, list):
+                    user_props = [
+                        item for item in user_props
+                        if not (isinstance(item, dict) and item.get("key") not in incoming_keys)
+                    ]
+
+                # Extract existing system keys to identify them even without prefix
+                if isinstance(sys_props, dict):
+                    existing_sys_keys = set(sys_props.keys())
+                elif isinstance(sys_props, list):
+                    existing_sys_keys = {
+                        item.get("key") 
+                        for item in sys_props 
+                        if isinstance(item, dict) and "key" in item
+                    }
+                else:
+                    existing_sys_keys = set()
+
+                for k, v in updates:
+                    is_system = k.startswith("system-") or k in existing_sys_keys
+                    actual_key = k[7:] if k.startswith("system-") else k
+
+                    if is_system:
+                        if isinstance(sys_props, dict):
+                            sys_props[actual_key] = v
+                        elif isinstance(sys_props, list):
+                            found = False
+                            for item in sys_props:
+                                if isinstance(item, dict) and item.get("key") == actual_key:
+                                    item["default"] = v
+                                    item["value"] = v
+                                    found = True
+                            if not found:
+                                sys_props.append({"key": actual_key, "default": v, "value": v})
+                    else:
+                        if isinstance(user_props, dict):
+                            user_props[actual_key] = v
+                        elif isinstance(user_props, list):
+                            found = False
+                            for item in user_props:
+                                if isinstance(item, dict) and item.get("key") == actual_key:
+                                    item["default"] = v
+                                    item["value"] = v
+                                    found = True
+                            if not found:
+                                user_props.append({"key": actual_key, "default": v, "value": v})
+                
+                customer_node.system_properties = sys_props
+                customer_node.user_properties = user_props
         else:
             # Update CustomerNodeDB properties column: replace it entirely with incoming overrides, excluding system properties
             sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()

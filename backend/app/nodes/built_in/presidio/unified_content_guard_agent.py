@@ -56,18 +56,18 @@ class UnifiedContentGuardAgent(BaseNode):
             "description": "Confidence score threshold (0.0 to 1.0) for PII detection."
         },
         {
-            "key": "profanity_words_workflow",
-            "label": "Workflow Custom Profanities",
+            "key": "additional_profanity_words",
+            "label": "Additional Profane Words",
             "type": "textarea",
             "default": "",
-            "description": "Additional comma-separated profane words to redact for this workflow."
+            "description": "Additional comma-separated profane words to redact."
         },
         {
-            "key": "sensitive_keywords_workflow",
-            "label": "Workflow Custom Keywords",
+            "key": "additional_sensitive_keywords",
+            "label": "Additional Sensitive Keywords",
             "type": "textarea",
             "default": "",
-            "description": "Additional comma-separated sensitive keywords to redact for this workflow."
+            "description": "Additional comma-separated sensitive keywords to redact."
         },
         {
             "key": "filter_mode",
@@ -133,14 +133,14 @@ class UnifiedContentGuardAgent(BaseNode):
 
         target_fields = set(to_list(config.get("target_fields")))
 
-        # 2. Blend configurations (System + Tenant + Workflow)
+        # 2. Blend configurations (System + Tenant + Additional)
         combined_profanity = set(to_list(config.get("profanity_words_system"))) | \
                              set(to_list(config.get("profanity_words_tenant"))) | \
-                             set(to_list(config.get("profanity_words_workflow")))
+                             set(to_list(config.get("additional_profanity_words")))
 
         combined_keywords = set(to_list(config.get("sensitive_keywords_system"))) | \
                             set(to_list(config.get("sensitive_keywords_tenant"))) | \
-                            set(to_list(config.get("sensitive_keywords_workflow")))
+                            set(to_list(config.get("additional_sensitive_keywords")))
 
         pii_entities = to_list(config.get("pii_entities", ["PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "CREDIT_CARD"]))
         score_threshold = float(config.get("score_threshold", 0.6))

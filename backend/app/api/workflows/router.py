@@ -23,19 +23,16 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 logger = structlog.get_logger(__name__)
 
 def _mask_sensitive_properties(properties: dict) -> dict:
-    masked = {}
-    for k, v in properties.items():
-        normalized_key = k.lower()
-        if any(s in normalized_key for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
-            masked[k] = "••••••••" if v else ""
-        else:
-            masked[k] = v
-    return masked
+    # Do not mask sensitive properties on read to prevent auth issues on save
+    return properties
 
 @router.get("", response_model=List[WorkflowDefinition])
 async def get_workflows(current_user: User = Depends(get_current_user)):
     logger.info("get_workflows_request", customer_id=current_user.customer_id)
-    workflows = await list_workflows_from_store(customer_id=current_user.customer_id)
+    if current_user.role == "system_admin":
+        workflows = await list_workflows_from_store(customer_id=None)
+    else:
+        workflows = await list_workflows_from_store(customer_id=current_user.customer_id)
     logger.info("get_workflows_response", count=len(workflows))
     return workflows
 
@@ -49,7 +46,7 @@ async def get_workflow_by_id(
     logger.info("get_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
     try:
         workflow = await get_workflow(workflow_id, version)
-        if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+        if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
             raise HTTPException(status_code=403, detail="Access denied to this workflow")
         logger.info("get_workflow_response_success", workflow_id=workflow_id)
         return workflow
@@ -77,7 +74,7 @@ async def get_node_properties(
             
             # Verify authorization
             workflow = await get_workflow(workflow_id)
-            if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+            if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
                 raise HTTPException(status_code=403, detail="Access denied to this workflow")
             
             workflow_overrides = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
@@ -98,11 +95,11 @@ async def get_node_properties(
             from app.models.db_models import CustomerNodeDB
             result = await session.execute(
                 select(CustomerNodeDB).where(
-                    CustomerNodeDB.customer_id == current_user.customer_id,
+                    CustomerNodeDB.customer_id == workflow.customer_id,
                     CustomerNodeDB.node_name == agent_name
                 )
             )
-            cust_node = result.scalar_one_or_none()
+            cust_node = result.scalars().first()
             tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
             if cust_node:
                 if cust_node.input_contract is not None:
@@ -122,6 +119,15 @@ async def get_node_properties(
                     resolved_user[k] = tenant_overrides[k]
                 else:
                     resolved_user[k] = v
+
+            # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
+            for k, v in workflow_overrides.items():
+                if k not in resolved_user and k not in resolved_system:
+                    resolved_user[k] = v
+            for k, v in tenant_overrides.items():
+                if k not in resolved_user and k not in resolved_system:
+                    resolved_user[k] = v
+
 
             # Unified properties list
             resolved_properties = {**resolved_system, **resolved_user}
@@ -156,35 +162,31 @@ async def update_node_properties(
     
     # Verify authorization
     workflow = await get_workflow(workflow_id)
-    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
         
     # Pop out label to store separately under its own database field
     label = properties.pop("label", None)
 
-    # Prevent standard users from modifying admin-configured keys
-    if current_user.role not in ["system_admin", "admin"]:
+    # Prevent standard users and customer admins from modifying system properties
+    if current_user.role != "system_admin":
         from app.core.database import AsyncSessionLocal
-        from app.workflows.store import _get_workflow_node, _load_workflow_node_properties
-        from app.models.db_models import CustomerNodeDB
+        from app.workflows.store import _get_workflow_node, _load_workflow_node_properties, _get_workflow_node_details
+        from app.nodes.properties import property_entries_to_dict
         async with AsyncSessionLocal() as session:
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
             if workflow_node:
                 agent_name = workflow_node.agent_name
-                result = await session.execute(
-                    select(CustomerNodeDB).where(
-                        CustomerNodeDB.customer_id == current_user.customer_id,
-                        CustomerNodeDB.node_name == agent_name
-                    )
-                )
-                cust_node = result.scalar_one_or_none()
-                if cust_node and cust_node.properties:
-                    existing_props = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
-                    for k in cust_node.properties.keys():
-                        if k in existing_props:
-                            properties[k] = existing_props[k]
-                        else:
-                            properties.pop(k, None)
+                db_node = await _get_workflow_node_details(session, agent_name)
+                if db_node and db_node.system_properties:
+                    system_keys = set(property_entries_to_dict(db_node.system_properties).keys())
+                    if system_keys:
+                        existing_props = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+                        for k in system_keys:
+                            if k in existing_props:
+                                properties[k] = existing_props[k]
+                            else:
+                                properties.pop(k, None)
 
     return await update_workflow_node_properties(workflow_id, agent_node_id, properties, label=label)
 
@@ -194,7 +196,7 @@ async def update_node_properties(
 async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(get_current_user)):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
     workflow = await get_workflow(workflow_id)
-    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
     try:
         return await toggle_workflow_in_store(workflow_id)
@@ -212,12 +214,6 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
     
     request_data = request.model_dump()
     
-    # Fix 1: Clean up input_contract and output_contract from nodes before saving
-    if "nodes_structure" in request_data and isinstance(request_data["nodes_structure"], list):
-        for node in request_data["nodes_structure"]:
-            if "data" in node and isinstance(node["data"], dict):
-                node["data"].pop("input_contract", None)
-                node["data"].pop("output_contract", None)
 
     # Create definition
     workflow = WorkflowDefinition(
@@ -244,7 +240,7 @@ async def remove_workflow(workflow_id: str, version: Optional[str] = None, curre
     except Exception:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    if workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
 
     # 2. Authorization: Only the creator (user_id) or an admin can delete
@@ -300,3 +296,71 @@ async def refresh_node_tokens(request: RefreshTokenRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update tokens: {str(e)}"
         )
+
+@router.post("/cache/clear")
+async def clear_workflow_cache(
+    workflow_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Clear cached compiled workflows. Only admins or system admins can trigger this."""
+    if current_user.role not in ["system_admin", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Only admins can clear the workflow cache")
+        
+    from app.workflows.executor import WorkflowExecutor
+    from app.core.cache import workflow_cache
+    
+    # If the user is a tenant admin (role == 'admin'), they should only be able to clear cache of their own workflow
+    if current_user.role == "admin" and workflow_id:
+        try:
+            workflow = await get_workflow(workflow_id)
+            if workflow.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Forbidden: You cannot clear cache for another tenant's workflow")
+        except Exception:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+            
+    # Trigger central cache invalidation
+    if workflow_id:
+        await workflow_cache.invalidate_agent(workflow_id)
+    else:
+        await workflow_cache.clear_all()
+        
+    # Also trigger executor method
+    WorkflowExecutor.clear_graph_cache(workflow_id)
+    
+    msg = f"Workflow graph cache cleared successfully for workflow '{workflow_id}'." if workflow_id else "Entire workflow graph cache cleared successfully."
+    return {"message": msg}
+
+@router.get("/cache/info")
+async def get_workflow_cache_info(
+    current_user: User = Depends(get_current_user)
+):
+    """Retrieve stats/info about the compiled workflow cache. Only admins or system admins can call this."""
+    if current_user.role not in ["system_admin", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Only admins can inspect the workflow cache")
+    
+    from app.core.cache import workflow_cache
+    
+    # Retrieve keys from local cache
+    cached_keys = list(workflow_cache._local_compiled_cache.keys())
+    
+    # Filter by tenant if role is admin
+    if current_user.role == "admin":
+        visible_keys = []
+        for k in cached_keys:
+            parts = k.split(":")
+            if len(parts) >= 2:
+                w_id = parts[1]
+                try:
+                    w_def = await get_workflow(w_id)
+                    if w_def.customer_id == current_user.customer_id:
+                        visible_keys.append(k)
+                except Exception:
+                    pass
+        cached_keys = visible_keys
+        
+    return {
+        "cached_count": len(cached_keys),
+        "cached_keys": cached_keys,
+        "redis_ttl": workflow_cache.ttl
+    }
+

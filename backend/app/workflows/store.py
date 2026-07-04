@@ -189,6 +189,14 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
                 resolved_user[k] = tenant_overrides[k]
             else:
                 resolved_user[k] = v
+
+        # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
+        for k, v in workflow_overrides.items():
+            if k not in resolved_user and k not in resolved_system:
+                resolved_user[k] = v
+        for k, v in tenant_overrides.items():
+            if k not in resolved_user and k not in resolved_system:
+                resolved_user[k] = v
                 
         return {**resolved_system, **resolved_user}
 
@@ -298,13 +306,14 @@ async def _hydrate_workflow_definition(
         agent_name = data.get("name") or n_dict.get("name")
 
         catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
-        catalog_node = catalog_result.scalar_one_or_none()
+        catalog_node = catalog_result.scalars().first()
         global_system_defaults = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
         global_user_defaults = _default_properties_from_node_definition(catalog_node)
         
         # System properties are sacrosanct and cannot be overridden by tenant
         resolved_system = dict(global_system_defaults)
 
+        cust_node = None
         tenant_overrides = {}
         # Merge customer admin overrides if customer_id is provided
         if customer_id is not None and agent_name:
@@ -315,7 +324,7 @@ async def _hydrate_workflow_definition(
                     CustomerNodeDB.node_name == agent_name
                 )
             )
-            cust_node = result.scalar_one_or_none()
+            cust_node = result.scalars().first()
             if cust_node and cust_node.properties:
                 tenant_overrides = cust_node.properties
 
@@ -326,7 +335,7 @@ async def _hydrate_workflow_definition(
                 WorkflowNodePropertyDB.agent_node_id == n_dict.get("id"),
             )
         )
-        prop_row = prop_result.scalar_one_or_none()
+        prop_row = prop_result.scalars().first()
         print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
         instance_overrides = {}
         if prop_row:
@@ -353,16 +362,36 @@ async def _hydrate_workflow_definition(
             else:
                 resolved_user[k] = v
 
+        # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
+        for k, v in instance_overrides.items():
+            if k not in resolved_user and k not in resolved_system:
+                resolved_user[k] = v
+        for k, v in tenant_overrides.items():
+            if k not in resolved_user and k not in resolved_system:
+                resolved_user[k] = v
+
+        # Check if the instance itself defines custom contracts
+        instance_input = data.get("input_contract")
+        instance_output = data.get("output_contract")
+
+        input_contract = {}
+        output_contract = {}
         if catalog_node:
             input_contract = catalog_node.input_contract or {}
             output_contract = catalog_node.output_contract or {}
-            if 'cust_node' in locals() and cust_node:
-                if cust_node.input_contract is not None:
-                    input_contract = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    output_contract = cust_node.output_contract
-            data["input_contract"] = input_contract
-            data["output_contract"] = output_contract
+        if cust_node:
+            if cust_node.input_contract is not None:
+                input_contract = cust_node.input_contract
+            if cust_node.output_contract is not None:
+                output_contract = cust_node.output_contract
+
+        if instance_input:
+            input_contract = instance_input
+        if instance_output:
+            output_contract = instance_output
+        
+        data["input_contract"] = input_contract
+        data["output_contract"] = output_contract
         data["user_properties"] = resolved_user
         data["system_properties"] = resolved_system
         data["properties"] = {**resolved_system, **resolved_user}
@@ -371,6 +400,8 @@ async def _hydrate_workflow_definition(
         hydrated_nodes.append(NodeConfig.model_validate(n_dict))
 
     hydrated.nodes_structure = hydrated_nodes
+    if hasattr(hydrated, "model_extra") and hydrated.model_extra and "nodes" in hydrated.model_extra:
+        hydrated.model_extra["nodes"] = [n.model_dump() for n in hydrated_nodes]
     return hydrated
 
 async def update_node_tokens_in_db(
@@ -509,7 +540,7 @@ async def save_workflow_to_store(
                         node_data = n_dict.get("data", {})
                         agent_name = node_data.get("name") or n_dict.get("name")
                         catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
-                        catalog_node = catalog_result.scalar_one_or_none()
+                        catalog_node = catalog_result.scalars().first()
                         instance_properties = {
                             **_default_properties_from_node_definition(catalog_node),
                             **definition.properties.get(n_dict.get("id"), {}),
@@ -545,7 +576,7 @@ async def save_workflow_to_store(
                                     CustomerNodeDB.node_name == agent_name
                                 )
                             )
-                            cust_node = cust_result.scalar_one_or_none()
+                            cust_node = cust_result.scalars().first()
                             if not cust_node:
                                 cust_node = CustomerNodeDB(
                                     customer_id=target_cust_id,

@@ -50,12 +50,12 @@ async def startup_event():
     
     # Scan the project for node definitions and register them in memory
     await NodesRegistry.node_auto_discover()
-    
+    logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).
     await workflow_auto_discover()
-    
-    logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))
+    logger.info("workflows_registered")
+   
     
 app.include_router(root_router)
 app.include_router(agents_router)

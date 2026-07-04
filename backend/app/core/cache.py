@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 class WorkflowCache:
     """Handles hybrid caching for Compiled LangGraph objects."""
-    client: ClassVar[redis.Redis] = get_redis_client()
+    
+    @property
+    def client(self) -> redis.Redis:
+        return get_redis_client()
 
     def __init__(self):
         self.ttl = settings.REDIS_CACHE_TTL
@@ -69,9 +72,25 @@ class WorkflowCache:
         except Exception as e:
             logger.warning(f"Cache invalidation failed for {agent_id}: {e}")
 
+    async def clear_all(self) -> None:
+        """Clear all cached compiled graphs locally and in Redis."""
+        try:
+            # 1. Clear local cache
+            self._local_compiled_cache.clear()
+
+            # 2. Delete tokens from Redis
+            async for key in self.client.scan_iter(match="compiled_graph:*"):
+                await self.client.delete(key)
+            logger.info("Cleared entire workflow cache")
+        except Exception as e:
+            logger.warning(f"Failed to clear entire workflow cache: {e}")
+
 class TraceStore:
     """Dedicated class for handling execution traces and observability data."""
-    client: ClassVar[redis.Redis] = get_redis_client()
+    
+    @property
+    def client(self) -> redis.Redis:
+        return get_redis_client()
 
     async def save_trace(self, trace_id: str, data: dict):
         """Store execution trace with a 24-hour TTL and index it by tenant, user, and globally."""

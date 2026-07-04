@@ -36,7 +36,7 @@ async def test_unified_guard_profanity_blending():
     agent = UnifiedContentGuardAgent()
     trace_id = str(uuid.uuid4())
     
-    # Test blending of system, tenant, and workflow profanity words
+    # Test blending of system, tenant, and additional profanity words
     test_input = NodeInput(
         trace_id=trace_id,
         data=json.dumps({"data": "This is shit, absolute garbage, and terrible."}),
@@ -44,7 +44,7 @@ async def test_unified_guard_profanity_blending():
             "enable_profanity": True,
             "profanity_words_system": ["shit"],
             "profanity_words_tenant": ["garbage"],
-            "profanity_words_workflow": ["terrible"]
+            "additional_profanity_words": ["terrible"]
         }
     )
     

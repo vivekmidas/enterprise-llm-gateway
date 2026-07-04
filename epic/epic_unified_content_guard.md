@@ -18,7 +18,7 @@ Enable enterprise clients to enforce safety, security, and brand guidelines auto
     *   Must be able to override default system confidence thresholds if tighter control is needed.
 *   **Workflow Developer (Workflow Author)**:
     *   Must be able to add the "Unified Content Guard" node to any workflow canvas in the Workflow Builder.
-    *   Must be able to configure workflow-level custom keywords and toggle specific engines (PII, profanity, custom keywords).
+    *   Must be able to configure additional custom profanities and keywords at the node level and toggle specific engines (PII, profanity, custom keywords).
     *   Must be able to configure "Field Targeting" to selectively target only specific fields (e.g., `query` only or `response` only) in the JSON data payload.
 *   **End User (API Client / Consumer)**:
     *   Expects ultra-low latency processing.
@@ -67,7 +67,7 @@ By packaging Microsoft Presidio into a single node that automatically parses nes
 When a developer clicks on the Unified Content Guard node in the builder canvas, the sidebar panel slides open. It provides a visual configuration interface:
 
 *   **Content Rules**: Toggle switches to enable or disable PII, Profanity, and Custom Keywords independently.
-*   **Workflow Management**: Comma-separated token input to specify custom keywords for this particular workflow.
+*   **Additional Words/Keywords**: Comma-separated token input to specify additional custom profanities (`additional_profanity_words`) and keywords (`additional_sensitive_keywords`) for this specific node.
 *   **Filter Mode**: Select targeting options (`All Fields`, `Only Target Specific Fields`, `Exclude Specific Fields`).
 
 Below is the visual mockup of the sidebar node configuration panel:
@@ -80,8 +80,8 @@ Below is the visual mockup of the sidebar node configuration panel:
 
 ### 4.1 Configuration Blending Mechanics
 The configuration is resolved dynamically during workflow load. The store’s hydration mechanism merges settings from the database:
-*   `WorkflowNodePropertyDB` (Instance Overrides) -> `CustomerNodeDB` (Tenant Overrides) -> `NodeDB` (Global Catalog).
-*   For blocklist parameters (`profanity_words`, `sensitive_keywords`), the node executes a **Set Union** at runtime rather than overwriting, ensuring baseline compliance lists are not deleted by downstream tenant or developer configurations.
+*   `WorkflowNodePropertyDB` (Node-Level Instance Overrides) -> `CustomerNodeDB` (Tenant Overrides) -> `NodeDB` (Global Catalog).
+*   For blocklist parameters (system, tenant, and additional node properties), the node executes a **Set Union** at runtime rather than overwriting, ensuring baseline compliance lists are not deleted by downstream tenant or developer configurations.
 
 ### 4.2 Pattern Matching & Thread Safety
 *   To support concurrent execution across multiple worker threads safely, we instantiate Presidio’s `PatternRecognizer` dynamically per execution and feed them to the `ad_hoc_recognizers` parameter of `AnalyzerEngine.analyze()`. This prevents state leakage between requests.
@@ -92,7 +92,7 @@ The configuration is resolved dynamically during workflow load. The store’s hy
 ## 5. Impact Analysis
 
 *   **User UI & Flow (Workflow Builder)**:
-    *   *UI Additions*: A new specialized property panel sidebar config is registered for `unified_content_guard` containing toggle controls for engine features, token tag inputs for custom workflow-level lists, and field targeting selectors.
+    *   *UI Additions*: A new specialized property panel sidebar config is registered for `unified_content_guard` containing toggle controls for engine features, token tag inputs for additional custom lists (`additional_profanity_words`, `additional_sensitive_keywords`), and field targeting selectors.
     *   *State Flow*: Modifying parameters triggers standard React-state callbacks updating the ReactFlow local workspace state. Saving the workflow writes to `WorkflowNodePropertyDB.properties`.
 *   **Tenant Admin UI & Flow (Company Portal)**:
     *   *UI Additions*: A new "Guardrails & Safety" tab under Tenant Settings allows company administrators to customize default blocklists.

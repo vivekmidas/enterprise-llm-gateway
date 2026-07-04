@@ -100,29 +100,48 @@ class DBExecutor(BaseNode, abc.ABC):
         except (json.JSONDecodeError, TypeError):
             payload = {}
 
-        # Support both wrapped {"data": {...}} and flat payload formats
-        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+        # Support both wrapped {"data": [...]} and flat payload formats (which can be a list or dict)
+        if isinstance(payload, dict):
+            data = payload.get("data", payload)
+        else:
+            data = payload
 
         # Extract configuration (BaseNode.run merges self.properties into inp.config)
         config = inp.config or {}
 
         # Extract connection details
-        # Fallback to config root if "connection" key is not present
         connection_config = config.get("connection") or config
 
         # 2. Resolve execution mode (Raw query vs. Structured query builder)
-        query = data.get("query") or payload.get("query") if isinstance(payload, dict) else data.get("query")
+        query = None
+        if isinstance(data, dict):
+            query = data.get("query")
+        if not query and isinstance(payload, dict):
+            query = payload.get("query")
         if not query:
             query = config.get("query")
 
-        query_type = (data.get("query_type") or (payload.get("query_type") if isinstance(payload, dict) else None) or config.get("query_type") or "select").lower()
+        query_type = "select"
+        if isinstance(data, dict) and data.get("query_type"):
+            query_type = data.get("query_type")
+        elif isinstance(payload, dict) and payload.get("query_type"):
+            query_type = payload.get("query_type")
+        elif config.get("query_type"):
+            query_type = config.get("query_type")
+        query_type = query_type.lower()
 
         # 3. Resolve/Validate query string and parameters before acquiring connection
         try:
             if query:
                 # Mode A: Raw query execution
                 query_type_actual = "raw"
-                params = data.get("params") or (payload.get("params") if isinstance(payload, dict) else None) or config.get("params")
+                params = None
+                if isinstance(data, dict):
+                    params = data.get("params")
+                if not params and isinstance(payload, dict):
+                    params = payload.get("params")
+                if not params:
+                    params = config.get("params")
 
                 # Render Jinja templates if present
                 render_context = {
@@ -137,7 +156,26 @@ class DBExecutor(BaseNode, abc.ABC):
             else:
                 # Mode B: Structured query builder execution
                 query_type_actual = query_type
-                table_name = data.get("table_name") or (payload.get("table_name") if isinstance(payload, dict) else None) or config.get("table_name")
+                
+                # Check for array of objects (direct list of dicts)
+                records = None
+                if isinstance(data, list) and all(isinstance(x, dict) for x in data):
+                    records = data
+                elif isinstance(payload, dict):
+                    data_val = payload.get("data")
+                    fields_val = payload.get("fields")
+                    if isinstance(data_val, list) and all(isinstance(x, dict) for x in data_val):
+                        records = data_val
+                    elif isinstance(fields_val, list) and all(isinstance(x, dict) for x in fields_val):
+                        records = fields_val
+
+                # Get table name
+                if isinstance(data, dict):
+                    table_name = data.get("table_name") or payload.get("table_name")
+                else:
+                    table_name = None
+                if not table_name:
+                    table_name = config.get("table_name")
 
                 if not table_name:
                     self.logger.warning("db_missing_table_name", trace_id=trace_id)
@@ -151,39 +189,69 @@ class DBExecutor(BaseNode, abc.ABC):
                     )
 
                 # Extract fields
-                fields = data.get("fields") or (payload.get("fields") if isinstance(payload, dict) else None)
-                if isinstance(fields, dict) and fields:
-                    field_names = list(fields.keys())
-                    field_values = list(fields.values())
+                fields = None
+                if records is not None:
+                    field_names = []
+                    field_values = []
+                    condition = config.get("condition")
+                    condition_params = config.get("condition_params") or []
                 else:
-                    field_names = data.get("field_names") or (payload.get("field_names") if isinstance(payload, dict) else None) or []
-                    field_values = data.get("field_values") or (payload.get("field_values") if isinstance(payload, dict) else None) or []
+                    if isinstance(data, dict):
+                        fields = data.get("fields") or payload.get("fields")
+                    
+                    if isinstance(fields, dict) and fields:
+                        field_names = list(fields.keys())
+                        field_values = list(fields.values())
+                    else:
+                        if isinstance(data, dict):
+                            field_names = data.get("field_names") or payload.get("field_names") or []
+                            field_values = data.get("field_values") or payload.get("field_values") or []
+                        else:
+                            field_names = []
+                            field_values = []
 
-                condition = data.get("condition") or (payload.get("condition") if isinstance(payload, dict) else None) or config.get("condition")
-                condition_params = data.get("condition_params") or (payload.get("condition_params") if isinstance(payload, dict) else None) or config.get("condition_params") or []
+                    if not field_names:
+                        field_names = config.get("field_names") or []
+                    if not field_values:
+                        field_values = config.get("field_values") or []
+
+                    if isinstance(data, dict):
+                        condition = data.get("condition") or payload.get("condition") or config.get("condition")
+                        condition_params = data.get("condition_params") or payload.get("condition_params") or config.get("condition_params") or []
+                    else:
+                        condition = config.get("condition")
+                        condition_params = config.get("condition_params") or []
 
                 # Validate operation-specific requirements
                 if query_type == "insert":
-                    if not fields and (not field_names or not field_values):
+                    if not records and not fields and (not field_names or not field_values):
                         raise ValueError("Either 'fields' or 'field_names' & 'field_values' must be provided for INSERT.")
                 elif query_type == "update":
                     if not condition:
                         raise ValueError("condition (WHERE clause) is required for UPDATE.")
-                    if not fields and (not field_names or not field_values):
+                    if not records and not fields and (not field_names or not field_values):
                         raise ValueError("Either 'fields' or 'field_names' & 'field_values' must be provided for UPDATE.")
                 elif query_type == "delete":
                     if not condition:
                         raise ValueError("condition (WHERE clause) is required for DELETE.")
 
-                # Generate SQL
-                sql_query, sql_params = await self._generate_sql_query(
-                    field_names=field_names,
-                    field_values=field_values,
-                    table_name=table_name,
-                    query_type=query_type,
-                    condition=condition,
-                    condition_params=condition_params
-                )
+                # Check if we have list parameters for transposing
+                has_list = any(isinstance(v, list) for v in field_values) or any(isinstance(v, list) for v in condition_params)
+                is_batch = (records is not None) or has_list
+
+                if is_batch:
+                    sql_query = None
+                    sql_params = None
+                else:
+                    # Generate SQL single execution
+                    sql_query, sql_params = await self._generate_sql_query(
+                        field_names=field_names,
+                        field_values=field_values,
+                        table_name=table_name,
+                        query_type=query_type,
+                        condition=condition,
+                        condition_params=condition_params
+                    )
                 self.logger.info("db_structured_query_generated", query_type=query_type, query=sql_query, has_params=bool(sql_params))
         except Exception as e:
             duration = round((time.time() - start_time) * 1000, 2)
@@ -202,9 +270,70 @@ class DBExecutor(BaseNode, abc.ABC):
         try:
             conn = await self.get_connection(connection_config)
 
-            self.logger.info("db_query_executing", query_type=query_type_actual)
-            result = await self.execute_query(conn, sql_query, query_type_actual, sql_params)
-            self.logger.info("db_query_executed_successfully", query_type=query_type_actual)
+            if not query and is_batch:
+                # Batch execution mode (Array of objects OR Transposed list fields)
+                if records is not None:
+                    max_len = len(records)
+                else:
+                    max_len = max([len(v) for v in field_values if isinstance(v, list)] + [len(v) for v in condition_params if isinstance(v, list)])
+                self.logger.info("db_batch_loop_execution_started", query_type=query_type_actual, batch_size=max_len)
+                
+                consolidated_result = []
+                total_rowcount = 0
+                lastrowid = None
+                
+                for i in range(max_len):
+                    if records is not None:
+                        # Array of objects mode
+                        record = records[i]
+                        row_field_names = list(record.keys())
+                        row_field_values = list(record.values())
+                        row_condition_params = condition_params
+                    else:
+                        # Transposing mode
+                        row_field_names = field_names
+                        row_field_values = []
+                        for v in field_values:
+                            if isinstance(v, list):
+                                row_field_values.append(v[i] if i < len(v) else None)
+                            else:
+                                row_field_values.append(v)
+                                
+                        row_condition_params = []
+                        for v in condition_params:
+                            if isinstance(v, list):
+                                row_condition_params.append(v[i] if i < len(v) else None)
+                            else:
+                                row_condition_params.append(v)
+                            
+                    # Generate SQL query and params for this iteration
+                    row_sql_query, row_sql_params = await self._generate_sql_query(
+                        field_names=row_field_names,
+                        field_values=row_field_values,
+                        table_name=table_name,
+                        query_type=query_type,
+                        condition=condition,
+                        condition_params=row_condition_params
+                    )
+                    
+                    res = await self.execute_query(conn, row_sql_query, query_type_actual, row_sql_params)
+                    
+                    if isinstance(res, list):
+                        consolidated_result.extend(res)
+                    elif isinstance(res, dict):
+                        total_rowcount += res.get("rowcount", 0)
+                        lastrowid = res.get("lastrowid", lastrowid)
+                        
+                if query_type_actual.lower() == "select":
+                    result = consolidated_result
+                else:
+                    result = {"rowcount": total_rowcount, "lastrowid": lastrowid}
+                    
+                self.logger.info("db_batch_loop_execution_completed", query_type=query_type_actual, iterations=max_len)
+            else:
+                self.logger.info("db_query_executing", query_type=query_type_actual)
+                result = await self.execute_query(conn, sql_query, query_type_actual, sql_params)
+                self.logger.info("db_query_executed_successfully", query_type=query_type_actual)
 
             # 5. Format success response
             duration = round((time.time() - start_time) * 1000, 2)

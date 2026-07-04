@@ -168,6 +168,130 @@ class BaseNode(BaseModel, abc.ABC):
         self.properties = {**self.system_properties, **self.user_properties}
         self.logger.info(f"Initiating node ended {self.name}")
 
+    def _resolve_dotted_path(self, dotted_path: str, obj: Any) -> Any:
+        """Helper to navigate a dotted path (e.g. 'foo.bar') within a dict/object."""
+        parts = [p.strip() for p in dotted_path.split('.') if p.strip()]
+        current = obj
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+        return current
+
+    def _extract_list_values(self, expr: str, context: Dict[str, Any]) -> Optional[List[Any]]:
+        """
+        Extracts values from lists using json-path-like syntax (e.g. 'root[].date').
+        """
+        # Strip outer quotes if any
+        path = expr.strip().strip("'\"")
+        
+        if '[]' not in path:
+            return None
+            
+        left_part, right_part = path.split('[]', 1)
+        left_part = left_part.strip()
+        right_part = right_part.strip()
+        
+        # Get field name to extract from list items (e.g. "date")
+        if right_part.startswith('.'):
+            field_name = right_part[1:]
+        else:
+            field_name = right_part
+            
+        target_list = None
+        
+        # 1. Try to resolve left_part in context
+        if left_part:
+            target_list = self._resolve_dotted_path(left_part, context)
+            if target_list is None:
+                # Try context["input_data"] or context["data"]
+                for candidate in ["input_data", "data"]:
+                    cand_ctx = context.get(candidate)
+                    if cand_ctx:
+                        target_list = self._resolve_dotted_path(left_part, cand_ctx)
+                        if target_list is not None:
+                            break
+                            
+        # 2. If target_list is still None, search standard roots
+        if target_list is None or not isinstance(target_list, list):
+            for candidate in ["input_data", "data"]:
+                cand_ctx = context.get(candidate)
+                if isinstance(cand_ctx, list):
+                    target_list = cand_ctx
+                    break
+                elif isinstance(cand_ctx, dict):
+                    if left_part and left_part in cand_ctx and isinstance(cand_ctx[left_part], list):
+                        target_list = cand_ctx[left_part]
+                        break
+                    elif 'data' in cand_ctx and isinstance(cand_ctx['data'], list):
+                        target_list = cand_ctx['data']
+                        break
+                    elif 'root' in cand_ctx and isinstance(cand_ctx['root'], list):
+                        target_list = cand_ctx['root']
+                        break
+                        
+        # 3. If target_list is still None, try check context directly
+        if target_list is None or not isinstance(target_list, list):
+            if isinstance(context, list):
+                target_list = context
+            elif isinstance(context, dict):
+                for v in context.values():
+                    if isinstance(v, list):
+                        target_list = v
+                        break
+                        
+        if not isinstance(target_list, list):
+            return None
+            
+        # 4. Extract values from list items
+        result = []
+        for item in target_list:
+            if isinstance(item, dict):
+                if field_name:
+                    val = self._resolve_dotted_path(field_name, item)
+                    result.append(val)
+                else:
+                    result.append(item)
+            else:
+                result.append(item)
+        return result
+
+    def _resolve_single_expression(self, expr: str, context: Dict[str, Any]) -> Any:
+        """
+        Resolves a single template expression against the given context.
+        """
+        expr = expr.strip()
+        
+        # Support root[].field or similar path extraction
+        if '[]' in expr:
+            resolved = self._extract_list_values(expr, context)
+            if resolved is not None:
+                return resolved
+                
+        # Try to resolve directly via dotted path lookup first
+        # (e.g. input_data.text or user_question)
+        if '.' in expr or expr in context:
+            if not any(c in expr for c in ['"', "'", '(', ')']):
+                resolved = self._resolve_dotted_path(expr, context)
+                if resolved is not None:
+                    return resolved
+                    
+        # Otherwise, fall back to standard Jinja NativeTemplate render
+        try:
+            from jinja2.nativetypes import NativeTemplate
+            from jinja2 import Undefined
+            tpl = NativeTemplate(f"{{{{ {expr} }}}}")
+            rendered = tpl.render(**context)
+            if isinstance(rendered, Undefined):
+                return None
+            return rendered
+        except Exception as e:
+            self.logger.warning("jinja_expression_render_failed", expr=expr, error=str(e))
+            return None
+
     def _resolve_variables(self, template: Any, data: Dict[str, Any]) -> Any:
         """
         Recursively resolves variables using simple {{ key }} replacement.
@@ -179,19 +303,23 @@ class BaseNode(BaseModel, abc.ABC):
             return [self._resolve_variables(i, data) for i in template]
         elif isinstance(template, str) and self._has_template(template):
             # Match exactly {{key}}
-            match = re.match(r"^\{\{\s*(\w+)\s*\}\}$", template)
+            match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
             if match:
-                var_name = match.group(1)
-                if var_name in data:
-                    return data[var_name]
+                expr = match.group(1)
+                resolved = self._resolve_single_expression(expr, data)
+                if resolved is not None:
+                    return resolved
                 return template
             
             # Match mixed strings like "q={{key}}"
-            pattern = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+            pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
             def replace_match(m):
-                var_name = m.group(1)
-                if var_name in data:
-                    return str(data[var_name])
+                expr = m.group(1)
+                resolved = self._resolve_single_expression(expr, data)
+                if resolved is not None:
+                    if isinstance(resolved, (list, dict)):
+                        return json.dumps(resolved)
+                    return str(resolved)
                 return m.group(0)
             return pattern.sub(replace_match, template)
         return template
@@ -215,14 +343,32 @@ class BaseNode(BaseModel, abc.ABC):
         elif isinstance(template, list):
             return [self._resolve_jinja_templates(i, render_context) for i in template]
         elif isinstance(template, str) and "{{" in template and "}}" in template:
+            import re
+            match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
+            if match:
+                expr = match.group(1)
+                resolved = self._resolve_single_expression(expr, render_context)
+                if resolved is not None:
+                    return resolved
+                return template
+                
+            # Match mixed strings
+            pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+            def replace_match(m):
+                expr = m.group(1)
+                resolved = self._resolve_single_expression(expr, render_context)
+                if resolved is not None:
+                    if isinstance(resolved, (list, dict)):
+                        return json.dumps(resolved)
+                    return str(resolved)
+                return m.group(0)
             try:
-                tpl = NativeTemplate(template)
-                rendered = tpl.render(**render_context)
-                return rendered
+                return pattern.sub(replace_match, template)
             except Exception as e:
                 self.logger.warning("jinja_template_render_failed", template=template, error=str(e))
                 return template
         return template
+
 
 
     async def validate_input_contract(self, inp: NodeInput) -> Optional[NodeOutput]:
@@ -237,7 +383,17 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.debug("No schema found", name= self.name, schema=schema)
             return None
 
-        errors = validate_contract(schema, inp,self.name)
+        # Resolve predecessor_output and workflow_input
+        predecessor_output = inp.context.get("predecessor_output") or inp.data
+        workflow_input = inp.context.get("input_data") or inp.context.get("workflow_input")
+
+        errors = validate_contract(
+            schema,
+            inp,
+            self.name,
+            predecessor_output=predecessor_output,
+            workflow_input=workflow_input
+        )
 
         if errors:
             self.logger.error(f"Ending validation of validate_input_contract",name= self.name, inp_data=inp.data,errors= "; ".join(errors))
@@ -249,6 +405,41 @@ class BaseNode(BaseModel, abc.ABC):
                 error_code=400,
                 violations=["contract_violation"]
             )
+            
+        return None
+
+    async def validate_output_contract(self, inp: NodeInput, output: NodeOutput) -> Optional[NodeOutput]:
+        """
+        Validates if the output matches the defined output_contract.
+        Checks mandatory fields and data types in the JSON body returned by the node.
+        """
+        self.logger.info("Starting validate_output_contract", name=self.name)
+        schema = inp.output_schema if getattr(inp, "output_schema", None) is not None else self.output_contract
+        if not schema:
+            self.logger.debug("No output schema found", name=self.name, schema=schema)
+            return None
+
+        from app.nodes.contracts import validate_output_contract
+        
+        predecessor_output = inp.context.get("predecessor_output") or inp.context.get("input_data")
+        workflow_input = inp.context.get("input_data") or inp.context.get("workflow_input")
+
+        errors = validate_output_contract(
+            schema,
+            output,
+            self.name,
+            predecessor_output=predecessor_output,
+            workflow_input=workflow_input,
+            context_nodes=inp.context.get("nodes", {})
+        )
+
+        if errors:
+            self.logger.error(f"Ending validation of validate_output_contract", name=self.name, out_data=output.data, errors="; ".join(errors))
+            output.status = "failure"
+            output.error_message = "; ".join(errors)
+            output.error_code = 400
+            if "contract_violation" not in output.violations:
+                output.violations.append("contract_violation")
             
         return None
 
@@ -342,9 +533,15 @@ class BaseNode(BaseModel, abc.ABC):
         Returns:
             NodeOutput: The standardized result containing content, status, and metadata.
         """
-        self.logger.info("node_run_started", name = self.name, trace_id=inp.trace_id, input=inp.model_dump())
+        self.logger.info("node_run_started", name = self.name, trace_id=inp.trace_id)
         start_ts = time.time()
         try:
+            # Store original predecessor output in context for contract validation template resolution
+            if inp.context is None:
+                inp.context = {}
+            if "predecessor_output" not in inp.context:
+                inp.context["predecessor_output"] = inp.data
+
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
             inp.config = {**self.properties, **inp.config}
     
@@ -407,9 +604,11 @@ class BaseNode(BaseModel, abc.ABC):
 
            
             # 2. Execution logic
+            self.logger.info(f"Node execution started {self.name}",trace_id=inp.trace_id)
             output = await self.execute(inp)
+            
             end_ts = time.time()
-
+            self.logger.info(f"Node execution completed {self.name}",trace_id=inp.trace_id)  
             # Enrich output with tracking data
             output.start_time = start_ts
             output.end_time = end_ts
@@ -418,6 +617,10 @@ class BaseNode(BaseModel, abc.ABC):
             # # 3. Apply Output Envelope if execution was successful
             # if not output.error_message and not output.violations:
             #     output.output_data = self.apply_output_envelope(output.output_data, inp)
+
+            # Output Contract Validation
+            if not output.error_message and not output.violations:
+                await self.validate_output_contract(inp, output)
 
             output.status = "failure" if output.error_message or output.violations else "success"
             

@@ -9,6 +9,7 @@ class NodeInput(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     input_schema: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Dict[str, Any]] = None
 
 class NodeOutput(BaseModel):
     """Standardized output envelope returned by every node after execution."""
