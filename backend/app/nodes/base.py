@@ -2,7 +2,7 @@ import abc
 import json
 import time
 from functools import cached_property
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Set
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 try:
     from jinja2.nativetypes import NativeTemplate
@@ -417,6 +417,37 @@ class BaseNode(BaseModel, abc.ABC):
             return any(self._has_template(i) for i in val)
         return False
 
+    def is_jinja_template(text: str) -> bool:
+        """Check if string contains Jinja2 template syntax"""
+        return "{{" in text and "}}" in text
+
+    def _render_template_sets(template: List[str], render_context: List[Dict[str, Any]]) -> List[Set[Any]]:
+        result = []
+        for context in render_context:
+            row_set: Set[Any] = set()
+            
+            for tmpl_str in template:
+                if is_jinja_template(tmpl_str):
+                    # Render with Jinja2
+                    t = Template(tmpl_str)
+                    resolved = t.render(**context)
+                    # Try to convert to proper type (e.g. "25" → 25)
+                    try:
+                        if resolved.isdigit():
+                            resolved = int(resolved)
+                        elif resolved.replace('.', '', 1).isdigit():
+                            resolved = float(resolved)
+                    except:
+                        pass
+                else:
+                    # Static value - keep as is
+                    resolved = tmpl_str
+                
+                row_set.add(resolved)
+            
+            result.append(row_set)
+    
+  
     def _resolve_jinja_templates(self, template: Any, render_context: Dict[str, Any]) -> Any:
         """
         Recursively resolves variables using Jinja2 NativeTemplate to preserve types.
@@ -424,36 +455,8 @@ class BaseNode(BaseModel, abc.ABC):
         if isinstance(template, dict):
             return {k: self._resolve_jinja_templates(v, render_context) for k, v in template.items()}
         elif isinstance(template, list):
-            if len(template) == 1:
-                item_tpl = template[0]
-                resolved_item = self._resolve_jinja_templates(item_tpl, render_context)
-                if isinstance(resolved_item, dict):
-                    db_keys = {"query", "query_type", "sql_query", "table_name"}
-                    if not db_keys.intersection(resolved_item.keys()):
-                        list_values = [v for v in resolved_item.values() if isinstance(v, list)]
-                        if list_values and len(set(len(x) for x in list_values)) == 1:
-                            n = len(list_values[0])
-                            if n > 0:
-                                keys = list(resolved_item.keys())
-                                transposed = []
-                                for i in range(n):
-                                    item = {}
-                                    for k in keys:
-                                        v = resolved_item[k]
-                                        if isinstance(v, list) and len(v) == n:
-                                            item[k] = v[i]
-                                        else:
-                                            item[k] = v
-                                    transposed.append(item)
-                                return transposed
-                elif isinstance(resolved_item, list) and resolved_item:
-                    if all(isinstance(x, list) for x in resolved_item) and len(set(len(x) for x in resolved_item)) == 1:
-                        n = len(resolved_item[0])
-                        if n > 0:
-                            return [list(x) for x in zip(*resolved_item)]
-                return [resolved_item]
-            else:
-                return [self._resolve_jinja_templates(i, render_context) for i in template]
+            values = self._render_template_sets(template, render_context)
+            return values
         elif isinstance(template, str) and "{{" in template and "}}" in template:
             import re
             match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
