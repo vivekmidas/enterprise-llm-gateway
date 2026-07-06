@@ -57,7 +57,7 @@ class BaseNode(BaseModel, abc.ABC):
     Standardized Base Class for all Enterprise LLM Gateway nodes.
 
     --- DISTINCTION BETWEEN PROPERTIES AND CONTRACTS ---
-    1. User Properties (properties ): 
+    1. User Properties (properties ):
        Business logic settings configured by users in the Workflow Builder.
        Example: 'system_prompt', 'temperature', 'table_name'.
 
@@ -65,12 +65,12 @@ class BaseNode(BaseModel, abc.ABC):
        Infrastructure settings configured by Admins in the Node Registry.
        Example: 'port', 'host', 'worker_count', 'timeout_ms'.
 
-    3. Contracts (input_contract & output_contract): 
-       These define the DATA PAYLOAD structure (Run-time). 
+    3. Contracts (input_contract & output_contract):
+       These define the DATA PAYLOAD structure (Run-time).
        Example: 'user_query', 'document_text', 'extracted_entities'.
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     name: str = "base_node"       # Machine identifier
     label: str = "Base Node"      # UI-facing display name (matches frontend 'label')
     description: str = "Standard node base"
@@ -82,7 +82,7 @@ class BaseNode(BaseModel, abc.ABC):
     # Contract and Envelope definitions
     input_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"user_id": {"required": True}}
     output_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"result": {"type": "string"}}
-   
+
     # Visual properties for the UI (aligned with frontend BaseNodeData)
     icon: str = "bot"              # Name of the icon to be mapped in frontend
     color: str = "#5E0CEC"         # Brand color (hex code)
@@ -99,7 +99,7 @@ class BaseNode(BaseModel, abc.ABC):
         This allows all inheriting nodes to use self.logger without manual setup.
         """
         return structlog.get_logger(self.__class__.__name__).bind(node_name=self.name)
-    
+
     def get_label(self) -> str:
         return self.label
 
@@ -133,7 +133,7 @@ class BaseNode(BaseModel, abc.ABC):
                         "system_properties": db_node.system_properties or {},
                         "input_contract": db_node.input_contract or {},
                         "output_contract": db_node.output_contract or {},
-                        
+
                     }
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
@@ -146,7 +146,7 @@ class BaseNode(BaseModel, abc.ABC):
         Should be called during registration/discovery.
         """
         self.logger.info(f"Initiating node start {self.name}")
- 
+
         user_props_dict = property_entries_to_dict(self.user_properties)
         system_props_dict = property_entries_to_dict(self.system_properties)
 
@@ -160,7 +160,7 @@ class BaseNode(BaseModel, abc.ABC):
                 self.input_contract = db_data.get("input_contract")
             if db_data.get("output_contract"):
                 self.output_contract = db_data.get("output_contract")
- 
+
         self.user_properties = user_props_dict
         self.system_properties = system_props_dict
 
@@ -187,22 +187,22 @@ class BaseNode(BaseModel, abc.ABC):
         """
         # Strip outer quotes if any
         path = expr.strip().strip("'\"")
-        
+
         if '[]' not in path:
             return None
-            
+
         left_part, right_part = path.split('[]', 1)
         left_part = left_part.strip()
         right_part = right_part.strip()
-        
+
         # Get field name to extract from list items (e.g. "date")
         if right_part.startswith('.'):
             field_name = right_part[1:]
         else:
             field_name = right_part
-            
+
         target_list = None
-        
+
         # 1. Try to resolve left_part in context
         if left_part:
             target_list = self._resolve_dotted_path(left_part, context)
@@ -214,7 +214,7 @@ class BaseNode(BaseModel, abc.ABC):
                         target_list = self._resolve_dotted_path(left_part, cand_ctx)
                         if target_list is not None:
                             break
-                            
+
         # 2. If target_list is still None, search standard roots
         if target_list is None or not isinstance(target_list, list):
             for candidate in ["input_data", "data"]:
@@ -232,7 +232,7 @@ class BaseNode(BaseModel, abc.ABC):
                     elif 'root' in cand_ctx and isinstance(cand_ctx['root'], list):
                         target_list = cand_ctx['root']
                         break
-                        
+
         # 3. If target_list is still None, try check context directly
         if target_list is None or not isinstance(target_list, list):
             if isinstance(context, list):
@@ -242,10 +242,10 @@ class BaseNode(BaseModel, abc.ABC):
                     if isinstance(v, list):
                         target_list = v
                         break
-                        
+
         if not isinstance(target_list, list):
             return None
-            
+
         # 4. Extract values from list items
         result = []
         for item in target_list:
@@ -264,21 +264,22 @@ class BaseNode(BaseModel, abc.ABC):
         Resolves a single template expression against the given context.
         """
         expr = expr.strip()
-        
+        lookup_expr = self._normalize_lookup_expression(expr)
+
         # Support root[].field or similar path extraction
-        if '[]' in expr:
-            resolved = self._extract_list_values(expr, context)
+        if '[]' in lookup_expr:
+            resolved = self._extract_list_values(lookup_expr, context)
             if resolved is not None:
                 return resolved
-                
+
         # Try to resolve directly via dotted path lookup first
         # (e.g. input_data.text or user_question)
-        if '.' in expr or expr in context:
-            if not any(c in expr for c in ['"', "'", '(', ')']):
-                resolved = self._resolve_dotted_path(expr, context)
+        if '.' in lookup_expr or lookup_expr in context:
+            if not any(c in lookup_expr for c in ['"', "'", '(', ')']):
+                resolved = self._resolve_dotted_path(lookup_expr, context)
                 if resolved is not None:
                     return resolved
-                    
+
         # Otherwise, fall back to standard Jinja NativeTemplate render
         try:
             from jinja2.nativetypes import NativeTemplate
@@ -292,6 +293,59 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.warning("jinja_expression_render_failed", expr=expr, error=str(e))
             return None
 
+    def _normalize_lookup_expression(self, expr: str) -> str:
+        """
+        Treat quoted field references like "stock_token" as stock_token.
+        Literal strings still fall back to Jinja rendering if no matching field exists.
+        """
+        import re
+
+        stripped = expr.strip()
+        if len(stripped) < 2 or stripped[0] != stripped[-1] or stripped[0] not in {"'", '"'}:
+            return stripped
+
+        unquoted = stripped[1:-1].strip()
+        if re.match(r"^[A-Za-z_]\w*(?:\[\])?(?:\.[A-Za-z_]\w*(?:\[\])?)*$", unquoted):
+            return unquoted
+        return stripped
+
+    def transpose_resolved_value(self, val: Any) -> Any:
+        """
+        Transposes resolved list/dict template values if they refer to list attributes.
+        """
+        if isinstance(val, dict):
+            # Check if this dict should be transposed
+            db_keys = {"query", "query_type", "sql_query", "table_name"}
+            if db_keys.intersection(val.keys()):
+                return val
+
+            # Check if we have values that are lists of the same length N > 0
+            list_values = [v for v in val.values() if isinstance(v, list)]
+            if list_values and len(set(len(x) for x in list_values)) == 1:
+                n = len(list_values[0])
+                if n > 0:
+                    keys = list(val.keys())
+                    transposed = []
+                    for i in range(n):
+                        item = {}
+                        for k in keys:
+                            v = val[k]
+                            if isinstance(v, list) and len(v) == n:
+                                item[k] = v[i]
+                            else:
+                                item[k] = v
+                        transposed.append(item)
+                    return transposed
+
+        elif isinstance(val, list) and val:
+            # Check if all elements are lists of the same length N > 0
+            if all(isinstance(x, list) for x in val) and len(set(len(x) for x in val)) == 1:
+                n = len(val[0])
+                if n > 0:
+                    return [list(x) for x in zip(*val)]
+
+        return val
+
     def _resolve_variables(self, template: Any, data: Dict[str, Any]) -> Any:
         """
         Recursively resolves variables using simple {{ key }} replacement.
@@ -300,7 +354,36 @@ class BaseNode(BaseModel, abc.ABC):
         if isinstance(template, dict):
             return {k: self._resolve_variables(v, data) for k, v in template.items()}
         elif isinstance(template, list):
-            return [self._resolve_variables(i, data) for i in template]
+            if len(template) == 1:
+                item_tpl = template[0]
+                resolved_item = self._resolve_variables(item_tpl, data)
+                if isinstance(resolved_item, dict):
+                    db_keys = {"query", "query_type", "sql_query", "table_name"}
+                    if not db_keys.intersection(resolved_item.keys()):
+                        list_values = [v for v in resolved_item.values() if isinstance(v, list)]
+                        if list_values and len(set(len(x) for x in list_values)) == 1:
+                            n = len(list_values[0])
+                            if n > 0:
+                                keys = list(resolved_item.keys())
+                                transposed = []
+                                for i in range(n):
+                                    item = {}
+                                    for k in keys:
+                                        v = resolved_item[k]
+                                        if isinstance(v, list) and len(v) == n:
+                                            item[k] = v[i]
+                                        else:
+                                            item[k] = v
+                                    transposed.append(item)
+                                return transposed
+                elif isinstance(resolved_item, list) and resolved_item:
+                    if all(isinstance(x, list) for x in resolved_item) and len(set(len(x) for x in resolved_item)) == 1:
+                        n = len(resolved_item[0])
+                        if n > 0:
+                            return [list(x) for x in zip(*resolved_item)]
+                return [resolved_item]
+            else:
+                return [self._resolve_variables(i, data) for i in template]
         elif isinstance(template, str) and self._has_template(template):
             # Match exactly {{key}}
             match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
@@ -310,7 +393,7 @@ class BaseNode(BaseModel, abc.ABC):
                 if resolved is not None:
                     return resolved
                 return template
-            
+
             # Match mixed strings like "q={{key}}"
             pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
             def replace_match(m):
@@ -341,7 +424,36 @@ class BaseNode(BaseModel, abc.ABC):
         if isinstance(template, dict):
             return {k: self._resolve_jinja_templates(v, render_context) for k, v in template.items()}
         elif isinstance(template, list):
-            return [self._resolve_jinja_templates(i, render_context) for i in template]
+            if len(template) == 1:
+                item_tpl = template[0]
+                resolved_item = self._resolve_jinja_templates(item_tpl, render_context)
+                if isinstance(resolved_item, dict):
+                    db_keys = {"query", "query_type", "sql_query", "table_name"}
+                    if not db_keys.intersection(resolved_item.keys()):
+                        list_values = [v for v in resolved_item.values() if isinstance(v, list)]
+                        if list_values and len(set(len(x) for x in list_values)) == 1:
+                            n = len(list_values[0])
+                            if n > 0:
+                                keys = list(resolved_item.keys())
+                                transposed = []
+                                for i in range(n):
+                                    item = {}
+                                    for k in keys:
+                                        v = resolved_item[k]
+                                        if isinstance(v, list) and len(v) == n:
+                                            item[k] = v[i]
+                                        else:
+                                            item[k] = v
+                                    transposed.append(item)
+                                return transposed
+                elif isinstance(resolved_item, list) and resolved_item:
+                    if all(isinstance(x, list) for x in resolved_item) and len(set(len(x) for x in resolved_item)) == 1:
+                        n = len(resolved_item[0])
+                        if n > 0:
+                            return [list(x) for x in zip(*resolved_item)]
+                return [resolved_item]
+            else:
+                return [self._resolve_jinja_templates(i, render_context) for i in template]
         elif isinstance(template, str) and "{{" in template and "}}" in template:
             import re
             match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())
@@ -351,7 +463,7 @@ class BaseNode(BaseModel, abc.ABC):
                 if resolved is not None:
                     return resolved
                 return template
-                
+
             # Match mixed strings
             pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
             def replace_match(m):
@@ -383,17 +495,7 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.debug("No schema found", name= self.name, schema=schema)
             return None
 
-        # Resolve predecessor_output and workflow_input
-        predecessor_output = inp.context.get("predecessor_output") or inp.data
-        workflow_input = inp.context.get("input_data") or inp.context.get("workflow_input")
-
-        errors = validate_contract(
-            schema,
-            inp,
-            self.name,
-            predecessor_output=predecessor_output,
-            workflow_input=workflow_input
-        )
+        errors = validate_contract(schema, inp, self.name)
 
         if errors:
             self.logger.error(f"Ending validation of validate_input_contract",name= self.name, inp_data=inp.data,errors= "; ".join(errors))
@@ -405,7 +507,7 @@ class BaseNode(BaseModel, abc.ABC):
                 error_code=400,
                 violations=["contract_violation"]
             )
-            
+
         return None
 
     async def validate_output_contract(self, inp: NodeInput, output: NodeOutput) -> Optional[NodeOutput]:
@@ -420,16 +522,11 @@ class BaseNode(BaseModel, abc.ABC):
             return None
 
         from app.nodes.contracts import validate_output_contract
-        
-        predecessor_output = inp.context.get("predecessor_output") or inp.context.get("input_data")
-        workflow_input = inp.context.get("input_data") or inp.context.get("workflow_input")
 
         errors = validate_output_contract(
             schema,
             output,
             self.name,
-            predecessor_output=predecessor_output,
-            workflow_input=workflow_input,
             context_nodes=inp.context.get("nodes", {})
         )
 
@@ -440,7 +537,7 @@ class BaseNode(BaseModel, abc.ABC):
             output.error_code = 400
             if "contract_violation" not in output.violations:
                 output.violations.append("contract_violation")
-            
+
         return None
 
     def get_input_data(self, inp: NodeInput) -> Any:
@@ -514,7 +611,7 @@ class BaseNode(BaseModel, abc.ABC):
     @abc.abstractmethod
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """
-        The core logic implementation for the node. 
+        The core logic implementation for the node.
         This is the single abstract method to be implemented by child classes.
         """
         pass
@@ -522,60 +619,96 @@ class BaseNode(BaseModel, abc.ABC):
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
         The standardized execution lifecycle for every node in the system.
-        
+
         Execution Steps:
         1. Property Resolution: Merges static node properties with runtime workflow config.
         2. Validation: Executes pre-flight checks (validate_input).
         3. Execution: Runs the core business logic (execute).
         4. Observability: Captures latency, start/end times, and status.
         5. Error Handling: Gracefully catches exceptions and returns a failure NodeOutput.
-        
+
         Returns:
             NodeOutput: The standardized result containing content, status, and metadata.
         """
         self.logger.info("node_run_started", name = self.name, trace_id=inp.trace_id)
         start_ts = time.time()
         try:
-            # Store original predecessor output in context for contract validation template resolution
+            # Store trace_id in context for observability
             if inp.context is None:
                 inp.context = {}
-            if "predecessor_output" not in inp.context:
-                inp.context["predecessor_output"] = inp.data
 
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
             inp.config = {**self.properties, **inp.config}
-    
-            # 0.05 Resolve visual mapping templates (connect node outputs to target input contract)
+
+            # 0.05 Parse input_data
+            input_data = {}
+            if inp.data:
+                try:
+                    input_data = json.loads(inp.data)
+                except Exception:
+                    input_data = inp.data
+
+            # 0.06 Get mappings from config
             mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
             if mapping_config:
+                if isinstance(mapping_config, str):
+                    try:
+                        mapping_config = json.loads(mapping_config)
+                    except Exception:
+                        pass
+
+            if isinstance(mapping_config, dict):
+                mapping_config = {k: v for k, v in mapping_config.items() if not k.startswith('_')}
+
+            # Determine mapped_data (before template resolution)
+            mapped_data = mapping_config if mapping_config else input_data
+
+            # 0.07 Check for mandatory fields defined in contract
+            schema = inp.input_schema if getattr(inp, "input_schema", None) is not None else self.input_contract
+            from app.nodes.contracts import normalize_contract, _required_fields
+            normalized_schema = normalize_contract(schema) if schema else {}
+            required_fields = _required_fields(normalized_schema) if normalized_schema else []
+
+            if required_fields:
+                if not isinstance(mapped_data, dict):
+                    missing = required_fields
+                else:
+                    check_data = mapped_data
+                    if "data" in mapped_data and isinstance(mapped_data["data"], dict) and "data" not in normalized_schema.get("properties", {}):
+                        check_data = mapped_data["data"]
+                    elif "input_data" in mapped_data and isinstance(mapped_data["input_data"], dict) and "input_data" not in normalized_schema.get("properties", {}):
+                        check_data = mapped_data["input_data"]
+                    
+                    missing = [f for f in required_fields if f not in check_data]
+
+                if missing:
+                    errors = [f"$.{f} is mandatory" for f in missing]
+                    return NodeOutput(
+                        trace_id=inp.trace_id,
+                        data=inp.data,
+                        status="failure",
+                        error_message="; ".join(errors),
+                        error_code=400,
+                        violations=["contract_violation"]
+                    )
+
+            # 0.08 If mappings exist and mandatory fields are present, replace templates with the input_data
+            if mapping_config:
                 try:
-                    if isinstance(mapping_config, str):
-                        try:
-                            mapping_config = json.loads(mapping_config)
-                        except Exception:
-                            pass
+                    render_context = {
+                        "data": input_data,
+                        "input_data": input_data,
+                        **(input_data if isinstance(input_data, dict) else {}),
+                        "nodes": inp.context.get("nodes", {}),
+                    }
 
-                    if isinstance(mapping_config, dict) and mapping_config:
-                        # Parse predecessor's output data
-                        previous_data = inp.data
-                        if isinstance(previous_data, str):
-                            try:
-                                previous_data = json.loads(previous_data)
-                            except Exception:
-                                pass
+                    # find and replace all templates in mapping_config
+                    resolved_mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
 
-                        render_context = {
-                            "data": previous_data,
-                            "input_data": previous_data,
-                            "nodes": inp.context.get("nodes", {}),
-                            "context": inp.context,
-                            "metadata": inp.metadata
-                        }
-                        
-                        # Resolve mapping using Jinja2
-                        mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
-                        # Re-serialize to JSON string for input validation/execution
-                        inp.data = json.dumps(mapped_data)
+                    # find and replace all templates in properties / config
+                    resolved_config = self._resolve_jinja_templates(inp.config, render_context)
+                    inp.data = json.dumps(resolved_mapped_data)
+                    inp.config = resolved_config
                 except Exception as e:
                     self.logger.error("failed_to_resolve_mapping_templates", error=str(e))
 
@@ -584,36 +717,18 @@ class BaseNode(BaseModel, abc.ABC):
             if contract_output:
                 return contract_output
 
-            # 0.2 Match properties with input data
-            if inp.data:
-                try:
-                    input_data = json.loads(inp.data)
-                    generic_data = self.get_input_data(inp)
-                    
-                    input_values = {}
-                    if isinstance(input_data, dict):
-                        input_values.update(input_data)
-                    if isinstance(generic_data, dict):
-                        input_values.update(generic_data)
-                    input_values["data"] = generic_data
-                    
-                    if self._has_template(inp.config):
-                        inp.config = self._resolve_variables(inp.config, input_values)
-                except Exception as e:
-                    self.logger.warning("failed_to_resolve_properties_templates", error=str(e))
 
-           
             # 2. Execution logic
             self.logger.info(f"Node execution started {self.name}",trace_id=inp.trace_id)
             output = await self.execute(inp)
-            
+
             end_ts = time.time()
-            self.logger.info(f"Node execution completed {self.name}",trace_id=inp.trace_id)  
+            self.logger.info(f"Node execution completed {self.name}",trace_id=inp.trace_id)
             # Enrich output with tracking data
             output.start_time = start_ts
             output.end_time = end_ts
             output.latency_ms = round((end_ts - start_ts) * 1000, 2)
-            
+
             # # 3. Apply Output Envelope if execution was successful
             # if not output.error_message and not output.violations:
             #     output.output_data = self.apply_output_envelope(output.output_data, inp)
@@ -623,12 +738,12 @@ class BaseNode(BaseModel, abc.ABC):
                 await self.validate_output_contract(inp, output)
 
             output.status = "failure" if output.error_message or output.violations else "success"
-            
+
             self.logger.info(
-                "node_run_completed", 
+                "node_run_completed",
                 name=self.name,
                 status=output.status, function_name=__name__,
-                latency_ms=output.latency_ms, 
+                latency_ms=output.latency_ms,
                 #output=output.model_dump()
             )
             return output
@@ -636,10 +751,10 @@ class BaseNode(BaseModel, abc.ABC):
         except Exception as e:
             end_ts = time.time()
             self.logger.error(
-                "node_run_exception", 
+                "node_run_exception",
                 name=self.name,
-                error=str(e), 
-                trace_id=inp.trace_id, 
+                error=str(e),
+                trace_id=inp.trace_id,
                 input=inp.model_dump()
             )
             return NodeOutput(
@@ -656,60 +771,60 @@ class BaseNode(BaseModel, abc.ABC):
 class TriggerNode(BaseNode, abc.ABC):
     """
     A specialized node type that sits at the start of a workflow graph.
-    
+
     Unlike standard nodes, TriggerNodes:
     1. Are "activated" on system startup to listen for external events.
     2. Can initiate the WorkflowExecutor when an event (Webhook/Timer/Email) occurs.
     3. Manage an internal registry of workflow configurations they are responsible for.
     """
-    node_type: str = "TRIGGER" 
+    node_type: str = "TRIGGER"
 
     async def init(self) -> None:
         """Triggers should still load their properties from the database."""
         self.logger.info(
-                        "Trigger node init started", 
+                        "Trigger node init started",
                         name=self.name
                     )
         await super().init()
         self.logger.info(
-                        "Trigger node init ended", 
+                        "Trigger node init ended",
                         name=self.name,
                     )
-        
+
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """Default trigger execution just passes the input payload through."""
         self.logger.info(
-                        "Trigger node execution  started", 
+                        "Trigger node execution  started",
                         name=self.name,
-                        trace_id=inp.trace_id, 
+                        trace_id=inp.trace_id,
                     )
         return NodeOutput(trace_id=inp.trace_id, data=inp.data)
-    
+
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         # Triggers can choose to implement validation if needed, but by default they don't block execution
         return None
-    
-    # Internal registry to map specific node instances (by agent_node_id) 
+
+    # Internal registry to map specific node instances (by agent_node_id)
     # to their parent workflow configurations.
     _workflows: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]) -> None:
         """
         Registers a specific workflow instance to this trigger agent.
-        
-        This method is critical for triggers (like Webhooks or Schedulers) to know 
+
+        This method is critical for triggers (like Webhooks or Schedulers) to know
         which workflow graph to execute when an external event occurs.
-        
+
         Args:
             agent_node_id: The unique ID of the trigger node within the specific workflow.
             workflow_config: The full JSON definition of the workflow to be executed.
         """
         self.logger.info(
-                        "Trigger node  activation started", 
+                        "Trigger node  activation started",
                         name=self.name
                     )
         self._workflows[agent_node_id] = workflow_config
-        
+
         # Global node properties are loaded in init()
         # Instance properties should be resolved using _get_node_config() when needed
         self.logger.debug("workflow_registered_to_trigger",
@@ -728,9 +843,9 @@ class TriggerNode(BaseNode, abc.ABC):
         self.logger.debug("execute_dynamic_agent started",
                           name=self.name,
                          workflow_id=agent_node_id)
-        
+
         t_id = trace_id or f"{self.name}-{int(time.time())}"
-        
+
         # Retrieve the workflow config for this specific agent_node_id
         workflow_config = self._workflows.get(agent_node_id)
         if not workflow_config:
@@ -742,7 +857,7 @@ class TriggerNode(BaseNode, abc.ABC):
             self.logger.debug("WorkflowExecutor started",
                           name=self.name,
                          workflow_id=workflow_config.get("id"))
- 
+
             executor = WorkflowExecutor(workflow_config)
 
             # Ensure payload is wrapped under the "data" key to conform to standard input envelope
@@ -768,7 +883,7 @@ class TriggerNode(BaseNode, abc.ABC):
             self.logger.debug("WorkflowExecutor ended",
                           name=self.name,
                          workflow_id=workflow_config.get("id"))
- 
+
             return await executor.execute_async(content, t_id)
         except Exception as e:
             self.logger.error("dynamic_agent_execution_crashed",name=self.name, error=str(e), trace_id=t_id)

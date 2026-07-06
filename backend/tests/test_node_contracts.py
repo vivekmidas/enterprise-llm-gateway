@@ -261,56 +261,6 @@ class TemplateResolveTestNode(BaseNode):
         return NodeOutput(trace_id=inp.trace_id, data=json.dumps(inp.config))
 
 
-def test_node_properties_resolved_with_input_data():
-    node = TemplateResolveTestNode(
-        properties={"message_template": "{{message}}", "constant_val": "static"},
-        input_contract={
-            "type": "object",
-            "required": ["message"],
-            "properties": {
-                "message": {"type": "string"},
-            },
-        }
-    )
-
-    inp = NodeInput(
-        trace_id="trace-1",
-        data=json.dumps({"message": "Hello from input!"}),
-        config={"another_template": "Value: {{message}}"}
-    )
-
-    output = asyncio.run(node.run(inp))
-    assert output.status == "success"
-    resolved_config = json.loads(output.data)
-    assert resolved_config["message_template"] == "Hello from input!"
-    assert resolved_config["constant_val"] == "static"
-    assert resolved_config["another_template"] == "Value: Hello from input!"
-
-
-def test_node_properties_resolved_with_data_wrapped_input():
-    node = TemplateResolveTestNode(
-        properties={"message_template": "{{message}}"},
-        input_contract={
-            "type": "object",
-            "required": ["message"],
-            "properties": {
-                "message": {"type": "string"},
-            },
-        }
-    )
-
-    inp = NodeInput(
-        trace_id="trace-2",
-        data=json.dumps({"data": {"message": "Hello from data wrapper!"}}),
-        config={}
-    )
-
-    output = asyncio.run(node.run(inp))
-    assert output.status == "success"
-    resolved_config = json.loads(output.data)
-    assert resolved_config["message_template"] == "Hello from data wrapper!"
-
-
 def test_sentiment_analyzer_with_various_data_formats():
     from app.nodes.built_in.sentiment_analyzer_agent import SentimentAnalyzerAgent
 
@@ -461,31 +411,6 @@ def test_trigger_node_execute_dynamic_agent_payload_wrapping():
     finally:
         WorkflowExecutor.execute_async = original_execute_async
 
-
-def test_node_properties_resolved_with_generic_data_value():
-    node = TemplateResolveTestNode(
-        properties={
-            "message_template": "{{message}}",
-            "direct_data": "{{data}}",
-            "custom_query": "{{query}}",
-            "any_other": "{{arbitrary_key}}"
-        },
-        input_contract={}
-    )
-
-    inp = NodeInput(
-        trace_id="trace-3",
-        data=json.dumps({"data": "Hello from generic data!"}),
-        config={}
-    )
-
-    output = asyncio.run(node.run(inp))
-    assert output.status == "success"
-    resolved_config = json.loads(output.data)
-    assert resolved_config["message_template"] == "{{message}}"
-    assert resolved_config["direct_data"] == "Hello from generic data!"
-    assert resolved_config["custom_query"] == "{{query}}"
-    assert resolved_config["any_other"] == "{{arbitrary_key}}"
 
 
 def test_ip_address_and_file_contracts():

@@ -33,60 +33,76 @@ class ContractDummyTargetNode(BaseNode):
             status="success"
         )
 
+
+class PassthroughTriggerNode(BaseNode):
+    """Minimal trigger node with no contract — passes input through unchanged."""
+    name: str = "passthrough_trigger_node"
+    input_contract: dict = {}
+    output_contract: dict = {}
+
+    async def init(self) -> None:
+        pass
+
+    async def validate_input(self, inp: NodeInput):
+        return None
+
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        return NodeOutput(trace_id=inp.trace_id, data=inp.data, status="success")
+
+
 @pytest.fixture(scope="module", autouse=True)
 async def register_contract_dummy_nodes():
     await NodesRegistry.register(ContractDummyTargetNode())
+    await NodesRegistry.register(PassthroughTriggerNode())
+
 
 def test_validate_input_contract_jinja_resolution():
+    """
+    Validates that {{ fieldname }} Jinja2 templates in inp.data are resolved
+    directly from the same payload (which is the predecessor's mapped output).
+    No separate predecessor_output / workflow_input context needed.
+    """
     contract = {
         "type": "object",
         "properties": {
             "message": {"type": "string"},
-            "user_id": {"type": "string"},
-            "field_values": {"type": "array"}
+            "date_list": {"type": "array"},
         },
-        "required": ["message", "user_id", "field_values"]
+        "required": ["message", "date_list"]
     }
 
+    # inp.data already contains the predecessor's output after mapping.
+    # Templates like {{ msg }} reference top-level keys in this payload.
     inp = NodeInput(
         trace_id="trace-contract-test",
         data=json.dumps({
-            "message": "{{ output.msg }}",
-            "user_id": "{{ input_data.uid }}",
-            "field_values": ["{{ \"root[].date\" }}", "{{ \"root[].close\" }}"]
+            "message": "{{ msg }}",
+            "date_list": "{{ root[].date }}",
+            # These extra keys are the "source" data from the predecessor
+            "msg": "Hello World",
+            "root": [
+                {"date": "2026-07-01", "close": 150},
+                {"date": "2026-07-02", "close": 250},
+            ],
         }),
         context={"nodes": {}}
     )
 
-    predecessor_output = json.dumps({
-        "msg": "Hello World",
-        "root": [
-            {"date": "2026-07-01", "close": 150},
-            {"date": "2026-07-02", "close": 250}
-        ]
-    })
-    workflow_input = json.dumps({
-        "uid": "usr_999"
-    })
-
-    errors = validate_input_contract(
-        contract,
-        inp,
-        node_name="test_node",
-        predecessor_output=predecessor_output,
-        workflow_input=workflow_input
-    )
+    errors = validate_input_contract(contract, inp, node_name="test_node")
 
     assert errors == []
-    
+
     # Verify that the input data was updated with resolved values
     resolved_data = json.loads(inp.data)
     assert resolved_data["message"] == "Hello World"
-    assert resolved_data["user_id"] == "usr_999"
-    assert resolved_data["field_values"] == [["2026-07-01", "2026-07-02"], [150, 250]]
+    assert resolved_data["date_list"] == ["2026-07-01", "2026-07-02"]
 
 
 def test_validate_output_contract_jinja_resolution():
+    """
+    Validates that {{ fieldname }} Jinja2 templates in the output body are
+    resolved from the body itself. The body IS the source of truth for resolution.
+    """
     contract = {
         "type": "object",
         "properties": {
@@ -96,34 +112,22 @@ def test_validate_output_contract_jinja_resolution():
         "required": ["status", "result_id"]
     }
 
+    # The output body references its own fields as templates.
     output = NodeOutput(
         trace_id="trace-contract-test",
         data=json.dumps({
-            "status": "{{ output.status_code }}",
-            "result_id": "{{ input_data.id_to_use }}"
+            "status": "{{ status_code }}",
+            "result_id": "{{ id_to_use }}",
+            # Source keys resolved against
+            "status_code": "COMPLETED",
+            "id_to_use": 12345,
         })
     )
 
-    # For output contract validation:
-    # - predecessor_output (representing node execution output)
-    # - workflow_input (representing node input data)
-    predecessor_output = json.dumps({
-        "status_code": "COMPLETED"
-    })
-    workflow_input = json.dumps({
-        "id_to_use": 12345
-    })
-
-    errors = validate_output_contract(
-        contract,
-        output,
-        node_name="test_node",
-        predecessor_output=predecessor_output,
-        workflow_input=workflow_input
-    )
+    errors = validate_output_contract(contract, output, node_name="test_node")
 
     assert errors == []
-    
+
     # Verify output data has been updated with resolved values
     resolved_data = json.loads(output.data)
     assert resolved_data["status"] == "COMPLETED"
@@ -132,29 +136,41 @@ def test_validate_output_contract_jinja_resolution():
 
 @pytest.mark.asyncio
 async def test_end_to_end_contract_resolution_in_workflow():
+    """
+    End-to-end test: trigger node passes { root: [...] } payload to the next node.
+    The mapping_template uses {{ root[].date }} and {{ root[].close }} (standard Jinja2)
+    to extract list columns from the predecessor's output.
+    """
     workflow_config = {
         "id": f"test-contract-jinja-{uuid.uuid4()}",
         "nodes_structure": [
             {
-                "id": "trigger-1",
+                "id": "source-1",
                 "type": "trigger",
-                "name": "stocks_webhook_agent",
-                "config": {}
+                "data": {
+                    "name": "passthrough_trigger_node",
+                    "node_type": "TRIGGER",
+                    "properties": {}
+                }
             },
             {
                 "id": "target-1",
                 "type": "custom",
-                "name": "contract_dummy_target_node",
-                "config": {
-                    "mapping_template": {
-                        "query_type": "INSERT",
-                        "field_values": ["{{ \"root[].date\" }}", "{{ \"root[].close\" }}"]
+                "data": {
+                    "name": "contract_dummy_target_node",
+                    "node_type": "NODE",
+                    # mapping_template in properties is picked up by create_node_execution_wrapper
+                    "properties": {
+                        "mapping_template": json.dumps({
+                            "query_type": "INSERT",
+                            "field_values": ["{{ root[].date }}", "{{ root[].close }}"]
+                        })
                     }
                 }
             }
         ],
         "edges": [
-            {"source": "trigger-1", "target": "target-1"}
+            {"source": "source-1", "target": "target-1"}
         ]
     }
 
@@ -162,7 +178,6 @@ async def test_end_to_end_contract_resolution_in_workflow():
     trace_id = f"trace-{uuid.uuid4()}"
     
     input_payload = {
-        "uid": "user_abc",
         "root": [
             {"date": "2026-07-03", "close": 110},
             {"date": "2026-07-04", "close": 120}
@@ -183,9 +198,8 @@ async def test_end_to_end_contract_resolution_in_workflow():
 
     nodes_state = result.get("context", {}).get("nodes", {})
     assert "target-1" in nodes_state
-    
+
     # Target node received the mapped and resolved field_values
-    assert nodes_state["target-1"]["data"]["input_data"] == {
-        "query_type": "INSERT",
-        "field_values": [["2026-07-03", "2026-07-04"], [110, 120]]
-    }
+    target_input = nodes_state["target-1"]["data"]["input_data"]
+    assert target_input["query_type"] == "INSERT"
+    assert target_input["field_values"] == [["2026-07-03", "2026-07-04"], [110, 120]]

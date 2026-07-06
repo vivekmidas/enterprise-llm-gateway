@@ -382,3 +382,72 @@ async def test_mysql_node_validation_failures():
     result2 = await node.run(inp2)
     assert result2.status == "failure"
     assert "Either 'fields' or 'field_names' & 'field_values' must be provided" in result2.error_message
+
+@pytest.mark.asyncio
+async def test_mysql_node_registry_lookup():
+    from app.nodes.registry import NodesRegistry
+    # Register the node manually to make sure it's present for direct unit testing of registry lookup
+    node = GenericMySQLDBExecutor()
+    await NodesRegistry.register(node)
+    
+    retrieved_node = NodesRegistry.get_node("generic_mysql_query_executor")
+    assert retrieved_node is not None
+    assert retrieved_node.name == "generic_mysql_query_executor"
+    assert isinstance(retrieved_node, GenericMySQLDBExecutor)
+
+@pytest.mark.asyncio
+async def test_mysql_node_workflow_execution():
+    from app.nodes.registry import NodesRegistry
+    from app.workflows.executor import WorkflowExecutor
+    
+    node = GenericMySQLDBExecutor()
+    await NodesRegistry.register(node)
+    
+    workflow_config = {
+        "id": "test-mysql-workflow",
+        "name": "MySQL Workflow",
+        "nodes_structure": [
+            {
+                "id": "mysql-node-1",
+                "type": "custom",
+                "name": "generic_mysql_query_executor",
+                "config": {
+                    "connection": {
+                        "host": "localhost",
+                        "port": 3306,
+                        "user": "root",
+                        "password": "pwd",
+                        "database": "db"
+                    },
+                    "query_type": "select",
+                    "table_name": "users"
+                }
+            }
+        ],
+        "edges": []
+    }
+    
+    executor = WorkflowExecutor(workflow_config)
+    
+    with patch.object(GenericMySQLDBExecutor, "get_connection") as mock_get_conn, \
+         patch.object(GenericMySQLDBExecutor, "execute_query") as mock_exec_query:
+         
+         mock_conn = MagicMock()
+         mock_get_conn.return_value = mock_conn
+         mock_exec_query.return_value = [{"id": 1, "name": "Alice"}]
+         
+         result = await executor.execute_async(
+             input_content="{}",
+             trace_id="test-trace-workflow-mysql"
+         )
+         
+         assert result.get("status") == "completed"
+         
+         node_history = result.get("metadata", {}).get("node_history", {})
+         assert "mysql-node-1" in node_history
+         assert node_history["mysql-node-1"]["status"] == "success"
+         
+         mock_exec_query.assert_called_once()
+         sql_arg = mock_exec_query.call_args[0][1]
+         assert "SELECT * FROM `users`" in sql_arg
+

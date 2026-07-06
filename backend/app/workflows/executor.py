@@ -124,8 +124,6 @@ class WorkflowExecutor:
         ctx = dict(context or {})
         if "input_data" not in ctx:
             ctx["input_data"] = input_content
-        if "workflow_input" not in ctx:
-            ctx["workflow_input"] = input_content
 
         state = AgentState(
             trace_id=trace_id,

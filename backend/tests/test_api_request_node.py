@@ -83,6 +83,51 @@ async def test_api_request_node_delete(mock_execute):
 
 @pytest.mark.asyncio
 @patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+async def test_api_request_node_resolves_eod_stock_wrapped_data_templates(mock_execute):
+    mock_execute.return_value = ApiResponse(
+        status_code=200,
+        headers={"Content-Type": "application/json"},
+        body="[]",
+        duration_ms=10.0,
+    )
+
+    node = ApiRequestNode()
+    await node.init()
+
+    test_input = NodeInput(
+        trace_id=str(uuid.uuid4()),
+        data=json.dumps({
+            "data": {
+                "stock_token": "AAPL.US",
+                "fmt": "json",
+                "market": "US",
+            }
+        }),
+        config={
+            "method": "GET",
+            "url": "eodhd.com",
+            "protocol": "https",
+            "path": "/api/eod/{{stock_token}}",
+            "params": "api_token=test-token&fmt={{fmt}}",
+            "auth_type": "NONE",
+        },
+    )
+
+    result = await node.run(test_input)
+
+    assert result.status == "success"
+    assert json.loads(result.data)["data"] == []
+    mock_execute.assert_called_once()
+    kwargs = mock_execute.call_args[1]
+    assert kwargs["url"] == "https://eodhd.com/api/eod/AAPL.US"
+    assert kwargs["params"] == {
+        "api_token": "test-token",
+        "fmt": "json",
+    }
+
+
+@pytest.mark.asyncio
+@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_post_json_raw_string(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=201,
@@ -407,7 +452,4 @@ async def test_api_request_node_api_path_ignored_when_missing(mock_execute):
     mock_execute.assert_called_once()
     kwargs = mock_execute.call_args[1]
     assert kwargs["url"] == "http://example.com/api/v1"
-
-
-
 

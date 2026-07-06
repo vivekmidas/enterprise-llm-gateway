@@ -59,6 +59,7 @@ class TransformNode(BaseNode):
 
             if self._has_template(template_obj):
                 transformed_data = self._resolve_variables(template_obj, template_context)
+                transformed_data = self.transpose_resolved_value(transformed_data)
             else:
                 transformed_data = template_obj
 

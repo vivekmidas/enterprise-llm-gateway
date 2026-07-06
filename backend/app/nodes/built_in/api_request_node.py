@@ -390,7 +390,13 @@ class ApiRequestNode(BaseNode, abc.ABC):
                 self._emit_metrics(response, attempt, start_time)
                 
                 if 200 <= response.status_code < 300:
-                    out_data = self.set_output_data(input_data, response.body)
+                    response_payload = response.json
+                    if response_payload is None:
+                        try:
+                            response_payload = json.loads(response.body)
+                        except Exception:
+                            response_payload = response.body
+                    out_data = self.set_output_data(input_data, response_payload)
                     return NodeOutput(
                         trace_id=input_data.trace_id,
                         data=out_data,

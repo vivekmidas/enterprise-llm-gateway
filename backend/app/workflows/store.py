@@ -390,11 +390,70 @@ async def _hydrate_workflow_definition(
         if instance_output:
             output_contract = instance_output
         
+        # Check for expected_output dynamic contract
+        from app.nodes.contracts import contract_from_expected_output
+        expected_output = resolved_user.get("expected_output")
+        dynamic_output = contract_from_expected_output(expected_output)
+        if dynamic_output:
+            output_contract = dynamic_output
+
+        # Construct property schema with types
+        property_schema = []
+        if catalog_node:
+            def parse_props(val, resolved_vals):
+                """
+                Parses property entries and updates them with their resolved values.
+
+                Args:
+                    val: The raw property list/string from the catalog node.
+                    resolved_vals: The resolved property values to map to the schema.
+
+                Returns:
+                    A list of property dictionaries.
+                """
+                if not val:
+                    return []
+                if isinstance(val, str):
+                    try:
+                        val = json.loads(val)
+                    except Exception:
+                        return []
+                if not isinstance(val, list):
+                    return []
+                
+                res_list = []
+                for item in val:
+                    if isinstance(item, dict):
+                        entry = dict(item)
+                        key = entry.get("key")
+                        if key and key in resolved_vals:
+                            entry["value"] = resolved_vals[key]
+                        res_list.append(entry)
+                return res_list
+
+            resolved_properties = {**resolved_system, **resolved_user}
+            property_schema.extend(parse_props(catalog_node.user_properties, resolved_properties))
+            property_schema.extend(parse_props(catalog_node.system_properties, resolved_properties))
+
+        # Add mapping_template and expected_output if present in properties
+        resolved_properties = {**resolved_system, **resolved_user}
+        for custom_key in ["mapping_template", "expected_output"]:
+            if custom_key in resolved_properties and not any(p["key"] == custom_key for p in property_schema):
+                property_schema.append({
+                    "key": custom_key,
+                    "type": "textarea",
+                    "label": custom_key.replace("_", " ").title(),
+                    "default": "",
+                    "value": resolved_properties[custom_key]
+                })
+
         data["input_contract"] = input_contract
         data["output_contract"] = output_contract
         data["user_properties"] = resolved_user
         data["system_properties"] = resolved_system
-        data["properties"] = {**resolved_system, **resolved_user}
+        data["properties"] = resolved_properties
+        data["property_schema"] = property_schema
+        data["propertySchema"] = property_schema
 
         n_dict["data"] = data
         hydrated_nodes.append(NodeConfig.model_validate(n_dict))

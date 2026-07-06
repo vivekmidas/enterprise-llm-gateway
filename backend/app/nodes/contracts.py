@@ -110,13 +110,36 @@ def normalize_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     normalized["required"] = _required_fields(raw, properties)
     return normalized
 
-@debug_log
+def _check_mandatory_fields(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
+    errors = []
+    if not isinstance(schema, dict):
+        return errors
+    if schema.get("type") == "object":
+        if not isinstance(value, dict):
+            return errors
+        required = _required_fields(schema)
+        for field in required:
+            if field not in value:
+                errors.append(f"{path}.{field} is mandatory")
+        properties = schema.get("properties", {})
+        for field, field_schema in properties.items():
+            if field in value:
+                errors.extend(_check_mandatory_fields(value[field], field_schema, f"{path}.{field}"))
+    elif schema.get("type") == "array":
+        if not isinstance(value, list):
+            return errors
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(_check_mandatory_fields(item, item_schema, f"{path}[{index}]"))
+    return errors
+
+
+# @debug_log
 def validate_input_contract(
     contract: Dict[str, Any],
     inp: NodeInput,
     node_name: str = "node",
-    predecessor_output: Optional[Any] = None,
-    workflow_input: Optional[Any] = None
 ) -> List[str]:
     logger.info("starting validate_input_contract", contract=contract.get("rules"), input=inp.data, name=node_name)
     schema = normalize_contract(contract)
@@ -128,27 +151,52 @@ def validate_input_contract(
     if errors:
         return errors
 
-    # Parse predecessor_output and workflow_input if strings
-    parsed_output = predecessor_output
-    if isinstance(parsed_output, str):
-        try:
-            parsed_output = json.loads(parsed_output)
-        except Exception:
-            pass
+    # Normalize body based on schema properties (wrapping or unwrapping as needed)
+    if (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and set(schema.get("properties", {}).keys()) == {"data"}
+        and "data" not in body
+    ):
+        body = {"data": body}
+    elif (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and set(schema.get("properties", {}).keys()) == {"input_data"}
+        and "input_data" not in body
+    ):
+        body = {"input_data": body}
 
-    parsed_input = workflow_input
-    if isinstance(parsed_input, str):
-        try:
-            parsed_input = json.loads(parsed_input)
-        except Exception:
-            pass
+    if (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and "data" in body
+        and isinstance(body["data"], dict)
+        and "data" not in schema.get("properties", {})
+    ):
+        body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+    elif (
+        schema.get("type") == "object"
+        and isinstance(body, dict)
+        and "input_data" in body
+        and isinstance(body["input_data"], dict)
+        and "input_data" not in schema.get("properties", {})
+    ):
+        body = {**body["input_data"], **{k: v for k, v in body.items() if k != "input_data"}}
 
+    # Verify mandatory fields are present before template resolution
+    mandatory_errors = _check_mandatory_fields(body, schema, "$")
+    if mandatory_errors:
+        return _validate_value(body, schema, "$")
+
+    # Build render context directly from the input body.
+    # At this point inp.data IS the predecessor node's mapped output — no extra pointer needed.
+    nodes_ctx = inp.context.get("nodes", {}) if (inp and getattr(inp, "context", None)) else {}
     render_context = {
-        "output": parsed_output,
-        "data": parsed_output,
-        "inputdata": parsed_input,
-        "input_data": parsed_input,
-        "nodes": inp.context.get("nodes", {}) if (inp and getattr(inp, "context", None)) else {},
+        "data": body,
+        "input_data": body,
+        **(body if isinstance(body, dict) else {}),
+        "nodes": nodes_ctx,
     }
 
     # Resolve templates in the body
@@ -161,27 +209,10 @@ def validate_input_contract(
     else:
         inp.data = str(resolved_body)
 
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and set(schema.get("properties", {}).keys()) == {"data"}
-        and "data" not in body
-    ):
-        body = {"data": body}
-
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and "data" in body
-        and isinstance(body["data"], dict)
-        and "data" not in schema.get("properties", {})
-    ):
-        body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
-
     return _validate_value(body, schema, "$")
 
 
-@debug_log
+#@debug_log
 def _normalize_field_rule(rule: Any) -> Dict[str, Any]:
     if isinstance(rule, str):
         return {"type": _normalize_type(rule)}
@@ -219,7 +250,7 @@ def _normalize_field_rule(rule: Any) -> Dict[str, Any]:
     return normalized
 
 
-@debug_log
+# @debug_log
 def _schema_from_flat_rules(contract: Dict[str, Any]) -> Dict[str, Any]:
     root = {
         "type": "object",
@@ -239,7 +270,7 @@ def _schema_from_flat_rules(contract: Dict[str, Any]) -> Dict[str, Any]:
     return root
 
 
-@debug_log
+# @debug_log
 def _schema_from_flat_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
     field_type = rule.get("field_type", rule.get("type", "json"))
     schema = {"type": _normalize_type(field_type)}
@@ -296,7 +327,7 @@ def _schema_from_flat_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
     return schema
 
 
-@debug_log
+# @debug_log
 def _insert_path_rule(
     root: Dict[str, Any], path_parts: List[str], field_schema: Dict[str, Any], required: bool
 ) -> None:
@@ -321,7 +352,7 @@ def _insert_path_rule(
         current = child
 
 
-@debug_log
+# @debug_log
 def _merge_field_schema(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     if not existing:
         return incoming
@@ -334,7 +365,7 @@ def _merge_field_schema(existing: Dict[str, Any], incoming: Dict[str, Any]) -> D
     return merged
 
 
-@debug_log
+#@debug_log
 def _normalize_constraint_aliases(schema: Dict[str, Any]) -> None:
     if "min_length" in schema and "minLength" not in schema:
         schema["minLength"] = schema["min_length"]
@@ -350,7 +381,7 @@ def _normalize_constraint_aliases(schema: Dict[str, Any]) -> None:
         schema.setdefault("minimum", 0)
 
 
-@debug_log
+# @debug_log
 def _format_from_type(field_type: Any) -> Optional[str]:
     normalized = str(field_type or "").lower()
     if normalized == "phone_number":
@@ -552,11 +583,11 @@ def _as_bool(value: Any) -> bool:
 def _validate_file_constraints(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
     errors = []
     field_format = str(schema.get("format") or "file").lower()
-    
+
     # Extract extension or mime-type for validation
     ext = ""
     mime = ""
-    
+
     if isinstance(value, str):
         # Could be path, url, or base64 data url
         if value.startswith("data:"):
@@ -588,19 +619,19 @@ def _validate_file_constraints(value: Any, schema: Dict[str, Any], path: str) ->
             errors.append(f"{path} must be a PDF file (.pdf)")
         if mime and mime != "application/pdf":
             errors.append(f"{path} must be application/pdf")
-            
+
     elif field_format in {"doc", "docx"}:
         if ext and ext not in {"doc", "docx"}:
             errors.append(f"{path} must be a Word document (.doc, .docx)")
         if mime and mime not in {"application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}:
             errors.append(f"{path} must be a Word document mime-type")
-            
+
     elif field_format == "image":
         if ext and ext not in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}:
             errors.append(f"{path} must be an image file (.png, .jpg, .jpeg, etc.)")
         if mime and not mime.startswith("image/"):
             errors.append(f"{path} must be an image mime-type (image/*)")
-            
+
     return errors
 
 
@@ -609,8 +640,6 @@ def validate_output_contract(
     contract: Dict[str, Any],
     output: Any,  # NodeOutput or dict or str
     node_name: str = "node",
-    predecessor_output: Optional[Any] = None,
-    workflow_input: Optional[Any] = None,
     context_nodes: Optional[Dict[str, Any]] = None
 ) -> List[str]:
     logger.info("starting validate_output_contract", contract=contract, output=output, name=node_name)
@@ -631,25 +660,10 @@ def validate_output_contract(
         except (json.JSONDecodeError, TypeError):
             pass
 
-    parsed_output = predecessor_output
-    if isinstance(parsed_output, str):
-        try:
-            parsed_output = json.loads(parsed_output)
-        except Exception:
-            pass
-
-    parsed_input = workflow_input
-    if isinstance(parsed_input, str):
-        try:
-            parsed_input = json.loads(parsed_input)
-        except Exception:
-            pass
-
+    # Build render context from the actual output body.
     render_context = {
-        "output": parsed_output,
-        "data": parsed_output,
-        "inputdata": parsed_input,
-        "input_data": parsed_input,
+        "data": body,
+        **(body if isinstance(body, dict) else {}),
         "nodes": context_nodes or {},
     }
 
@@ -689,20 +703,21 @@ def validate_output_contract(
 
 def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:
     expr = expr.strip()
-    
+    lookup_expr = _normalize_lookup_expression(expr)
+
     # Support root[].field or similar path extraction
-    if '[]' in expr:
-        resolved = _extract_list_values(expr, context)
+    if '[]' in lookup_expr:
+        resolved = _extract_list_values(lookup_expr, context)
         if resolved is not None:
             return resolved
-            
+
     # Try to resolve directly via dotted path lookup first
-    if '.' in expr or expr in context:
-        if not any(c in expr for c in ['"', "'", '(', ')']):
-            resolved = _resolve_dotted_path(expr, context)
+    if '.' in lookup_expr or lookup_expr in context:
+        if not any(c in lookup_expr for c in ['"', "'", '(', ')']):
+            resolved = _resolve_dotted_path(lookup_expr, context)
             if resolved is not None:
                 return resolved
-                
+
     # Otherwise, fall back to standard Jinja NativeTemplate render
     try:
         try:
@@ -710,7 +725,7 @@ def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:
         except ImportError:
             from jinja2 import Template as NativeTemplate
         from jinja2 import Undefined
-        
+
         tpl = NativeTemplate(f"{{{{ {expr} }}}}")
         rendered = tpl.render(**context)
         if isinstance(rendered, Undefined):
@@ -718,6 +733,17 @@ def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:
         return rendered
     except Exception:
         return None
+
+
+def _normalize_lookup_expression(expr: str) -> str:
+    stripped = expr.strip()
+    if len(stripped) < 2 or stripped[0] != stripped[-1] or stripped[0] not in {"'", '"'}:
+        return stripped
+
+    unquoted = stripped[1:-1].strip()
+    if re.match(r"^[A-Za-z_]\w*(?:\[\])?(?:\.[A-Za-z_]\w*(?:\[\])?)*$", unquoted):
+        return unquoted
+    return stripped
 
 
 def _resolve_dotted_path(dotted_path: str, obj: Any) -> Any:
@@ -737,16 +763,16 @@ def _extract_list_values(expr: str, context: Dict[str, Any]) -> Optional[List[An
     path = expr.strip().strip("'\"")
     if '[]' not in path:
         return None
-        
+
     left_part, right_part = path.split('[]', 1)
     left_part = left_part.strip()
     right_part = right_part.strip()
-    
+
     if right_part.startswith('.'):
         field_name = right_part[1:]
     else:
         field_name = right_part
-        
+
     target_list = None
     if left_part:
         target_list = _resolve_dotted_path(left_part, context)
@@ -757,7 +783,7 @@ def _extract_list_values(expr: str, context: Dict[str, Any]) -> Optional[List[An
                     target_list = _resolve_dotted_path(left_part, cand_ctx)
                     if target_list is not None:
                         break
-                        
+
     if target_list is None or not isinstance(target_list, list):
         for candidate in ["input_data", "inputdata", "data", "output"]:
             cand_ctx = context.get(candidate)
@@ -774,7 +800,7 @@ def _extract_list_values(expr: str, context: Dict[str, Any]) -> Optional[List[An
                 elif 'root' in cand_ctx and isinstance(cand_ctx['root'], list):
                     target_list = cand_ctx['root']
                     break
-                    
+
     if target_list is None or not isinstance(target_list, list):
         if isinstance(context, list):
             target_list = context
@@ -783,10 +809,10 @@ def _extract_list_values(expr: str, context: Dict[str, Any]) -> Optional[List[An
                 if isinstance(v, list):
                     target_list = v
                     break
-                    
+
     if not isinstance(target_list, list):
         return None
-        
+
     result = []
     for item in target_list:
         if isinstance(item, dict):
@@ -813,7 +839,7 @@ def resolve_jinja_templates_in_data(template: Any, render_context: Dict[str, Any
             if resolved is not None:
                 return resolved
             return template
-            
+
         pattern = re.compile(r"\{\{\s*(.*?)\s*\}\}")
         def replace_match(m):
             expr = m.group(1)
@@ -829,4 +855,53 @@ def resolve_jinja_templates_in_data(template: Any, render_context: Dict[str, Any
             return template
     return template
 
+
+def contract_from_expected_output(expected_output: Any) -> Optional[Dict[str, Any]]:
+    """
+    Parses the expected_output configuration and generates a dynamic contract schema definition.
+
+    Args:
+        expected_output: The expected output configuration (JSON string or dict).
+
+    Returns:
+        A dictionary representing the output contract schema with version and rules, or None.
+    """
+    if not expected_output:
+        return None
+
+    parsed = None
+    if isinstance(expected_output, str):
+        try:
+            parsed = json.loads(expected_output)
+        except Exception:
+            return None
+    else:
+        parsed = expected_output
+
+    if not isinstance(parsed, dict):
+        return None
+
+    rules = []
+    for key, val in parsed.items():
+        field_type = "string"
+        if isinstance(val, bool):
+            field_type = "boolean"
+        elif isinstance(val, int):
+            field_type = "integer"
+        elif isinstance(val, float):
+            field_type = "number"
+        elif isinstance(val, dict):
+            field_type = "object"
+        elif isinstance(val, list):
+            field_type = "array"
+
+        rules.append({
+            "field_name": key,
+            "field_type": field_type
+        })
+
+    return {
+        "version": "1.0",
+        "rules": rules
+    }
 
