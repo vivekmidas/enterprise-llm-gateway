@@ -703,6 +703,7 @@ class BaseNode(BaseModel, abc.ABC):
                         "input_data": input_data,
                         **(input_data if isinstance(input_data, dict) else {}),
                         "nodes": inp.context.get("nodes", {}),
+                        "state": inp.context.get("state", {}),
                     }
 
                     # find and replace all templates in mapping_config

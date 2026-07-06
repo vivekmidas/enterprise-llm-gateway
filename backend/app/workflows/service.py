@@ -396,6 +396,45 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     except Exception:
                         pass
 
+                # Process state/output mappings
+                state_updates = {}
+                state_mappings = (node_config or {}).get("state_mappings") or (node_config or {}).get("output_mappings")
+                if state_mappings and isinstance(state_mappings, dict):
+                    # Resolve state mappings using the parsed output context
+                    render_ctx = {
+                        "output": parsed_output,
+                        "data": parsed_output.get("data") if isinstance(parsed_output, dict) else parsed_output,
+                        **(parsed_output if isinstance(parsed_output, dict) else {})
+                    }
+                    
+                    for state_key, output_path in state_mappings.items():
+                        val = None
+                        if isinstance(output_path, str):
+                            if "{%" in output_path or "{{" in output_path:
+                                try:
+                                    val = agent._resolve_single_expression(
+                                        output_path.replace("{{", "").replace("}}", "").strip(),
+                                        render_ctx
+                                    )
+                                except Exception as template_err:
+                                    logger.warning("failed_to_resolve_state_template_mapping", error=str(template_err))
+                            else:
+                                val = agent._resolve_dotted_path(output_path, parsed_output)
+                                if val is None and isinstance(parsed_output, dict) and "data" in parsed_output:
+                                    val = agent._resolve_dotted_path(output_path, parsed_output["data"])
+                                if val is None:
+                                    val = output_path
+                        else:
+                            val = output_path
+                        
+                        if val is not None:
+                            # 1. Flat key
+                            state_updates[state_key] = val
+                            # 2. Node Type scoped key
+                            state_updates.setdefault(agent_name, {})[state_key] = val
+                            # 3. Node ID scoped key
+                            state_updates.setdefault(node_id, {})[state_key] = val
+
                 existing_nodes = dict(state.context.get("nodes", {})) if state.context else {}
                 existing_nodes[node_id] = {
                     "data": {
@@ -406,6 +445,8 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 updates["context"] = {
                     "nodes": existing_nodes
                 }
+                if state_updates:
+                    updates["context"]["state"] = state_updates
 
                 # Return only what changed. Metadata and violations are merged by LangGraph reducers.
                 existing_history = dict(state.metadata.get("node_history", {})) if state.metadata else {}
@@ -444,6 +485,16 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                             }
                         }
                         
+                        if state_updates:
+                            if "state" not in trace_dict["context"]:
+                                trace_dict["context"]["state"] = {}
+                            # Deep merge state updates in trace_dict
+                            for k, v in state_updates.items():
+                                if isinstance(v, dict) and isinstance(trace_dict["context"]["state"].get(k), dict):
+                                    trace_dict["context"]["state"][k] = {**trace_dict["context"]["state"][k], **v}
+                                else:
+                                    trace_dict["context"]["state"][k] = v
+
                         if updates.get("violations"):
                             existing_violations = set(trace_dict.get("violations") or [])
                             existing_violations.update(updates["violations"])
@@ -513,6 +564,14 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
 
     # Validate Graph Structure on initialization
     validate_no_cycles(nodes_raw, edges_list)
+
+    # Enforce namespace reservation for 'state'
+    for node in nodes_raw:
+        node_id = node.get("id")
+        node_data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
+        node_name = node_data.get("name") or node.get("name")
+        if node_id == "state" or node_name == "state":
+            raise ValueError("The identifier 'state' is reserved and cannot be used as a node ID or name.")
 
     from langgraph.graph import StateGraph, END, START
     from langgraph.types import RetryPolicy
