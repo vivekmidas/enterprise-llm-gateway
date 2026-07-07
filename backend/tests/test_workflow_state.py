@@ -27,6 +27,43 @@ class StateTestDummySourceNode(BaseNode):
             status="success"
         )
 
+class StateTestDummySourceNodeWithContract(BaseNode):
+    name: str = "state_test_dummy_source_node_with_contract"
+    output_contract: dict = {
+        "version": "1.0",
+        "rules": [
+            {
+                "field_name": "symbol",
+                "field_type": "string",
+                "required": True,
+                "stateable": True
+            },
+            {
+                "field_name": "price",
+                "field_type": "number",
+                "required": False,
+                "stateable": False
+            }
+        ]
+    }
+    
+    async def init(self) -> None:
+        pass
+        
+    async def validate_input(self, inp: NodeInput):
+        return None
+        
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        out_data = {
+            "symbol": "AAPL",
+            "price": 175.50
+        }
+        return NodeOutput(
+            trace_id=inp.trace_id,
+            data=json.dumps(out_data),
+            status="success"
+        )
+
 class StateTestDummyTargetNode(BaseNode):
     name: str = "state_test_dummy_target_node"
     input_contract: dict = {
@@ -50,6 +87,7 @@ class StateTestDummyTargetNode(BaseNode):
 @pytest.fixture(scope="module", autouse=True)
 async def register_state_dummy_nodes():
     await NodesRegistry.register(StateTestDummySourceNode())
+    await NodesRegistry.register(StateTestDummySourceNodeWithContract())
     await NodesRegistry.register(StateTestDummyTargetNode())
 
 @pytest.mark.asyncio
@@ -270,4 +308,126 @@ async def test_workflow_state_parallel_merge():
     nodes_state = context.get("nodes", {})
     assert nodes_state["sink-node"]["data"]["input_data"] == {
         "query": "b: AAPL and c: 175.5"
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_state_contract_stateable():
+    """
+    Test that outputs are exported to state when marked stateable: true in the output contract.
+    """
+    workflow_config = {
+        "id": f"test-contract-stateable-{uuid.uuid4()}",
+        "nodes_structure": [
+            {
+                "id": "node-source",
+                "type": "custom",
+                "name": "state_test_dummy_source_node_with_contract",
+                # Simulate a custom node contract defined visual-builder side
+                "output_contract": {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "field_name": "symbol",
+                            "field_type": "string",
+                            "required": True,
+                            "stateable": True
+                        },
+                        {
+                            "field_name": "price",
+                            "field_type": "number",
+                            "required": False,
+                            "stateable": False
+                        }
+                    ]
+                },
+                "config": {}
+            },
+            {
+                "id": "node-target",
+                "type": "custom",
+                "name": "state_test_dummy_target_node",
+                "config": {
+                    "mapping_template": {
+                        "query": "ticker: {{ state.symbol }} and price: {{ state.price }}"
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"source": "node-source", "target": "node-target"}
+        ]
+    }
+    
+    executor = WorkflowExecutor(workflow_config)
+    trace_id = f"trace-{uuid.uuid4()}"
+    
+    result = await executor.execute_async(
+        input_content="{}",
+        trace_id=trace_id
+    )
+    
+    context = result.get("context", {})
+    global_state = context.get("state", {})
+    
+    # "symbol" should be exported because stateable is True
+    assert global_state.get("symbol") == "AAPL"
+    # "price" should NOT be exported because stateable is False
+    assert "price" not in global_state
+    
+    nodes_state = context.get("nodes", {})
+    assert nodes_state["node-target"]["data"]["input_data"] == {
+        # symbol resolves to 'AAPL', price is not in state and remains unresolved
+        "query": "ticker: AAPL and price: {{ state.price }}"
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_state_properties_stateable_fields():
+    # Simulate a workflow where fields are marked stateable in properties.stateable_fields
+    workflow_config = {
+        "id": f"test-props-stateable-{uuid.uuid4()}",
+        "name": "Props Stateable",
+        "nodes_structure": [
+            {
+                "id": "node-source",
+                "type": "custom",
+                "name": "state_test_dummy_source_node",  # Standard node (no contract rules)
+                "config": {
+                    "stateable_fields": ["symbol"]  # Added to properties config
+                }
+            },
+            {
+                "id": "node-target",
+                "type": "custom",
+                "name": "state_test_dummy_target_node",
+                "config": {
+                    "mapping_template": {
+                        "query": "ticker: {{ state.symbol }}"
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"source": "node-source", "target": "node-target"}
+        ]
+    }
+    
+    executor = WorkflowExecutor(workflow_config)
+    trace_id = f"trace-{uuid.uuid4()}"
+    
+    result = await executor.execute_async(
+        input_content="{}",
+        trace_id=trace_id
+    )
+    
+    context = result.get("context", {})
+    global_state = context.get("state", {})
+    
+    # "symbol" should be exported because it is in stateable_fields list
+    assert global_state.get("symbol") == "AAPL"
+    
+    nodes_state = context.get("nodes", {})
+    assert nodes_state["node-target"]["data"]["input_data"] == {
+        "query": "ticker: AAPL"
     }

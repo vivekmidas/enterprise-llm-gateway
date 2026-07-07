@@ -398,15 +398,32 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
 
                 # Process state/output mappings
                 state_updates = {}
+                render_ctx = {
+                    "output": parsed_output,
+                    "data": parsed_output.get("data") if isinstance(parsed_output, dict) else parsed_output,
+                    **(parsed_output if isinstance(parsed_output, dict) else {})
+                }
+
+                # 1. Process output schema rules for "stateable" fields
+                if isinstance(output_schema, dict) and "rules" in output_schema:
+                    for rule in output_schema["rules"]:
+                        if isinstance(rule, dict) and rule.get("stateable") is True:
+                            field_name = rule.get("field_name")
+                            if field_name:
+                                val = agent._resolve_dotted_path(field_name, parsed_output)
+                                if val is None and isinstance(parsed_output, dict) and "data" in parsed_output:
+                                    val = agent._resolve_dotted_path(field_name, parsed_output["data"])
+                                if val is not None:
+                                    # 1. Flat key
+                                    state_updates[field_name] = val
+                                    # 2. Node Type scoped key
+                                    state_updates.setdefault(agent_name, {})[field_name] = val
+                                    # 3. Node ID scoped key
+                                    state_updates.setdefault(node_id, {})[field_name] = val
+
+                # 2. Process explicit state_mappings dictionary if present
                 state_mappings = (node_config or {}).get("state_mappings") or (node_config or {}).get("output_mappings")
                 if state_mappings and isinstance(state_mappings, dict):
-                    # Resolve state mappings using the parsed output context
-                    render_ctx = {
-                        "output": parsed_output,
-                        "data": parsed_output.get("data") if isinstance(parsed_output, dict) else parsed_output,
-                        **(parsed_output if isinstance(parsed_output, dict) else {})
-                    }
-                    
                     for state_key, output_path in state_mappings.items():
                         val = None
                         if isinstance(output_path, str):
@@ -434,6 +451,22 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                             state_updates.setdefault(agent_name, {})[state_key] = val
                             # 3. Node ID scoped key
                             state_updates.setdefault(node_id, {})[state_key] = val
+
+                # 3. Process stateable_fields list from properties
+                stateable_fields = (node_config or {}).get("stateable_fields")
+                if stateable_fields and isinstance(stateable_fields, list):
+                    for field_name in stateable_fields:
+                        if isinstance(field_name, str):
+                            val = agent._resolve_dotted_path(field_name, parsed_output)
+                            if val is None and isinstance(parsed_output, dict) and "data" in parsed_output:
+                                val = agent._resolve_dotted_path(field_name, parsed_output["data"])
+                            if val is not None:
+                                # 1. Flat key
+                                state_updates[field_name] = val
+                                # 2. Node Type scoped key
+                                state_updates.setdefault(agent_name, {})[field_name] = val
+                                # 3. Node ID scoped key
+                                state_updates.setdefault(node_id, {})[field_name] = val
 
                 existing_nodes = dict(state.context.get("nodes", {})) if state.context else {}
                 existing_nodes[node_id] = {

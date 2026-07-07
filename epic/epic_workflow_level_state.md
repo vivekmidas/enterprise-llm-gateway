@@ -14,7 +14,7 @@ This Epic introduces a global, workflow-level key-value store (`state`) that all
 
 ## 2. User Stories
 
-*   **As a workflow designer (UI),** I want to declare that specific node outputs should be exported to workflow-level state variables by checking a checkbox next to the output contract fields in the properties panel, so that downstream nodes can reference them without knowing internal node IDs.
+*   **As a workflow designer (UI),** I want to declare that specific node outputs should be exported to workflow-level state variables by checking a "Stateable" checkbox directly next to output contract fields under the Data Contracts tab, so that downstream nodes can reference them without knowing internal node IDs.
 *   **As a workflow designer (UI),** I want autocomplete suggestions (e.g., dropdowns or draggable pills) displaying all available upstream state variables when writing node configurations (like database queries or LLM prompts), so that I don't have to guess variable names.
 *   **As a workflow designer (UI),** I want a visual badge indicator on nodes that write to the state, and a hover tooltip listing what variables they expose, so that I can understand the state landscape directly on the canvas at a glance.
 *   **As a downstream node (like MySQL/Database),** I want to retrieve state variables dynamically using simple Jinja2 syntax (e.g., `SELECT * FROM stocks WHERE name = '{{ state.stock_name }}'`), so that node configs remain clean and readable.
@@ -26,7 +26,7 @@ This Epic introduces a global, workflow-level key-value store (`state`) that all
 
 ### In-Scope
 1.  **Schema-Driven Variable Discovery & Indicators (Frontend UX):** Traverse the workflow graph backwards from the active node to display all reachable upstream output contract fields and custom declared variables as autocomplete recommendations. Display a small key/tag icon badge with variable count on nodes writing to state, showing exposed keys on hover.
-2.  **Explicit State Exporters & Mutation (Frontend & Backend):** Support a checkbox next to output contract fields in the properties panel to trigger state exports. Provide an optional inline text input to define a custom global variable name (defaults to the field name). Mappings can use runtime dynamic expressions (e.g., inline Jinja logic) for dynamic mutation.
+2.  **Explicit State Exporters & Mutation (Frontend & Backend):** Support a "Stateable" checkbox next to output contract fields in the Output Structure mapping list. Provide an optional inline text input to define a custom global variable name (defaults to the field name). Mappings can use runtime dynamic expressions (e.g., inline Jinja logic) for dynamic mutation.
 3.  **Conflict-Free Namespaced State (Backend):** Store updates under three scopes:
     - Global flat scope: `state.variable_name` (last-writer-wins convenience)
     - Node name scope: `state.node_class_name.variable_name` (e.g., `state.stock_eod.stock_name`)

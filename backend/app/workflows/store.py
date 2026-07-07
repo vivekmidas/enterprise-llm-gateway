@@ -336,14 +336,14 @@ async def _hydrate_workflow_definition(
             )
         )
         prop_row = prop_result.scalars().first()
-        print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
+        # print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
         instance_overrides = {}
         if prop_row:
             if prop_row.properties:
                 instance_overrides = prop_row.properties if isinstance(prop_row.properties, dict) else _safe_json_loads(prop_row.properties, {})
             if prop_row.label:
                 data["label"] = prop_row.label
-                print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
+                #print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
 
 
         
