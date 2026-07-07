@@ -726,15 +726,18 @@ async def delete_workflow_from_store(workflow_id: str, version: Optional[str] = 
         try:
             async with AsyncSessionLocal() as session:
                 async with session.begin():
+                    logger.info("deleting workflow node properties", workflow_id=workflow_id)
                     await session.execute(
                         delete(WorkflowNodePropertyDB).where(
                             WorkflowNodePropertyDB.workflow_id == workflow_id
                         )
                     )
+                    logger.info("deleting workflow nodes", workflow_id=workflow_id)
                     await session.execute(delete(WorkflowNodeDB).where(WorkflowNodeDB.workflow_id == workflow_id))
+                    logger.info("deleting workflow", workflow_id=workflow_id)
                     await session.execute(delete(WorkflowDB).where(WorkflowDB.id == workflow_id))
                 
-                # await workflow_cache.invalidate_agent(workflow_id)
+                logger.info("workflow deleted successfully", workflow_id=workflow_id)
                 return True
         except Exception as e:
             logger.error("failed_to_delete_workflow", workflow_id=workflow_id, error=str(e))

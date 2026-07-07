@@ -1,4 +1,3 @@
-from sqlalchemy import Column, String, JSON, Integer, Boolean
 from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey
 from app.core.database import Base
 from datetime import datetime
@@ -28,6 +27,20 @@ class UserDB(Base):
     role = Column(String, default="user")     # admin, user
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
     updated_at = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
+class AuditLogDB(Base):
+    __tablename__ = "audit_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=False, index=True)
+    resource_id = Column(String, nullable=True, index=True)
+    status = Column(String, nullable=False, default="success", index=True)
+    actor_user_id = Column(Integer, nullable=True, index=True)
+    actor_role = Column(String, nullable=True, index=True)
+    customer_id = Column(Integer, nullable=True, index=True)
+    details = Column(JSON, nullable=True)
+    created_at = Column(String, default=lambda: datetime.utcnow().isoformat(), index=True)
 
 
 class CategoryDB(Base):

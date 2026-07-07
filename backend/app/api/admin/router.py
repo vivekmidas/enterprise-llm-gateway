@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.models.db_models import CustomerDB, UserDB
 from app.core.security.hash import get_password_hash
 from app.api.auth.dependencies import get_current_system_admin
+from app.api.admin.audit import record_audit_log
 from app.core.types.users import User
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -246,7 +247,22 @@ async def delete_customer(
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-        
+
+    user_count_result = await db.execute(select(UserDB.id).where(UserDB.customer_id == customer_id))
+    deleted_user_ids = [row[0] for row in user_count_result.all()]
+    await record_audit_log(
+        db,
+        current_user=current_user,
+        action="customer.delete",
+        resource_type="customer",
+        resource_id=str(customer_id),
+        customer_id=customer_id,
+        details={
+            "customer_name": customer.name,
+            "customer_domain": customer.domain,
+            "deleted_user_ids": deleted_user_ids,
+        },
+    )
     await db.execute(delete(UserDB).where(UserDB.customer_id == customer_id))
     await db.execute(delete(CustomerDB).where(CustomerDB.id == customer_id))
     await db.commit()
@@ -288,6 +304,20 @@ async def create_customer_user(
         status="active"
     )
     db.add(new_user)
+    await db.flush()
+    await record_audit_log(
+        db,
+        current_user=current_user,
+        action="user.create",
+        resource_type="user",
+        resource_id=str(new_user.id),
+        customer_id=customer_id,
+        details={
+            "email": email,
+            "role": role,
+            "created_under_customer_endpoint": True,
+        },
+    )
     await db.commit()
     await db.refresh(new_user)
     

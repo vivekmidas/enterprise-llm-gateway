@@ -8,6 +8,7 @@ from app.api.root.router import router as root_router
 from app.api.workflows.router import router as workflows_router
 from app.api.admin.router import router as admin_router
 from app.api.admin.oauth import router as auth_router
+from app.api.admin.audit import router as audit_router
 from app.api.observability.router import router as obs_router
 from app.api.categories.router import router as categories_router
 from app.api.auth.router import router as base_auth_router
@@ -65,6 +66,7 @@ app.include_router(workflows_router)
 app.include_router(obs_router)
 app.include_router(categories_router)
 app.include_router(auth_router)
+app.include_router(audit_router)
 app.include_router(base_auth_router)
 app.include_router(email_webhooks.router)
 app.include_router(users.router)
