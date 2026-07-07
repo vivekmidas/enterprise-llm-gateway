@@ -141,7 +141,7 @@ def validate_input_contract(
     inp: NodeInput,
     node_name: str = "node",
 ) -> List[str]:
-    logger.info("starting validate_input_contract", contract=contract.get("rules"), input=inp.data, name=node_name)
+    logger.info("starting validate_input_contract", contract=contract.get("rules"), name=node_name)
     schema = normalize_contract(contract)
     if not schema:
         return []
@@ -260,8 +260,8 @@ def _schema_from_flat_rules(contract: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     rules = [rule for rule in contract.get("rules", []) if isinstance(rule, dict)]
-    for rule in sorted(rules, key=lambda item: len(str(item.get("field_name", "")).split("."))):
-        field_name = str(rule.get("field_name", "")).strip()
+    for rule in sorted(rules, key=lambda item: len(str(item.get("field_name", item.get("name", ""))).split("."))):
+        field_name = str(rule.get("field_name", rule.get("name", ""))).strip()
         if not field_name:
             continue
         field_schema = _schema_from_flat_rule(rule)
@@ -292,6 +292,8 @@ def _schema_from_flat_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
         "require_lowercase",
         "require_number",
         "require_special",
+        "stateable",
+        "state_required",
     }
     for key in passthrough_keys:
         if key in rule:
@@ -642,7 +644,7 @@ def validate_output_contract(
     node_name: str = "node",
     context_nodes: Optional[Dict[str, Any]] = None
 ) -> List[str]:
-    logger.info("starting validate_output_contract", contract=contract, output=output, name=node_name)
+    logger.info("starting validate_output_contract", contract=contract, name=node_name)
     schema = normalize_contract(contract)
     if not schema:
         return []

@@ -199,6 +199,11 @@ class WorkflowExecutor:
             raise e
         finally:
             WorkflowExecutor.active_tasks.pop(trace_id, None)
+            try:
+                from app.workflows.service import clear_execution_cache
+                clear_execution_cache(trace_id)
+            except Exception as e:
+                logger.warning("failed_to_clear_execution_cache", error=str(e))
  
         if isinstance(result, AgentState):
             result_dict = result.model_dump()

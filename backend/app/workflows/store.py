@@ -212,6 +212,8 @@ async def update_workflow_node_properties(
     agent_node_id: str,
     properties: dict,
     label: Optional[str] = None,
+    input_contract: Optional[dict] = None,
+    output_contract: Optional[dict] = None,
 ) -> dict:
     async with AsyncSessionLocal() as session:
         async with session.begin():
@@ -219,15 +221,28 @@ async def update_workflow_node_properties(
             if not workflow_node:
                 raise HTTPException(status_code=404, detail="Workflow node not found")
 
-            # Get existing label first, fallback to passed label
+            # Get existing label and contracts first, fallback to passed values
             existing_result = await session.execute(
-                select(WorkflowNodePropertyDB.label).where(
+                select(
+                    WorkflowNodePropertyDB.label,
+                    WorkflowNodePropertyDB.input_contract,
+                    WorkflowNodePropertyDB.output_contract
+                ).where(
                     WorkflowNodePropertyDB.workflow_id == workflow_id,
                     WorkflowNodePropertyDB.agent_node_id == agent_node_id
                 )
             )
-            existing_label = existing_result.scalar_one_or_none()
+            existing_row = existing_result.first()
+            
+            existing_label = None
+            existing_input_contract = None
+            existing_output_contract = None
+            if existing_row:
+                existing_label, existing_input_contract, existing_output_contract = existing_row
+
             final_label = label if label is not None else existing_label
+            final_input = input_contract if input_contract is not None else existing_input_contract
+            final_output = output_contract if output_contract is not None else existing_output_contract
 
             await session.execute(
                 delete(WorkflowNodePropertyDB).where(
@@ -242,6 +257,8 @@ async def update_workflow_node_properties(
                     agent_name=workflow_node.agent_name,
                     properties=properties,
                     label=final_label,
+                    input_contract=final_input,
+                    output_contract=final_output,
                 )
             )
 
@@ -336,14 +353,14 @@ async def _hydrate_workflow_definition(
             )
         )
         prop_row = prop_result.scalars().first()
-        print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
+        # print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
         instance_overrides = {}
         if prop_row:
             if prop_row.properties:
                 instance_overrides = prop_row.properties if isinstance(prop_row.properties, dict) else _safe_json_loads(prop_row.properties, {})
             if prop_row.label:
                 data["label"] = prop_row.label
-                print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
+                # print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
 
 
         
@@ -371,8 +388,19 @@ async def _hydrate_workflow_definition(
                 resolved_user[k] = v
 
         # Check if the instance itself defines custom contracts
-        instance_input = data.get("input_contract")
-        instance_output = data.get("output_contract")
+        instance_input = None
+        instance_output = None
+        if prop_row:
+            if prop_row.input_contract is not None:
+                instance_input = prop_row.input_contract
+            if prop_row.output_contract is not None:
+                instance_output = prop_row.output_contract
+        
+        # Fallback to definition for legacy workflows
+        if instance_input is None:
+            instance_input = data.get("input_contract")
+        if instance_output is None:
+            instance_output = data.get("output_contract")
 
         input_contract = {}
         output_contract = {}
@@ -622,32 +650,10 @@ async def save_workflow_to_store(
                                 agent_name=agent_name,
                                 properties=instance_properties,
                                 label=node_data.get("label") or n_dict.get("label"),
+                                input_contract=node_data.get("input_contract"),
+                                output_contract=node_data.get("output_contract"),
                             )
                         )
-
-                        # Sync contracts to CustomerNodeDB
-                        target_cust_id = customer_id or db_workflow.customer_id
-                        if target_cust_id and agent_name:
-                            from app.models.db_models import CustomerNodeDB
-                            cust_result = await session.execute(
-                                select(CustomerNodeDB).where(
-                                    CustomerNodeDB.customer_id == target_cust_id,
-                                    CustomerNodeDB.node_name == agent_name
-                                )
-                            )
-                            cust_node = cust_result.scalars().first()
-                            if not cust_node:
-                                cust_node = CustomerNodeDB(
-                                    customer_id=target_cust_id,
-                                    node_name=agent_name
-                                )
-                                session.add(cust_node)
-                            
-                            if "input_contract" in node_data and node_data["input_contract"]:
-                                cust_node.input_contract = node_data["input_contract"]
-                            if "output_contract" in node_data and node_data["output_contract"]:
-                                cust_node.output_contract = node_data["output_contract"]
-                            cust_node.updated_at = now_str
 
             # Critical: Invalidate Redis compiled graph cache
             await workflow_cache.invalidate_agent(definition.id)

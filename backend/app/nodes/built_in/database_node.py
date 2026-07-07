@@ -4,7 +4,7 @@ from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-from app.nodes.properties import safe_int
+from app.utils.type_utils import safe_int
 
 class DatabaseNode(BaseNode):
     """

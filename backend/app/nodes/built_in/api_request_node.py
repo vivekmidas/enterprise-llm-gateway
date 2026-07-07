@@ -8,7 +8,7 @@ import abc
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 from app.utils.http_client import HttpClient, ApiResponse
-from app.nodes.properties import safe_int, safe_float
+from app.utils.type_utils import safe_int, safe_float
 from pydantic import BaseModel, Field
 
 class ApiRequestConfig(BaseModel):

@@ -107,6 +107,21 @@ async def get_node_properties(
                 if cust_node.output_contract is not None:
                     output_contract = cust_node.output_contract
 
+            # Merge workflow node overrides (end-user)
+            from app.models.db_models import WorkflowNodePropertyDB
+            prop_result = await session.execute(
+                select(WorkflowNodePropertyDB).where(
+                    WorkflowNodePropertyDB.workflow_id == workflow_id,
+                    WorkflowNodePropertyDB.agent_node_id == agent_node_id,
+                )
+            )
+            prop_row = prop_result.scalars().first()
+            if prop_row:
+                if prop_row.input_contract is not None:
+                    input_contract = prop_row.input_contract
+                if prop_row.output_contract is not None:
+                    output_contract = prop_row.output_contract
+
             # System properties are sacrosanct and cannot be overridden by tenant
             resolved_system = dict(global_system_defaults)
             
@@ -128,6 +143,13 @@ async def get_node_properties(
                 if k not in resolved_user and k not in resolved_system:
                     resolved_user[k] = v
 
+
+            # Check for expected_output dynamic contract
+            from app.nodes.contracts import contract_from_expected_output
+            expected_output = resolved_user.get("expected_output")
+            dynamic_output = contract_from_expected_output(expected_output)
+            if dynamic_output:
+                output_contract = dynamic_output
 
             # Unified properties list
             resolved_properties = {**resolved_system, **resolved_user}
@@ -165,8 +187,10 @@ async def update_node_properties(
     if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
         
-    # Pop out label to store separately under its own database field
+    # Pop out label, input_contract and output_contract to store separately under their own database fields
     label = properties.pop("label", None)
+    input_contract = properties.pop("input_contract", None)
+    output_contract = properties.pop("output_contract", None)
 
     # Prevent standard users and customer admins from modifying system properties
     if current_user.role != "system_admin":
@@ -188,7 +212,10 @@ async def update_node_properties(
                             else:
                                 properties.pop(k, None)
 
-    return await update_workflow_node_properties(workflow_id, agent_node_id, properties, label=label)
+    return await update_workflow_node_properties(
+        workflow_id, agent_node_id, properties,
+        label=label, input_contract=input_contract, output_contract=output_contract
+    )
 
 
 

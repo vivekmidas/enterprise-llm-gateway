@@ -10,8 +10,9 @@ import structlog
 
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
-from app.utils.text_splitter import RecursiveCharacterTextSplitter
-from app.nodes.properties import safe_int, safe_float
+from app.utils.text_splitter import chunk_text
+from app.utils.type_utils import safe_int, safe_float
+from app.utils.file_utils import load_file_content, extract_text_from_pdf
 
 logger = structlog.get_logger(__name__)
 
@@ -132,43 +133,7 @@ class GenericLLMVectorDB(BaseNode):
         await super().validate_input(inp)
         return None
 
-    def _load_file_content(self, path_or_b64: str) -> bytes:
-        if not path_or_b64:
-            return b""
-        
-        # Base64 data URLs
-        if ";" in path_or_b64 and "base64," in path_or_b64:
-            _, base64_data = path_or_b64.split("base64,", 1)
-            return base64.b64decode(base64_data)
-        
-        # Raw base64 string
-        if not os.path.exists(path_or_b64):
-            try:
-                # Add padding if needed
-                padded = path_or_b64 + "=" * ((4 - len(path_or_b64) % 4) % 4)
-                return base64.b64decode(padded)
-            except Exception:
-                pass
-        
-        # Local file path
-        if os.path.exists(path_or_b64):
-            with open(path_or_b64, "rb") as f:
-                return f.read()
-                
-        raise FileNotFoundError(f"Could not resolve file path or base64 content: {path_or_b64[:100]}...")
-
-    def _extract_text_from_pdf(self, pdf_bytes: bytes) -> str:
-        try:
-            import pypdf
-            import io
-            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() or ""
-            return text
-        except ImportError:
-            # Attempt running fallback logic or warn
-            raise ImportError("The 'pypdf' package is not installed on this system. Please run 'pip install pypdf' to enable PDF parsing.")
+    # File loading and PDF parsing utilities have been consolidated to app.utils.file_utils
 
     async def _generate_embeddings(self, texts: List[str], api_url: str, model: str, api_key: Optional[str] = None) -> List[List[float]]:
         headers = {}
@@ -307,23 +272,17 @@ class GenericLLMVectorDB(BaseNode):
                 
                 # Check for PDF
                 if pdf_source:
-                    pdf_bytes = self._load_file_content(pdf_source)
-                    pdf_text = self._extract_text_from_pdf(pdf_bytes)
+                    pdf_bytes = load_file_content(pdf_source)
+                    pdf_text = extract_text_from_pdf(pdf_bytes)
                     raw_text_to_chunk = (raw_text_to_chunk + "\n\n" + pdf_text).strip()
 
-                # Chunk the text
-                chunks = []
-                if raw_text_to_chunk:
-                    if strategy == "none":
-                        chunks = [raw_text_to_chunk]
-                    else:
-                        separators = [""] if strategy == "character" else None
-                        splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_overlap,
-                            separators=separators
-                        )
-                        chunks = splitter.split_text(raw_text_to_chunk)
+                # Chunk the text using consolidated helper function
+                chunks = chunk_text(
+                    text=raw_text_to_chunk,
+                    strategy=strategy,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
 
                 # Generate embeddings
                 self.logger.info("starting embedding generation", config=config, name=self.name, function=__name__)
@@ -336,7 +295,7 @@ class GenericLLMVectorDB(BaseNode):
                 if image_source:
                     try:
                         # Extract basic image base64 metadata
-                        img_bytes = self._load_file_content(image_source)
+                        img_bytes = load_file_content(image_source)
                         img_b64 = base64.b64encode(img_bytes).decode('utf-8')
                         image_metadata = {
                             "has_image": True,

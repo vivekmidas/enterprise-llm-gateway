@@ -455,7 +455,6 @@ CREATE TABLE IF NOT EXISTS "workflow_nodes" (
     description varchar,
     agent_name varchar,
     updated_at VARCHAR,
-    properties JSON,
     PRIMARY KEY (id),
     FOREIGN KEY (workflow_id) REFERENCES workflows (id)
 );
@@ -3099,6 +3098,8 @@ CREATE TABLE IF NOT EXISTS "workflow_node_properties" (
     agent_name VARCHAR,
     properties JSON,
     label VARCHAR,
+    input_contract JSON,
+    output_contract JSON,
     PRIMARY KEY (id),
     FOREIGN KEY (agent_name) REFERENCES nodes (name)
 );

@@ -171,11 +171,11 @@ class DBExecutor(BaseNode, abc.ABC):
 
                 # Get table name
                 if isinstance(data, dict):
-                    table_name = data.get("table_name") or payload.get("table_name")
+                    table_name = data.get("table_name") or payload.get("table_name") or config.get("table")
                 else:
                     table_name = None
                 if not table_name:
-                    table_name = config.get("table_name")
+                    table_name = config.get("table")
 
                 if not table_name:
                     self.logger.warning("db_missing_table_name", trace_id=trace_id)
@@ -260,6 +260,7 @@ class DBExecutor(BaseNode, abc.ABC):
                 trace_id=trace_id,
                 data=inp.data,
                 status="failure",
+                violations= violations.append(str(e)),
                 error_message=f"Query preparation failed: {e}",
                 error_code=400,
                 latency_ms=duration

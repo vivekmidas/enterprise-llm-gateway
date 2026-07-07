@@ -13,7 +13,7 @@ from uvicorn.config import Config
 
 from app.core.types.common import NodeInput, NodeOutput
 from app.nodes.base import TriggerNode
-from app.nodes.properties import safe_int
+from app.utils.type_utils import safe_int
 
 
 class BaseWebhookAgent(TriggerNode, abc.ABC):

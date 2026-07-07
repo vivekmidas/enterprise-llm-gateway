@@ -2,8 +2,8 @@ from typing import Dict, Any, List, Optional
 import json
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
-from app.utils.text_splitter import RecursiveCharacterTextSplitter
-from app.nodes.properties import safe_int
+from app.utils.text_splitter import chunk_text
+from app.utils.type_utils import safe_int
 
 class TextChunkerNode(BaseNode):
     name: str = "text_chunker_node"
@@ -77,19 +77,12 @@ class TextChunkerNode(BaseNode):
                 metadata={"chunk_count": 0, "status": "empty"}
             )
 
-        if strategy == "none":
-            chunks = [input_text]
-        else:
-            separators = None
-            if strategy == "character":
-                separators = [""]
-            
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                separators=separators
-            )
-            chunks = splitter.split_text(input_text)
+        chunks = chunk_text(
+            text=input_text,
+            strategy=strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
 
         out_payload = {
             "chunks": chunks,

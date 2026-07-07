@@ -107,6 +107,8 @@ class WorkflowNodePropertyDB(Base):
     agent_name = Column(String, nullable=True, index=True)
     properties = Column(JSON)
     label = Column(String, nullable=True)
+    input_contract = Column(JSON, nullable=True)
+    output_contract = Column(JSON, nullable=True)
 
     
 class CredentialDB(Base):

@@ -417,19 +417,19 @@ class BaseNode(BaseModel, abc.ABC):
             return any(self._has_template(i) for i in val)
         return False
 
-    def is_jinja_template(text: str) -> bool:
+    def is_jinja_template(self, text: str) -> bool:
         """Check if string contains Jinja2 template syntax"""
         return "{{" in text and "}}" in text
 
-    def _render_template_sets(template: List[str], render_context: List[Dict[str, Any]]) -> List[Set[Any]]:
+    def _render_template_sets(self, template: List[str], render_context: List[Dict[str, Any]]) -> List[Set[Any]]:
         result = []
         for context in render_context:
             row_set: Set[Any] = set()
             
             for tmpl_str in template:
-                if is_jinja_template(tmpl_str):
+                if self.is_jinja_template(tmpl_str):
                     # Render with Jinja2
-                    t = Template(tmpl_str)
+                    t = NativeTemplate(tmpl_str)
                     resolved = t.render(**context)
                     # Try to convert to proper type (e.g. "25" → 25)
                     try:
@@ -518,7 +518,7 @@ class BaseNode(BaseModel, abc.ABC):
         Validates if the output matches the defined output_contract.
         Checks mandatory fields and data types in the JSON body returned by the node.
         """
-        self.logger.info("Starting validate_output_contract", name=self.name)
+        self.logger.info("starting validate_output_contract", name=self.name)
         schema = inp.output_schema if getattr(inp, "output_schema", None) is not None else self.output_contract
         if not schema:
             self.logger.debug("No output schema found", name=self.name, schema=schema)
@@ -695,22 +695,25 @@ class BaseNode(BaseModel, abc.ABC):
                         violations=["contract_violation"]
                     )
 
-            # 0.08 If mappings exist and mandatory fields are present, replace templates with the input_data
-            if mapping_config:
+            # 0.08 If mappings exist or config has templates, build render context and resolve templates
+            if mapping_config or self._has_template(inp.config):
                 try:
+                    inner_data = self.get_input_data(inp)
                     render_context = {
-                        "data": input_data,
-                        "input_data": input_data,
+                        "data": inner_data,
+                        "input_data": inner_data,
                         **(input_data if isinstance(input_data, dict) else {}),
+                        **(inner_data if isinstance(inner_data, dict) else {}),
                         "nodes": inp.context.get("nodes", {}),
                     }
 
                     # find and replace all templates in mapping_config
-                    resolved_mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
+                    if mapping_config:
+                        resolved_mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
+                        inp.data = json.dumps(resolved_mapped_data)
 
                     # find and replace all templates in properties / config
                     resolved_config = self._resolve_jinja_templates(inp.config, render_context)
-                    inp.data = json.dumps(resolved_mapped_data)
                     inp.config = resolved_config
                 except Exception as e:
                     self.logger.error("failed_to_resolve_mapping_templates", error=str(e))
@@ -747,7 +750,7 @@ class BaseNode(BaseModel, abc.ABC):
                 name=self.name,
                 status=output.status, function_name=__name__,
                 latency_ms=output.latency_ms,
-                #output=output.model_dump()
+                output=output.status
             )
             return output
 

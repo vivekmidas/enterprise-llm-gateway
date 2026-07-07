@@ -89,7 +89,7 @@ class GenericMySQLDBExecutor(DBExecutor):
             return conn
         except Exception as e:
             self.logger.error("mysql_connection_failed", database=connection_config.get("database"), error=str(e))
-            raise RuntimeError(f"MySQL connection failed: {e}") from e
+            raise RuntimeError(f"MySQL connection failed: {e.msg}") from e
 
     async def execute_query(self, connection, query: str, query_type: str, params: Optional[Any] = None) -> Any:
         """

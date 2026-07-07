@@ -4,7 +4,7 @@ import datetime
 import abc
 from app.nodes.base import TriggerNode
 from pydantic import PrivateAttr, Field
-from app.nodes.properties import safe_int
+from app.utils.type_utils import safe_int
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import CredentialDB
 from sqlalchemy import select

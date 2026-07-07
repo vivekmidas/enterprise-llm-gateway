@@ -69,3 +69,21 @@ class RecursiveCharacterTextSplitter:
             chunks.append(current_chunk)
 
         return [c.strip() for c in chunks if c.strip()]
+
+
+def chunk_text(text: str, strategy: str = "recursive", chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+    """
+    Helper to split text into chunks based on chunking strategy.
+    """
+    if not text:
+        return []
+    if strategy == "none":
+        return [text]
+    separators = [""] if strategy == "character" else None
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=separators
+    )
+    return splitter.split_text(text)
+

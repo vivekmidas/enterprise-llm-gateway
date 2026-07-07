@@ -20,6 +20,10 @@ def _refresh_workflow_node_properties_table(sync_conn):
     if expected_columns.issubset(columns) and columns.isdisjoint(legacy_columns):
         if "label" not in columns:
             sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN label VARCHAR")
+        if "input_contract" not in columns:
+            sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN input_contract JSON")
+        if "output_contract" not in columns:
+            sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN output_contract JSON")
         return
 
     Base.metadata.tables["workflow_node_properties"].drop(sync_conn, checkfirst=True)

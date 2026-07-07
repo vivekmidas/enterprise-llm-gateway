@@ -17,6 +17,7 @@ from app.workflows.store import (
 from app.core.cache import workflow_cache
 from app.workflows.builder import build_graph_from_definition
 from app.workflows.class_models import WorkflowDefinition
+from app.utils.json_utils import try_parse_json
 
 logger = structlog.get_logger(__name__)
 
@@ -277,6 +278,42 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
     return router
 
 
+_db_cache: Dict[str, Dict[str, Any]] = {}
+
+async def populate_execution_cache(trace_id: str, customer_id: Optional[int], workflow_id: Optional[str]):
+    """Pre-fetch and cache all required db models for the execution to avoid queries inside node wrapper."""
+    from app.models.db_models import CustomerNodeDB, WorkflowNodePropertyDB
+    
+    customer_nodes = {}
+    workflow_properties = {}
+    
+    async with AsyncSessionLocal() as session:
+        if customer_id is not None:
+            stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == customer_id)
+            res = await session.execute(stmt)
+            for row in res.scalars():
+                customer_nodes[row.node_name] = row
+                
+        if workflow_id:
+            stmt = select(WorkflowNodePropertyDB).where(WorkflowNodePropertyDB.workflow_id == workflow_id)
+            res = await session.execute(stmt)
+            for row in res.scalars():
+                workflow_properties[row.agent_node_id] = row
+                
+    _db_cache[trace_id] = {
+        "customer_nodes": customer_nodes,
+        "workflow_properties": workflow_properties
+    }
+
+async def get_or_populate_cache(trace_id: str, customer_id: Optional[int], workflow_id: Optional[str]):
+    if trace_id not in _db_cache:
+        await populate_execution_cache(trace_id, customer_id, workflow_id)
+    return _db_cache[trace_id]
+
+def clear_execution_cache(trace_id: str):
+    _db_cache.pop(trace_id, None)
+
+
 def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_id: str, agent_config: Dict[str, Any]):
     """
     Standardized node execution wrapper.
@@ -285,7 +322,6 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
     from datetime import datetime
     from opentelemetry import trace
     from app.nodes.base import NodeInput
-    from app.core.cache import trace_store
     
     tracer = trace.get_tracer(__name__)
     
@@ -300,50 +336,38 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
             try:
                 logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
                 
-                # 1. In-flight Redis trace update: Node started running
-                try:
-                    existing_trace_data = await trace_store.client.get(f"trace:{state.trace_id}")
-                    if existing_trace_data:
-                        trace_dict = json.loads(existing_trace_data)
-                        if "node_history" not in trace_dict:
-                            trace_dict["node_history"] = {}
-                        trace_dict["node_history"][node_id] = {
-                            "node_id": node_id,
-                            "agent_name": agent_name,
-                            "status": "running",
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "latency_ms": 0
-                        }
-                        await trace_store.save_trace(state.trace_id, trace_dict)
-                except Exception as trace_err:
-                    logger.warning("failed_to_update_node_running_trace", error=str(trace_err))
-
                 customer_id = None
                 if hasattr(agent_config, "customer_id"):
                     customer_id = agent_config.customer_id
                 elif isinstance(agent_config, dict):
                     customer_id = agent_config.get("customer_id")
                     
-                cust_node = None
+                workflow_id = None
+                if isinstance(agent_config, dict):
+                    workflow_id = agent_config.get("id")
+                elif hasattr(agent_config, "id"):
+                    workflow_id = agent_config.id
+
+                # Resolve DB config using execution cache
+                db_cache_data = await get_or_populate_cache(state.trace_id, customer_id, workflow_id)
+                cust_node = db_cache_data["customer_nodes"].get(agent_name)
+                wf_node_prop = db_cache_data["workflow_properties"].get(node_id)
+
                 if customer_id is not None:
-                    from app.models.db_models import CustomerNodeDB
-                    async with AsyncSessionLocal() as session:
-                        stmt = select(CustomerNodeDB).where(
-                            CustomerNodeDB.customer_id == customer_id,
-                            CustomerNodeDB.node_name == agent_name
-                        )
-                        res = await session.execute(stmt)
-                        cust_node = res.scalar_one_or_none()
-                        if not cust_node or not cust_node.is_enabled:
-                            raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
+                    if not cust_node or not cust_node.is_enabled:
+                        raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
 
                 input_schema = getattr(agent, "input_contract", {})
                 if cust_node and cust_node.input_contract is not None:
                     input_schema = cust_node.input_contract
+                if wf_node_prop and wf_node_prop.input_contract is not None:
+                    input_schema = wf_node_prop.input_contract
 
                 output_schema = getattr(agent, "output_contract", {})
                 if cust_node and cust_node.output_contract is not None:
                     output_schema = cust_node.output_contract
+                if wf_node_prop and wf_node_prop.output_contract is not None:
+                    output_schema = wf_node_prop.output_contract
 
                 from app.nodes.contracts import contract_from_expected_output
                 node_expected_output = (node_config or {}).get("expected_output")
@@ -381,122 +405,45 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     "masked_content": result.data,
                 }
 
-                # Parse input and output data as dict/JSON if possible
-                parsed_input = agent_input.data
-                if isinstance(parsed_input, str):
-                    try:
-                        parsed_input = json.loads(parsed_input)
-                    except Exception:
-                        pass
-
-                parsed_output = result.data
-                if isinstance(parsed_output, str):
-                    try:
-                        parsed_output = json.loads(parsed_output)
-                    except Exception:
-                        pass
-
-                existing_nodes = dict(state.context.get("nodes", {})) if state.context else {}
-                existing_nodes[node_id] = {
-                    "data": {
-                        "input_data": parsed_input,
-                        "output_data": parsed_output
-                    }
-                }
                 updates["context"] = {
-                    "nodes": existing_nodes
+                    "nodes": {
+                        **(state.context.get("nodes", {}) if state.context else {}),
+                        node_id: {
+                            "data": {
+                                "input_data": try_parse_json(agent_input.data),
+                                "output_data": try_parse_json(result.data)
+                            }
+                        }
+                    }
                 }
 
                 # Return only what changed. Metadata and violations are merged by LangGraph reducers.
-                existing_history = dict(state.metadata.get("node_history", {})) if state.metadata else {}
-                existing_history[node_id] = node_trace
-                
                 updates["metadata"] = {
-                    "node_history": existing_history,
+                    "node_history": {node_id: node_trace},
                     **(result.metadata or {})
                 }
 
                 updates["violations"] = list(result.violations or [])
                 if result.status == "failure":
                     updates["violations"].append(f"node_failure:{node_id}")
-                    logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, trace_id=state.trace_id)
+                    logger.error("agent_execution_failed", agent=agent_name, error_message=result.error_message, node_id=node_id, violations=result.violations, trace_id=state.trace_id)
                
                 # Update actual executed agents list
                 updates["agents_executed"] = [agent_name]
-
-                # 2. In-flight Redis trace update: Node finished execution successfully
-                try:
-                    existing_trace_data = await trace_store.client.get(f"trace:{state.trace_id}")
-                    if existing_trace_data:
-                        trace_dict = json.loads(existing_trace_data)
-                        if "node_history" not in trace_dict:
-                            trace_dict["node_history"] = {}
-                        trace_dict["node_history"][node_id] = node_trace
-                        
-                        if "context" not in trace_dict:
-                            trace_dict["context"] = {}
-                        if "nodes" not in trace_dict["context"]:
-                            trace_dict["context"]["nodes"] = {}
-                        trace_dict["context"]["nodes"][node_id] = {
-                            "data": {
-                                "input_data": parsed_input,
-                                "output_data": parsed_output
-                            }
-                        }
-                        
-                        if updates.get("violations"):
-                            existing_violations = set(trace_dict.get("violations") or [])
-                            existing_violations.update(updates["violations"])
-                            trace_dict["violations"] = list(existing_violations)
-                            
-                        # Also track executed agents in trace
-                        if "agents_executed" not in trace_dict:
-                            trace_dict["agents_executed"] = []
-                        if agent_name not in trace_dict["agents_executed"]:
-                            trace_dict["agents_executed"].append(agent_name)
-
-                        await trace_store.save_trace(state.trace_id, trace_dict)
-                except Exception as trace_err:
-                    logger.warning("failed_to_update_node_completed_trace", error=str(trace_err))
 
                 return updates
             except Exception as e:
                 logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
                 
-                existing_history = dict(state.metadata.get("node_history", {})) if state.metadata else {}
                 node_trace = {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
-                existing_history[node_id] = node_trace
                 
-                # 3. In-flight Redis trace update: Node failed with exception
-                try:
-                    existing_trace_data = await trace_store.client.get(f"trace:{state.trace_id}")
-                    if existing_trace_data:
-                        trace_dict = json.loads(existing_trace_data)
-                        if "node_history" not in trace_dict:
-                            trace_dict["node_history"] = {}
-                        trace_dict["node_history"][node_id] = node_trace
-                        
-                        if "violations" not in trace_dict:
-                            trace_dict["violations"] = []
-                        if f"node_exception:{node_id}" not in trace_dict["violations"]:
-                            trace_dict["violations"].append(f"node_exception:{node_id}")
-                            
-                        if "agents_executed" not in trace_dict:
-                            trace_dict["agents_executed"] = []
-                        if agent_name not in trace_dict["agents_executed"]:
-                            trace_dict["agents_executed"].append(agent_name)
-
-                        await trace_store.save_trace(state.trace_id, trace_dict)
-                except Exception as trace_err:
-                    logger.warning("failed_to_update_node_failed_trace", error=str(trace_err))
-
                 return {
                     "status": "failure",
                     "error_message": str(e),
                     "error_code": 500,
                     "violations": [f"node_exception:{node_id}"],
                     "metadata": {
-                        "node_history": existing_history
+                        "node_history": {node_id: node_trace}
                     },
                     "agents_executed": [agent_name]
                 }
