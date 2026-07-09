@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Response, status, Depends
-from typing import Optional, List
+from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path
+from typing import Optional, List, Tuple
 import structlog
 from app.core.types.users import User
 from app.api.workflows.schemas import WorkflowSaveRequest
@@ -14,9 +14,9 @@ from app.workflows.store import (
 )
 from sqlalchemy import select
 
-from app.workflows.service import save_workflow, delete_workflow, get_workflow
+from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_user_customer_id
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, require_user_owner_tenant_admin_system_admin,require_resource_access, require_admin,require_system_admin
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -217,8 +217,6 @@ async def update_node_properties(
         label=label, input_contract=input_contract, output_contract=output_contract
     )
 
-
-
 @router.patch("/{workflow_id}/toggle", response_model=dict)
 async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(get_current_user)):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
@@ -258,27 +256,19 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(workflow_id: str, version: Optional[str] = None, current_user: User = Depends(get_current_user)):
+async def remove_workflow(
+    workflow_id: str, 
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_resource_access(resource_type="workflow"))
+):
+    version = 1
     logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
-    
-    # 1. Fetch workflow to verify existence and check ownership
     try:
-        workflow = await get_workflow(workflow_id, version)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
-        raise HTTPException(status_code=403, detail="Access denied to this workflow")
-
-    # 2. Authorization: Only the creator (user_id) or an admin can delete
-    is_owner = workflow.user_id == current_user.id
-    is_admin = current_user.role in ["system_admin", "admin"]
-
-    if not (is_owner or is_admin):
-        logger.warning("delete_unauthorized", workflow_id=workflow_id, user_id=current_user.id)
-        raise HTTPException(status_code=403, detail="Permission denied. Only the owner or an administrator can delete this workflow.")
-
-    success = await delete_workflow(workflow_id, version)
+        success = await delete_workflow(workflow_id, 1)
+    except Exception as e:
+        logger.error("remove_workflow_error", workflow_id=workflow_id, version=version, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to remove workflow: {str(e)}")
     if not success:
         logger.warning("remove_workflow_not_found", workflow_id=workflow_id, version=version)
         raise HTTPException(status_code=404, detail="Workflow not found")

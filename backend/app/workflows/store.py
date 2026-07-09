@@ -664,6 +664,34 @@ async def save_workflow_to_store(
             logger.error("failed_to_save_agent", agent_id=definition.id, error=str(e))
             raise HTTPException(status_code=500, detail=f"Failed to save agent: {str(e)}")
 
+async def get_workflow_user_customer_id(workflow_id: str) -> tuple[Optional[str], Optional[int]]:
+    """
+    Get the user_id associated with a workflow.
+    """
+    with tracer.start_as_current_span("get_workflow_id") as span:
+        span.set_attribute("workflow_id", workflow_id)
+
+        try:
+            async with AsyncSessionLocal() as session:
+                stmt = select(WorkflowDB.user_id, WorkflowDB.customer_id).where(WorkflowDB.id == workflow_id)
+                result = await session.execute(stmt)
+                row = result.first()
+                
+                if not row:
+                    logger.warning("workflow_not_found", workflow_id=workflow_id)
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Workflow '{workflow_id}' not found"
+                    )
+                
+                user_id, customer_id = row
+                return user_id, customer_id
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("failed_to_get_workflow_user_id", workflow_id=workflow_id, error=str(e))
+            raise HTTPException(status_code=500, detail=f"Failed to get workflow user id: {str(e)}")
+
 
 async def load_workflow_from_store(agent_id: str, version: Optional[str] = None) -> WorkflowDefinition:
     """

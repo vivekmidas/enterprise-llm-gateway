@@ -158,6 +158,7 @@ dependencies = [
     { name = "httpx" },
     { name = "imap-tools" },
     { name = "jinja2" },
+    { name = "jose" },
     { name = "langchain" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -180,6 +181,7 @@ dependencies = [
     { name = "rich" },
     { name = "spacy" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -206,6 +208,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "imap-tools" },
     { name = "jinja2" },
+    { name = "jose" },
     { name = "langchain" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -228,6 +231,7 @@ requires-dist = [
     { name = "rich" },
     { name = "spacy" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "structlog", specifier = ">=25.5.0" },
     { name = "uvicorn", extras = ["standard"] },
 ]
@@ -1213,6 +1217,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/44/e26ede3f0caeff93f222559cb0cc4ca68579f07d009d7b6010c5b586f9b1/jiter-0.14.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:432c4db5255d86a259efde91e55cb4c8d18c0521d844c9e2e7efcce3899fb016", size = 343039, upload-time = "2026-04-10T14:28:38.356Z" },
     { url = "https://files.pythonhosted.org/packages/da/e9/1f9ada30cef7b05e74bb06f52127e7a724976c225f46adb65c37b1dadfb6/jiter-0.14.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:67f00d94b281174144d6532a04b66a12cb866cbdc47c3af3bfe2973677f9861a", size = 349613, upload-time = "2026-04-10T14:28:40.066Z" },
 ]
+
+[[package]]
+name = "jose"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/3d/832caa69cd0d3be2d608d8290be2221072669aa88e87690837f6b31c480f/jose-1.0.0.tar.gz", hash = "sha256:8436c3617cd94e1ba97828fbb1ce27c129f66c78fb855b4bb47e122b5f345fba", size = 9153, upload-time = "2015-11-13T10:52:21.506Z" }
 
 [[package]]
 name = "jsonpatch"

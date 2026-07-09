@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.models.db_models import CategoryDB, NodeDB, CustomerNodeDB
 from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
-from app.api.auth.dependencies import get_current_user, get_current_admin, get_current_system_admin
+from app.api.auth.dependencies import get_current_user, get_current_admin, require_system_admin
 from app.core.types.users import User
 
 logger = structlog.get_logger(__name__)
@@ -535,7 +535,7 @@ async def _resolve_category_id(category_val: str, db: AsyncSession) -> str:
 async def update_node(
     node_name: str,
     node_data: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Updates a global node definition in the registry catalog (Super-Admin only)."""
@@ -566,7 +566,7 @@ async def update_node(
 @router.post("")
 async def create_node(
     node_data: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Creates a new global node definition in the registry catalog (Super-Admin only)."""

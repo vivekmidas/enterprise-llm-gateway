@@ -1,28 +1,26 @@
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
 from app.models.db_models import UserDB as usersDb
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, require_admin, require_system_admin, require_admin_or_system_admin
 from app.core.types.users import User
 from app.core.security.hash import get_password_hash
 
 router = APIRouter(prefix="/admin/users", tags=["Admin"])
 
-
 @router.get("/", response_model=List[Dict[str, Any]])
 async def list_users(
     current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Lists users, scoped by tenant for Company Admins, or all users for System Admin."""
-    if current_user.role not in ["system_admin", "admin"]:
-        raise HTTPException(status_code=403, detail="Admin permissions required")
         
     stmt = select(usersDb)
-    if current_user.role != "system_admin": #customer_id is not None:
+    if current_user.role == "admin":
         stmt = stmt.where(usersDb.customer_id == current_user.customer_id)
         
     result = await db.execute(stmt)
@@ -44,12 +42,10 @@ async def list_users(
 async def create_user(
     user_data: dict,
     current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Creates a user under a customer tenant."""
-    if current_user.role not in ["system_admin", "admin"]:
-        raise HTTPException(status_code=403, detail="Admin permissions required")
-        
+       
     email = user_data.get("email")
     password = user_data.get("password")
     name = user_data.get("name")

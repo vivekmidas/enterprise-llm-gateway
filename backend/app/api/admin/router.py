@@ -13,7 +13,7 @@ from app.nodes.built_in.webhook.base.scheduler_node import SchedulerAgent
 from app.core.database import get_db
 from app.models.db_models import CustomerDB, UserDB
 from app.core.security.hash import get_password_hash
-from app.api.auth.dependencies import get_current_system_admin
+from app.api.auth.dependencies import  require_system_admin
 from app.core.types.users import User
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -126,7 +126,7 @@ async def stop_all_trigger_instances(node_name: str):
 
 @router.get("/customers", response_model=List[Dict[str, Any]])
 async def list_customers(
-    current_user: User = Depends(get_current_system_admin),
+     _: None = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Lists all customer tenants in the system (System Admin only)."""
@@ -148,7 +148,7 @@ async def list_customers(
 @router.post("/customers", response_model=dict, status_code=201)
 async def create_customer(
     customer_data: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Creates a new customer tenant (System Admin only)."""
@@ -201,7 +201,7 @@ async def create_customer(
 async def update_customer(
     customer_id: int,
     customer_data: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Updates customer details (System Admin only)."""
@@ -238,7 +238,7 @@ async def update_customer(
 @router.delete("/customers/{customer_id}", status_code=204)
 async def delete_customer(
     customer_id: int,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Deletes a customer tenant (System Admin only)."""
@@ -257,7 +257,7 @@ async def delete_customer(
 async def create_customer_user(
     customer_id: int,
     user_data: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Onboards/creates a user under a customer tenant (System Admin only)."""
@@ -303,7 +303,7 @@ async def create_customer_user(
 @router.get("/customers/{customer_id}/nodes", response_model=dict)
 async def get_customer_nodes(
     customer_id: int,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves all node configs and enablement status for a customer (System Admin only)."""
@@ -345,7 +345,7 @@ async def get_customer_nodes(
 async def configure_customer_nodes_bulk(
     customer_id: int,
     payload: dict,
-    current_user: User = Depends(get_current_system_admin),
+    current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Batch updates/saves node assignments for a customer (System Admin only)."""

@@ -17,23 +17,24 @@ from app.api.admin.users import router as users
 
 from app.core.database import init_db
 from app.workflows.service import workflow_auto_discover
-
+from app.core.security.jwt import AuthenticationMiddleware
 
 load_dotenv()
 
 app = FastAPI(title="Enterprise LLM Gateway", version="0.2.3")
-app = setup_observability(app)
-logger = get_logger()
-
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origin_regex="https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=1,
 )
+
+app = setup_observability(app)
+logger = get_logger()
 # ====================== Startup - Register Nodes ======================
 @app.on_event("startup")
 async def startup_event():
@@ -56,7 +57,7 @@ async def startup_event():
     await workflow_auto_discover()
     logger.info("workflows_registered")
    
-    
+app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
 app.include_router(agents_router)
 #app.include_router(chat_router)
@@ -71,4 +72,4 @@ app.include_router(users.router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)

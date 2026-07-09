@@ -15,7 +15,7 @@ class RegisterRequest(BaseModel):
     name: str
     lastname: str
     email: EmailStr
-    password: str
+    password: strc
 
 class LoginRequest(BaseModel):
     email: EmailStr

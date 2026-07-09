@@ -9,6 +9,8 @@ from argon2 import PasswordHasher
 from passlib.context import CryptContext
 from app.core.security.hash import get_password_hash, verify_password
 from app.core.security.jwt import create_access_token
+from app.core.types.users import User
+from app.api.auth.dependencies import get_current_user
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -66,7 +68,6 @@ async def login(request: LoginRequest):
 
         token_data = {
             "user_id": str(user.id),
-            "email": user.email_id,
             "role": user.role,
             "customer_id": user.customer_id,
             "domain": domain
@@ -81,3 +82,8 @@ async def login(request: LoginRequest):
             "customer_id": user.customer_id,
             "domain": domain
         }
+
+
+@router.get("/me", response_model=User)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return current_user

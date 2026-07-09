@@ -8,5 +8,6 @@ class User (BaseModel):
     email: str
     customer_id: Optional[int] = None
     domain: Optional[str] = None
+    name: Optional[str] = None
 
     

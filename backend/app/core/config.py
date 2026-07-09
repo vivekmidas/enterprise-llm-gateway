@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 import redis.asyncio as redis
+import json
 
 class Settings(BaseSettings):
     REDIS_HOST: str = "127.0.0.1"
@@ -11,6 +12,11 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DATABASE_URL: str = "sqlite+aiosqlite:///./enterprise_gateway.db"
     SECRET_KEY: str = "super-secret-change-this-in-production"
+    ISSUER: str = "http://localhost.com"
+    AUDIENCE: str = "enterprise"    
+    ALGORITHM:str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES:int = 15          # Short-lived
+    REFRESH_TOKEN_EXPIRE_DAYS:int = 7
 
     class Config:
         env_file = ".env"

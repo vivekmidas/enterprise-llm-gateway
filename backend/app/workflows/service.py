@@ -12,7 +12,8 @@ from app.models.db_models import WorkflowDB, WorkflowNodePropertyDB
 from app.workflows.store import (
     save_workflow_to_store,
     load_workflow_from_store,
-    delete_workflow_from_store
+    delete_workflow_from_store,
+    get_workflow_user_customer_id as get_workflow_user_customer_id_store
 )
 from app.core.cache import workflow_cache
 from app.workflows.builder import build_graph_from_definition
@@ -101,6 +102,10 @@ async def delete_workflow(workflow_id: str, version: Optional[str] = None, clien
 async def get_workflow(workflow_id: str, version: Optional[str] = None) -> WorkflowDefinition:
     """Public service method to get a workflow definition."""
     return await load_workflow_from_store(workflow_id, version)
+
+async def get_workflow_user_customer_id(workflow_id: str, version: Optional[str] = None) -> tuple[Optional[str], Optional[int]]:
+    """Public service method to get the user_id and customer_id of a workflow."""
+    return await get_workflow_user_customer_id_store(workflow_id)
 
 
 async def get_compiled_workflow(workflow_id: str, version: Optional[str] = None, client_id: Optional[str] = None):

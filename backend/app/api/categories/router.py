@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
-
+from app.api.auth.dependencies import require_system_admin, require_admin
 from app.core.database import get_db
 from app.models.db_models import CategoryDB
 from app.api.categories.schemas import CategoryCreate, CategoryUpdate, CategoryResponse, CategoryListResponse
@@ -25,7 +25,7 @@ async def get_workflow_categories(db: AsyncSession = Depends(get_db)):
         return {"categories": []}
 
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
-async def create_category(category_in: CategoryCreate, db: AsyncSession = Depends(get_db)):
+async def create_category(category_in: CategoryCreate, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
     """Creates a new node category."""
     logger.info("create_category_request", group=category_in.group)
     db_category = CategoryDB(**category_in.model_dump())
@@ -47,7 +47,7 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db)):
     return category
 
 @router.put("/{category_id}", response_model=CategoryResponse)
-async def update_category(category_id: int, category_in: CategoryUpdate, db: AsyncSession = Depends(get_db)):
+async def update_category(category_id: int, category_in: CategoryUpdate, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
     """Updates an existing category."""
     result = await db.execute(select(CategoryDB).where(CategoryDB.id == category_id))
     db_category = result.scalar_one_or_none()
@@ -65,7 +65,7 @@ async def update_category(category_id: int, category_in: CategoryUpdate, db: Asy
     return db_category
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_category(category_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_category(category_id: int, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
     """Deletes a category."""
     logger.info("delete_category_request", category_id=category_id)
     result = await db.execute(select(CategoryDB).where(CategoryDB.id == category_id))
