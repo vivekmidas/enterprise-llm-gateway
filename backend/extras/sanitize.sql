@@ -1,0 +1,15 @@
+delete from audit_logs;
+
+delete from customer_nodes where customer_id > 1;
+
+delete from customers where id > 1;
+
+delete from users where id > 6;
+
+delete from workflow_node_properties where workflow_id like "%test%";
+
+delete from workflow_nodes where workflow_id like "%test%";
+
+delete from workflows where id like "%test%";
+
+delete from nodes where name like "%dummy%";

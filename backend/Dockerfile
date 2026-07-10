@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uvicorn globally
-RUN pip install uvicorn[standard]
+RUN pip3 install uvicorn[standard]
 
 # Install uv (fast Python package manager)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -30,7 +30,7 @@ COPY app/ ./app/ --exclude=/.git
 RUN uv sync 
 
 # Download spaCy model (required for Presidio), changed from en_core_web_lg to en_core_web_sm for faster download, need to change back to lg if we want better NER performance
-RUN uv run python -m spacy download en_core_web_sm
+RUN /app/.venv/bin/python -m pip install --upgrade pip && /app/.venv/bin/python -m spacy download en_core_web_sm
 
 # Expose port
 EXPOSE 8000
