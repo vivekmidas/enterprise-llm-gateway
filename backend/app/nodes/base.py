@@ -290,7 +290,7 @@ class BaseNode(BaseModel, abc.ABC):
                 return None
             return rendered
         except Exception as e:
-            self.logger.warning("jinja_expression_render_failed", expr=expr, error=str(e))
+            self.logger.warning("jinja_expression_render_failed", trace_id=inp.trace_id, expr=expr, error=str(e))
             return None
 
     def _normalize_lookup_expression(self, expr: str) -> str:
@@ -480,7 +480,7 @@ class BaseNode(BaseModel, abc.ABC):
             try:
                 return pattern.sub(replace_match, template)
             except Exception as e:
-                self.logger.warning("jinja_template_render_failed", template=template, error=str(e))
+                self.logger.warning("jinja_template_render_failed", trace_id=inp.trace_id, template=template, error=str(e))
                 return template
         return template
 
@@ -492,16 +492,16 @@ class BaseNode(BaseModel, abc.ABC):
         Checks mandatory fields and data types in the JSON body passed to the node.
         Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
-        self.logger.info("Starting validate_input_contract", name= self.name)
+        self.logger.info("Starting validate_input_contract", trace_id=inp.trace_id, name= self.name)
         schema = inp.input_schema if getattr(inp, "input_schema", None) is not None else self.input_contract
         if not schema:
-            self.logger.debug("No schema found", name= self.name, schema=schema)
+            self.logger.debug("No schema found", name= self.name,  trace_id=inp.trace_id,schema=schema)
             return None
 
         errors = validate_contract(schema, inp, self.name)
 
         if errors:
-            self.logger.error(f"Ending validation of validate_input_contract",name= self.name, inp_data=inp.data,errors= "; ".join(errors))
+            self.logger.error(f"Ending validation of validate_input_contract",name= self.name,  trace_id=inp.trace_id,inp_data=inp.data,errors= "; ".join(errors))
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,
@@ -518,10 +518,10 @@ class BaseNode(BaseModel, abc.ABC):
         Validates if the output matches the defined output_contract.
         Checks mandatory fields and data types in the JSON body returned by the node.
         """
-        self.logger.info("starting validate_output_contract", name=self.name)
+        self.logger.info("starting validate_output_contract", trace_id=inp.trace_id, name=self.name)
         schema = inp.output_schema if getattr(inp, "output_schema", None) is not None else self.output_contract
         if not schema:
-            self.logger.debug("No output schema found", name=self.name, schema=schema)
+            self.logger.debug("No output schema found",  trace_id=inp.trace_id,name=self.name, schema=schema)
             return None
 
         from app.nodes.contracts import validate_output_contract
@@ -534,7 +534,7 @@ class BaseNode(BaseModel, abc.ABC):
         )
 
         if errors:
-            self.logger.error(f"Ending validation of validate_output_contract", name=self.name, out_data=output.data, errors="; ".join(errors))
+            self.logger.error(f"Ending validation of validate_output_contract", trace_id=inp.trace_id, name=self.name, out_data=output.data, errors="; ".join(errors))
             output.status = "failure"
             output.error_message = "; ".join(errors)
             output.error_code = 400
@@ -716,7 +716,7 @@ class BaseNode(BaseModel, abc.ABC):
                     resolved_config = self._resolve_jinja_templates(inp.config, render_context)
                     inp.config = resolved_config
                 except Exception as e:
-                    self.logger.error("failed_to_resolve_mapping_templates", error=str(e))
+                    self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id,error=str(e))
 
             # 0.1 Input Contract Validation
             contract_output = await self.validate_input_contract(inp)
@@ -750,7 +750,7 @@ class BaseNode(BaseModel, abc.ABC):
                 name=self.name,
                 status=output.status, function_name=__name__,
                 latency_ms=output.latency_ms,
-                output=output.status
+                output=output.status, trace_id=inp.trace_id
             )
             return output
 
@@ -789,7 +789,7 @@ class TriggerNode(BaseNode, abc.ABC):
         """Triggers should still load their properties from the database."""
         self.logger.info(
                         "Trigger node init started",
-                        name=self.name
+                        name=self.name,
                     )
         await super().init()
         self.logger.info(
@@ -827,7 +827,7 @@ class TriggerNode(BaseNode, abc.ABC):
         """
         self.logger.info(
                         "Trigger node  activation started",
-                        name=self.name
+                        name=self.name,
                     )
         self._workflows[agent_node_id] = workflow_config
 
@@ -835,7 +835,7 @@ class TriggerNode(BaseNode, abc.ABC):
         # Instance properties should be resolved using _get_node_config() when needed
         self.logger.debug("workflow_registered_to_trigger",
                           name=self.name,
-                         workflow_id=workflow_config.get("id"))
+                          workflow_id=workflow_config.get("id"))
 
     async def execute_dynamic_agent(self, agent_node_id: str, payload: Any, trace_id: Optional[str] = None):
         """
@@ -845,12 +845,11 @@ class TriggerNode(BaseNode, abc.ABC):
         """
         from app.workflows.executor import WorkflowExecutor
         # Generate a trace ID if not provided, prefixed by node name for observability
+        t_id = trace_id or f"{self.name}-{int(time.time())}"
 
         self.logger.debug("execute_dynamic_agent started",
-                          name=self.name,
+                          name=self.name, trace_id=t_id,
                          workflow_id=agent_node_id)
-
-        t_id = trace_id or f"{self.name}-{int(time.time())}"
 
         # Retrieve the workflow config for this specific agent_node_id
         workflow_config = self._workflows.get(agent_node_id)
@@ -861,7 +860,7 @@ class TriggerNode(BaseNode, abc.ABC):
         # Trigger the workflow execution via the central executor logic
         try:
             self.logger.debug("WorkflowExecutor started",
-                          name=self.name,
+                          name=self.name, trace_id=t_id,
                          workflow_id=workflow_config.get("id"))
 
             executor = WorkflowExecutor(workflow_config)
@@ -887,8 +886,8 @@ class TriggerNode(BaseNode, abc.ABC):
 
             content = json.dumps(wrapped_payload)
             self.logger.debug("WorkflowExecutor ended",
-                          name=self.name,
-                         workflow_id=workflow_config.get("id"))
+                          name=self.name,trace_id=t_id,
+                          workflow_id=workflow_config.get("id"))
 
             return await executor.execute_async(content, t_id)
         except Exception as e:

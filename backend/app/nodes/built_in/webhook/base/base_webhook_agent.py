@@ -47,195 +47,25 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
 
     async def activate(self, agent_node_id: str, workflow_config: Dict[str, Any]):
         """
-        Activates the workflow and ensures the Webhook listener server is running on configured port.
+        Activates the webhook trigger node by registering its workflow config in memory.
+        The actual routing is handled centrally via the /webhooks/run gateway endpoint.
         """
-        self.logger.info("activating webhook agent", agent_node_id=agent_node_id, name=self.name, function=__name__)
+        self.logger.info("activating webhook agent (gateway routed)", agent_node_id=agent_node_id, name=self.name, function=__name__)
         await super().activate(agent_node_id, workflow_config)
-
-        # Resolve instance configuration manually for the background server
-        nodes = workflow_config.get("nodes_structure", [])
-        node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
-        overrides = (
-            node_data.get("data", {}).get("user_properties")
-            or {}
-        )
-        config = {**self.properties, **overrides}
-
-        port = safe_int(config.get("port"), 8888)
-        host = config.get("host") or "0.0.0.0"
-        if not host.strip():
-            host = "0.0.0.0"
-        base_path = config.get("base_path", "").strip("/")
-        self.logger.info("webhook config", port=port, host=host, base_path=base_path,name=self.name)
-        server_key = (host, port)
-        route_path = base_path if base_path else agent_node_id
-
-        # Initialize server state mappings if not exist
-        if server_key not in self._active_routes:
-            self._active_routes[server_key] = {}
-
-        # Check for path conflicts
-        if route_path in self._active_routes[server_key]:
-            existing_node_id, _ = self._active_routes[server_key][route_path]
-            if existing_node_id != agent_node_id:
-                self.logger.error(
-                    "webhook_route_conflict", workflow_id=workflow_config.get("name"),
-                    customer_id= workflow_config.get("customer_id"),
-                    workspace_id= workflow_config.get("workspace_id"),
-                    path=route_path,
-                    port=port,
-                    existing_node=existing_node_id,
-                    new_node=agent_node_id,
-                )
-                raise ValueError(
-                    f"Path '/{route_path}' is already registered on port {port} by node '{existing_node_id}'"
-                )
-
-        # Register this node's route
-        self._active_routes[server_key][route_path] = (agent_node_id, self)
-        self._endpoint_to_server_map[agent_node_id] = (server_key, route_path)
-
-        if server_key not in self._fastapi_apps:
-            self.logger.info("starting_new_webhook_server", host=host, port=port)
-            app = FastAPI()
-            self._fastapi_apps[server_key] = app
-
-            # Register wildcard/catch-all endpoint
-            @app.api_route("/{request_path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-            async def webhook_endpoint(request: Request, request_path: str):
-                normalized_path = request_path.strip("/")
-                routes = self._active_routes.get(server_key, {})
-
-                if normalized_path not in routes:
-                    self.logger.error(
-                        "webhook_route_not_found", path=normalized_path, host=host, port=port
-                    )
-                    raise HTTPException(status_code=404, detail="Webhook path not registered")
-
-                target_node_id, agent_instance = routes[normalized_path]
-
-                try:
-                    content_type = request.headers.get("content-type", "")
-                    if "application/json" in content_type:
-                        payload_json = await request.json()
-                        raw_payload = json.dumps(payload_json)
-                    else:
-                        payload_bytes = await request.body()
-                        raw_payload = payload_bytes.decode("utf-8", errors="ignore")
-                except Exception as e:
-                    self.logger.error("webhook_payload_parse_failed", error=str(e))
-                    raise HTTPException(status_code=400, detail="Invalid request payload")
-
-                # Delegate signature verification to the registering agent instance
-                try:
-                    is_valid = await agent_instance.validate_request(request, raw_payload)
-                except Exception as e:
-                    self.logger.error("webhook_signature_validation_crashed", error=str(e))
-                    is_valid = False
-
-                if not is_valid:
-                    self.logger.warning(
-                        "webhook_unauthorized", path=normalized_path, agent_node_id=target_node_id
-                    )
-                    raise HTTPException(status_code=401, detail="Invalid signature or token")
-
-                self.logger.info(
-                    "webhook_received", endpoint=normalized_path, agent_node_id=target_node_id
-                )
-                try:
-                    workflow_result = await agent_instance.execute_dynamic_agent(
-                        target_node_id, raw_payload
-                    )
-                    return {
-                        "status": "completed",
-                        "agent_node_id": target_node_id,
-                        "result": workflow_result,
-                    }
-                except Exception as e:
-                    self.logger.error("webhook_workflow_execution_failed", error=str(e))
-                    raise HTTPException(status_code=500, detail=str(e))
-
-            # Start the Uvicorn server in a separate asyncio task
-            self._server_tasks[server_key] = asyncio.create_task(
-                self._run_uvicorn_server(app, host, port)
-            )
-        else:
-            app = self._fastapi_apps[server_key]
-            self.logger.info("reusing_existing_webhook_server", host=host, port=port)
-
-        self.logger.info(
-            "webhook_endpoint_registered",
-            agent_node_id=agent_node_id,
-            endpoint=route_path,
-            host=host,
-            port=port,
-        )
-
-    async def _run_uvicorn_server(self, app: FastAPI, host: str, port: int):
-        """Internal task to run the Uvicorn server."""
-        config = Config(app, host=host, port=port, log_level="info", access_log=False)
-        server = uvicorn.Server(config)
-        self.logger.info("webhook_server_started", host=host, port=port)
-        try:
-            await server.serve()
-        except asyncio.CancelledError:
-            self.logger.info("uvicorn_server_stopped", host=host, port=port)
-        except Exception as e:
-            self.logger.error("uvicorn_server_crashed", error=str(e), host=host, port=port)
 
     async def deactivate(self, agent_node_id: str):
         """
-        Deactivates a specific workflow instance, removing its route.
-        If no other workflows use the same (host, port), the server is stopped.
+        Deactivates a specific workflow instance by removing its route config.
         """
         if agent_node_id in self._workflows:
             del self._workflows[agent_node_id]
-            self.logger.info("workflow_unregistered_to_trigger", agent_node_id=agent_node_id)
-
-        mapping = self._endpoint_to_server_map.pop(agent_node_id, None)
-        if mapping is None:
-            self.logger.warning(
-                "deactivation_failed_server_key_not_found", agent_node_id=agent_node_id
-            )
-            return
-
-        server_key, route_path = mapping
-
-        # Remove from active routes
-        if server_key in self._active_routes and route_path in self._active_routes[server_key]:
-            del self._active_routes[server_key][route_path]
-            self.logger.info(
-                "route_unregistered", route_path=route_path, server_key=server_key
-            )
-
-        # Stop server if no active routes remain
-        if server_key in self._active_routes and not self._active_routes[server_key]:
-            self.logger.info("stopping_webhook_server", server_key=server_key)
-            task = self._server_tasks.pop(server_key, None)
-            if task:
-                task.cancel()
-                asyncio.create_task(task)
-            self._fastapi_apps.pop(server_key, None)
-            self._active_routes.pop(server_key, None)
+            self.logger.info("webhook_deactivated", agent_node_id=agent_node_id)
 
     async def stop_all_servers(self):
-        """Gracefully stops all running Uvicorn servers."""
-        self.logger.info("stopping_all_webhook_servers")
-        tasks_to_await = []
-        for server_key, task in list(self._server_tasks.items()):
-            self.logger.info("cancelling_webhook_server_task", server_key=server_key)
-            task.cancel()
-            tasks_to_await.append(task)
-
-        self._server_tasks.clear()
-        self._fastapi_apps.clear()
-        self._active_routes.clear()
-        self._endpoint_to_server_map.clear()
+        """Deregisters all active webhook trigger instances."""
+        self.logger.info("stopping_all_webhook_agents")
         self._workflows.clear()
-
-        if tasks_to_await:
-            await asyncio.gather(*tasks_to_await, return_exceptions=True)
-        self.logger.info("all_webhook_servers_stopped")
+        self.logger.info("all_webhook_agents_stopped")
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         self.logger.info("webhook_validation_started")
@@ -308,9 +138,7 @@ class WebhookAgent(BaseWebhookAgent):
         }
     }
     system_properties: Dict[str, Any] = {
-        "port": "8888",
-        "host": "0.0.0.0",
-        "workers": 1
+        "base_path": "docs"
     }
     user_properties: Dict[str, Any] = {}
 

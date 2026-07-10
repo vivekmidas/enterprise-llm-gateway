@@ -202,7 +202,7 @@ def require_admin(request: Request):
 
 @staticmethod
 def require_admin_or_system_admin(request: Request):
-    if request.state.user["role"] != "admin":
+    if request.state.user["role"] != "admin" and  request.state.user["role"]!="system_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",

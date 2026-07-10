@@ -179,6 +179,7 @@ class GenericLLMVectorDB(BaseNode):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start_time = time.time()
         config = inp.config
+        trace_id = inp.trace_id
 
         # 1. Properties Setup
         db_type = config.get("db_type", "qdrant").lower()
@@ -194,7 +195,7 @@ class GenericLLMVectorDB(BaseNode):
         embed_key = config.get("embedding_api_key", "")
         similarity_threshold = safe_float(config.get("similarity_threshold"), 0.7)
         top_k = safe_int(config.get("top_k"), 5)
-        self.logger.info("generic_llm_vector_db_config", config=config)
+        self.logger.info("generic_llm_vector_db_config", trace_id=trace_id, config=config)
         # 2. Extract input data from payload or properties
         payload_data = self.get_input_data(inp)
         input_text = ""
@@ -224,11 +225,11 @@ class GenericLLMVectorDB(BaseNode):
         try:
             # 3. Handle SEARCH operation
             if operation == "search":
-                self.logger.info("starting search operation", config=config, name=self.name, function=__name__)
+                self.logger.info("starting search operation", trace_id=trace_id, config=config, name=self.name, function=__name__)
                 if not input_text:
                     raise ValueError("Search operation requires 'Input Text' as a query.")
 
-                self.logger.info("vector_db_search_started", collection=collection, db_type=db_type)
+                self.logger.info("vector_db_search_started", trace_id=trace_id, collection=collection, db_type=db_type)
                 query_embeddings = await self._generate_embeddings([input_text], embed_url, embed_model, embed_key)
                 query_vector = query_embeddings[0]
 
@@ -267,7 +268,7 @@ class GenericLLMVectorDB(BaseNode):
 
             # 4. Handle UPSERT operation
             else:
-                self.logger.info("starting upsert operation", config=config, name=self.name, function=__name__)
+                self.logger.info("starting upsert operation", trace_id=trace_id, config=config, name=self.name, function=__name__)
                 raw_text_to_chunk = input_text
                 
                 # Check for PDF
@@ -285,7 +286,7 @@ class GenericLLMVectorDB(BaseNode):
                 )
 
                 # Generate embeddings
-                self.logger.info("starting embedding generation", config=config, name=self.name, function=__name__)
+                self.logger.info("starting embedding generation", trace_id=trace_id, config=config, name=self.name, function=__name__)
                 embeddings = []
                 if chunks:
                     embeddings = await self._generate_embeddings(chunks, embed_url, embed_model, embed_key)
@@ -303,13 +304,13 @@ class GenericLLMVectorDB(BaseNode):
                             "size_bytes": len(img_bytes)
                         }
                     except Exception as e:
-                        self.logger.warning("image_loading_failed", error=str(e))
+                        self.logger.warning("image_loading_failed", trace_id=trace_id, error=str(e))
                         image_metadata = {"has_image": True, "error": str(e)}
 
                 # Build upsert points list
                 points = []
                 # Case 1: Storing text chunks
-                self.logger.info("building points list", config=config, name=self.name, function=__name__)
+                self.logger.info("building points list", trace_id=trace_id, config=config, name=self.name, function=__name__)
                 for i, (chunk, vector) in enumerate(zip(chunks, embeddings)):
                     pt_payload = {
                         "text": chunk,
@@ -327,7 +328,7 @@ class GenericLLMVectorDB(BaseNode):
                     })
 
                 # Case 2: Image only (no text chunks)
-                self.logger.info("building points list", config=config, name=self.name, function=__name__)  
+                self.logger.info("building points list", trace_id=trace_id, config=config, name=self.name, function=__name__)  
                 if not chunks and image_metadata:
                     # Generate a mock vector or use zeros if no text splits exist
                     vector_size = 1536  # Default size
@@ -352,7 +353,7 @@ class GenericLLMVectorDB(BaseNode):
 
                 # Write to Vector Database
                 if db_type == "qdrant":
-                    self.logger.info("writing points to qdrant", config=config, name=self.name, function=__name__)  
+                    self.logger.info("writing points to qdrant", trace_id=trace_id, config=config, name=self.name, function=__name__)  
                     # Check and auto-create collection if needed
                     async with httpx.AsyncClient() as client:
                         # Check existence
@@ -360,7 +361,7 @@ class GenericLLMVectorDB(BaseNode):
                         res = await client.get(check_url, headers=qdrant_headers, timeout=10.0)
                         
                         if res.status_code == 404:
-                            self.logger.info("qdrant_collection_not_found_creating", collection=collection)
+                            self.logger.info("qdrant_collection_not_found_creating", trace_id=trace_id, collection=collection)
                             vector_dim = len(points[0]["vector"])
                             create_payload = {
                                 "vectors": {
@@ -373,12 +374,12 @@ class GenericLLMVectorDB(BaseNode):
 
                         # Upsert points
                         upsert_url = f"{db_url}/collections/{collection}/points"
-                        self.logger.info("writing points to qdrant", upsert_url=upsert_url, config=config, name=self.name, function=__name__)
+                        self.logger.info("writing points to qdrant", trace_id=trace_id, upsert_url=upsert_url, config=config, name=self.name, function=__name__)
                         resp_upsert = await client.put(upsert_url, json={"points": points}, headers=qdrant_headers, timeout=30.0)
                         resp_upsert.raise_for_status()
                 else:
                     # Mock write success for other databases
-                    self.logger.info("vector_db_write_mocked", db_type=db_type, points_count=len(points))
+                    self.logger.info("vector_db_write_mocked", trace_id=trace_id, db_type=db_type, points_count=len(points))
 
                 latency = round((time.time() - start_time) * 1000, 2)
                 out_data = self.set_output_data(inp, {"status": "success", "upserted_points": len(points)})
@@ -391,7 +392,7 @@ class GenericLLMVectorDB(BaseNode):
                 )
 
         except Exception as e:
-            self.logger.exception("vector_db_node_execution_failed", error=str(e))
+            self.logger.error("vector_db_node_execution_failed", trace_id=trace_id, error=str(e), exc_info=True)
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,

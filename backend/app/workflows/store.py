@@ -548,10 +548,40 @@ async def toggle_workflow_in_store(workflow_id: str) -> dict:
             stmt = select(WorkflowDB).where(WorkflowDB.id == workflow_id)
             result = await session.execute(stmt)
             db_workflow = result.scalar_one_or_none()
-            
             if not db_workflow:
                 raise HTTPException(status_code=404, detail="Workflow not found")
-            
+
+            if not db_workflow.is_enabled:
+                # Validate webhook path uniqueness before enabling
+                from app.nodes.registry import NodesRegistry
+                from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
+                prop_stmt = select(WorkflowNodePropertyDB).where(WorkflowNodePropertyDB.workflow_id == workflow_id)
+                prop_res = await session.execute(prop_stmt)
+                for prop in prop_res.scalars().all():
+                    node_instance = NodesRegistry.get_node(prop.agent_name)
+                    if node_instance and isinstance(node_instance, BaseWebhookAgent):
+                        base_path = (prop.properties or {}).get("base_path", "").strip("/")
+                        if base_path:
+                            conflict_stmt = (
+                                select(WorkflowDB.name, WorkflowNodePropertyDB.properties)
+                                .join(WorkflowNodePropertyDB, WorkflowNodePropertyDB.workflow_id == WorkflowDB.id)
+                                .where(
+                                    WorkflowDB.customer_id == db_workflow.customer_id,
+                                    WorkflowDB.is_enabled == True,
+                                    WorkflowDB.id != workflow_id
+                                )
+                            )
+                            conflict_res = await session.execute(conflict_stmt)
+                            for other_wf_name, other_props in conflict_res.all():
+                                if not other_props or not isinstance(other_props, dict):
+                                    continue
+                                other_path = other_props.get("base_path", "").strip("/")
+                                if other_path and other_path == base_path:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=f"Webhook path '{base_path}' is already used by enabled workflow '{other_wf_name}'."
+                                    )
+
             db_workflow.is_enabled = not db_workflow.is_enabled
             db_workflow.updated_at = datetime.utcnow().isoformat()
             
@@ -583,8 +613,54 @@ async def save_workflow_to_store(
                     db_workflow = result.scalar_one_or_none()
                     
                     if not db_workflow:
-                        db_workflow = WorkflowDB(id=definition.id)
+                        db_workflow = WorkflowDB(
+                            id=definition.id,
+                            customer_id=customer_id if customer_id is not None else definition.customer_id,
+                            user_id=user_id or definition.user_id
+                        )
                         session.add(db_workflow)
+
+                    # Validate webhook path uniqueness
+                    if definition.is_enabled:
+                        from app.nodes.registry import NodesRegistry
+                        from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
+                        for node in (definition.nodes_structure or []):
+                            n_dict = _node_to_dict(node)
+                            node_data = n_dict.get("data") or {}
+                            agent_name = node_data.get("name") or n_dict.get("name")
+                            
+                            node_instance = NodesRegistry.get_node(agent_name)
+                            if node_instance and isinstance(node_instance, BaseWebhookAgent):
+                                catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
+                                catalog_node = catalog_result.scalars().first()
+                                instance_properties = {
+                                    **_default_properties_from_node_definition(catalog_node),
+                                    **definition.properties.get(n_dict.get("id"), {}),
+                                    **_extract_node_properties(n_dict),
+                                }
+                                base_path = instance_properties.get("base_path", "").strip("/")
+                                if base_path:
+                                    conflict_stmt = (
+                                        select(WorkflowDB.name, WorkflowNodePropertyDB.properties)
+                                        .join(WorkflowNodePropertyDB, WorkflowNodePropertyDB.workflow_id == WorkflowDB.id)
+                                        .where(
+                                            WorkflowDB.customer_id == customer_id,
+                                            WorkflowDB.is_enabled == True,
+                                            WorkflowDB.id != definition.id
+                                        )
+                                    )
+                                    conflict_res = await session.execute(conflict_stmt)
+                                    rows = conflict_res.all()
+                                    for other_wf_name, other_properties in rows:
+                                        if not other_properties or not isinstance(other_properties, dict):
+                                            continue
+                                        other_path = other_properties.get("base_path", "").strip("/")
+                                        if other_path and other_path == base_path:
+                                            raise HTTPException(
+                                                status_code=400,
+                                                detail=f"Webhook path '{base_path}' is already used by enabled workflow '{other_wf_name}'."
+                                            )
+
                     
                     sanitized_definition = _sanitize_workflow_definition(definition)
 
@@ -660,6 +736,8 @@ async def save_workflow_to_store(
             logger.info("workflow_saved_to_db", workflow_id=definition.id, version=definition.version)
             return {"id": definition.id, "version": definition.version, "status": "saved"}
             
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error("failed_to_save_agent", agent_id=definition.id, error=str(e))
             raise HTTPException(status_code=500, detail=f"Failed to save agent: {str(e)}")

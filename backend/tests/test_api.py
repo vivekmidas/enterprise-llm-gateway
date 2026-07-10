@@ -266,3 +266,64 @@ async def test_workflow_delete_owner_allowed(client: AsyncClient):
 
     delete_res = await client.delete(f"/workflows/{workflow_id}", headers={"Authorization": f"Bearer {owner_token}"})
     assert delete_res.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_admin_audit_logs(client: AsyncClient):
+    from app.core.security.jwt import create_access_token
+    from app.core.database import AsyncSessionLocal
+    from app.models.db_models import UserDB, AuditLogDB
+    
+    # 1. Create a system admin, a company admin (tenant 10), and a normal user
+    # Also create some audit logs
+    async with AsyncSessionLocal() as session:
+        # Check if users already exist or insert them
+        sys_admin = await session.get(UserDB, 2001)
+        if not sys_admin:
+            sys_admin = UserDB(id=2001, username="sysadmin@example.com", email_id="sysadmin@example.com", password="pwd", name="SysAdmin", role="system_admin", customer_id=None, status="active")
+            session.add(sys_admin)
+            
+        company_admin = await session.get(UserDB, 2002)
+        if not company_admin:
+            company_admin = UserDB(id=2002, username="compadmin@example.com", email_id="compadmin@example.com", password="pwd", name="CompAdmin", role="admin", customer_id=10, status="active")
+            session.add(company_admin)
+            
+        normal_user = await session.get(UserDB, 2003)
+        if not normal_user:
+            normal_user = UserDB(id=2003, username="user@example.com", email_id="user@example.com", password="pwd", name="User", role="user", customer_id=10, status="active")
+            session.add(normal_user)
+            
+        # Clean existing test logs
+        from sqlalchemy import delete
+        await session.execute(delete(AuditLogDB).where(AuditLogDB.action.like("test_action_%")))
+        
+        # Add test audit logs
+        log1 = AuditLogDB(id=9001, action="test_action_1", resource_type="workflow", resource_id="wf-1", status="success", actor_user_id=2002, actor_role="admin", customer_id=10, created_at="2026-07-10T12:00:00Z")
+        log2 = AuditLogDB(id=9002, action="test_action_2", resource_type="workflow", resource_id="wf-2", status="success", actor_user_id=2001, actor_role="system_admin", customer_id=20, created_at="2026-07-10T13:00:00Z")
+        session.add(log1)
+        session.add(log2)
+        await session.commit()
+
+    sys_admin_token = create_access_token({"user_id": "2001", "email": "sysadmin@example.com", "role": "system_admin", "customer_id": None})
+    comp_admin_token = create_access_token({"user_id": "2002", "email": "compadmin@example.com", "role": "admin", "customer_id": 10})
+    user_token = create_access_token({"user_id": "2003", "email": "user@example.com", "role": "user", "customer_id": 10})
+
+    # Test as system admin - should see both logs in reverse chronological order
+    res_sys = await client.get("/admin/audit-logs", headers={"Authorization": f"Bearer {sys_admin_token}"})
+    assert res_sys.status_code == 200
+    logs_sys = [l for l in res_sys.json() if l["action"].startswith("test_action_")]
+    assert len(logs_sys) == 2
+    # Verify reverse date order (log2 is at 13:00, log1 is at 12:00)
+    assert logs_sys[0]["action"] == "test_action_2"
+    assert logs_sys[1]["action"] == "test_action_1"
+
+    # Test as company admin - should only see log1 (customer_id 10)
+    res_comp = await client.get("/admin/audit-logs", headers={"Authorization": f"Bearer {comp_admin_token}"})
+    assert res_comp.status_code == 200
+    logs_comp = [l for l in res_comp.json() if l["action"].startswith("test_action_")]
+    assert len(logs_comp) == 1
+    assert logs_comp[0]["action"] == "test_action_1"
+
+    # Test as normal user - should get 403 Forbidden
+    res_user = await client.get("/admin/audit-logs", headers={"Authorization": f"Bearer {user_token}"})
+    assert res_user.status_code == 403

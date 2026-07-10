@@ -98,7 +98,7 @@ class GenericLLMAgent(BaseNode):
                     status="success"
                 )
         except Exception as e:
-            self.logger.error("generic_llm_request_failed", error=str(e), endpoint=endpoint)
+            self.logger.error("generic_llm_request_failed", trace_id=inp.trace_id, error=str(e), endpoint=endpoint)
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,

@@ -152,7 +152,7 @@ class DBExecutor(BaseNode, abc.ABC):
                 }
                 sql_query = self._render_query(query, render_context)
                 sql_params = params
-                self.logger.info("db_raw_query_resolved", query_type=query_type, query=sql_query, has_params=params is not None)
+                self.logger.info("db_raw_query_resolved",trace_id=inp.trace_id, query_type=query_type, query=sql_query, has_params=params is not None)
             else:
                 # Mode B: Structured query builder execution
                 query_type_actual = query_type
@@ -171,11 +171,11 @@ class DBExecutor(BaseNode, abc.ABC):
 
                 # Get table name
                 if isinstance(data, dict):
-                    table_name = data.get("table_name") or payload.get("table_name") or config.get("table")
+                    table_name = data.get("table_name") or payload.get("table_name") or config.get("table") or config.get("table_name")
                 else:
                     table_name = None
                 if not table_name:
-                    table_name = config.get("table")
+                    table_name = config.get("table") or config.get("table_name")
 
                 if not table_name:
                     self.logger.warning("db_missing_table_name", trace_id=trace_id)
@@ -252,7 +252,7 @@ class DBExecutor(BaseNode, abc.ABC):
                         condition=condition,
                         condition_params=condition_params
                     )
-                self.logger.info("db_structured_query_generated", query_type=query_type, query=sql_query, has_params=bool(sql_params))
+                self.logger.info("db_structured_query_generated", trace_id=trace_id, query_type=query_type, query=sql_query, has_params=bool(sql_params))
         except Exception as e:
             duration = round((time.time() - start_time) * 1000, 2)
             self.logger.warning("db_query_preparation_failed", trace_id=trace_id, error=str(e))
@@ -260,7 +260,7 @@ class DBExecutor(BaseNode, abc.ABC):
                 trace_id=trace_id,
                 data=inp.data,
                 status="failure",
-                violations= violations.append(str(e)),
+                violations=[str(e)],
                 error_message=f"Query preparation failed: {e}",
                 error_code=400,
                 latency_ms=duration
@@ -277,7 +277,7 @@ class DBExecutor(BaseNode, abc.ABC):
                     max_len = len(records)
                 else:
                     max_len = max([len(v) for v in field_values if isinstance(v, list)] + [len(v) for v in condition_params if isinstance(v, list)])
-                self.logger.info("db_batch_loop_execution_started", query_type=query_type_actual, batch_size=max_len)
+                self.logger.info("db_batch_loop_execution_started", trace_id=trace_id, query_type=query_type_actual, batch_size=max_len)
                 
                 consolidated_result = []
                 total_rowcount = 0
@@ -330,11 +330,11 @@ class DBExecutor(BaseNode, abc.ABC):
                 else:
                     result = {"rowcount": total_rowcount, "lastrowid": lastrowid}
                     
-                self.logger.info("db_batch_loop_execution_completed", query_type=query_type_actual, iterations=max_len)
+                self.logger.info("db_batch_loop_execution_completed", trace_id=trace_id, query_type=query_type_actual, iterations=max_len)
             else:
-                self.logger.info("db_query_executing", query_type=query_type_actual)
+                self.logger.info("db_query_executing", trace_id=trace_id, query_type=query_type_actual)
                 result = await self.execute_query(conn, sql_query, query_type_actual, sql_params)
-                self.logger.info("db_query_executed_successfully", query_type=query_type_actual)
+                self.logger.info("db_query_executed_successfully", trace_id=trace_id, query_type=query_type_actual)
 
             # 5. Format success response
             duration = round((time.time() - start_time) * 1000, 2)
@@ -369,6 +369,6 @@ class DBExecutor(BaseNode, abc.ABC):
             if conn:
                 try:
                     conn.close()
-                    self.logger.info("db_connection_closed")
+                    self.logger.info("db_connection_closed", trace_id=trace_id)
                 except Exception as ex:
-                    self.logger.warning("db_connection_close_failed", error=str(ex))
+                    self.logger.warning("db_connection_close_failed", trace_id=trace_id, error=str(ex))

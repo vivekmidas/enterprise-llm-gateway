@@ -87,7 +87,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        logger.debug("client details", client_host=request.client.host, client_port=request.client.port, request_url=request.url, method=request.method)
+        logger.debug("Request details", client_host=request.client.host, client_port=request.client.port, request_url=request.url, method=request.method,x_forwarded_for=request.headers.get("x-forwarded-for"))
 
         # Skip public endpoints
         if request.url.path in PUBLIC_PATHS or request.url.path.startswith("/static/"):

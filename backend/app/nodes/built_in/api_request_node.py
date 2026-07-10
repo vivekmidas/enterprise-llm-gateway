@@ -176,6 +176,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
     async def execute(self, input_data: NodeInput) -> NodeOutput:
         """Execution with retry logic"""
         config = input_data.config
+        trace_id = input_data.trace_id
 
         # 1. Parse input_data.data as JSON to extract runtime configuration and payload
         input_json = {}
@@ -369,7 +370,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
         for attempt in range(retries + 1):
             start_time = time.time()
             try:
-                self.logger.info(f"API Request attempt {attempt+1}", extra={
+                self.logger.info(f"API Request attempt {attempt+1}", trace_id=trace_id, extra={
                     "url": full_url, "method": method
                 })
 
@@ -383,7 +384,7 @@ class ApiRequestNode(BaseNode, abc.ABC):
                 )
                 
                 #print logger for debugging of url sent to the backend system
-                self.logger.info(f"API Response: {response.status_code}", extra={
+                self.logger.info(f"API Response: {response.status_code}", trace_id=trace_id, extra={
                     "url": full_url, "method": method
                 })
                 
@@ -414,12 +415,12 @@ class ApiRequestNode(BaseNode, abc.ABC):
                     
             except Exception as e:
                 last_error = str(e)
-                self.logger.warning(f"Attempt {attempt+1} failed", exc_info=True)
+                self.logger.warning(f"Attempt {attempt+1} failed", trace_id=trace_id, exc_info=True)
             
             if attempt < retries:
                 time.sleep(retry_backoff * (2 ** attempt))
 
-        self.logger.error("API Request failed after retries", extra={"last_error": last_error})
+        self.logger.error("API Request failed after retries", trace_id=trace_id, extra={"last_error": last_error})
         return NodeOutput(
             trace_id=input_data.trace_id,
             data=input_data.data,

@@ -96,7 +96,7 @@ class GenericMySQLDBExecutor(DBExecutor):
         Execute query with proper parameterization (prevents SQL injection).
         Supports SELECT (returning list of dicts) and other statements (returning rowcount/lastrowid).
         """
-        self.logger.info("mysql_query_executing", query_type=query_type, query=query)
+        self.logger.debug("mysql_query_executing", query_type=query_type, query=query)
         try:
             # Using dictionary=True to natively get dictionary records on SELECT
             cursor = connection.cursor(dictionary=True)

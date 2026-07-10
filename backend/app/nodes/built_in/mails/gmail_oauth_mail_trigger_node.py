@@ -69,6 +69,7 @@ class GmailEmailTriggerNode(EmailTriggerNode):
         """
         workflow_config = self._workflows.get(agent_node_id, {})
         config = self._get_node_config(agent_node_id, workflow_config)
+        trace_id = f"gmail-{int(time.time())}"
         try:
             # Google Pub/Sub data is base64 encoded
             data_str = base64.b64decode(payload['message']['data']).decode('utf-8')
@@ -88,11 +89,11 @@ class GmailEmailTriggerNode(EmailTriggerNode):
                     msg = await asyncio.to_thread(client.get_message, msg_id)
                     event_data = client.parse_message(msg)
                     
-                    self.logger.info("gmail_push_trigger", msg_id=msg_id)
-                    await self.execute_dynamic_agent(agent_node_id, self._format_msg(event_data))
+                    self.logger.info("gmail_push_trigger", trace_id=trace_id, msg_id=msg_id)
+                    await self.execute_dynamic_agent(agent_node_id, self._format_msg(event_data), trace_id=trace_id)
 
                     if config.get("mark_as_read", True):
                         await asyncio.to_thread(client.mark_as_read, msg_id)
 
         except Exception as e:
-            self.logger.error("gmail_webhook_processing_failed", error=str(e), agent_node_id=agent_node_id)
+            self.logger.error("gmail_webhook_processing_failed", trace_id=trace_id, error=str(e), agent_node_id=agent_node_id)

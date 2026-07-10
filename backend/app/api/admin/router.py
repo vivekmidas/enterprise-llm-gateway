@@ -8,12 +8,12 @@ from datetime import datetime
 
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
-from app.nodes.built_in.webhook.base.base_webhook_agent import WebhookAgent
+from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
 from app.nodes.built_in.webhook.base.scheduler_node import SchedulerAgent
 from app.core.database import get_db
-from app.models.db_models import CustomerDB, UserDB
+from app.models.db_models import CustomerDB, UserDB, AuditLogDB
 from app.core.security.hash import get_password_hash
-from app.api.auth.dependencies import  require_system_admin
+from app.api.auth.dependencies import  require_system_admin, get_current_user, require_admin_or_system_admin
 from app.core.types.users import User
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -37,19 +37,24 @@ async def list_triggers():
                 "active_instances": []
             }
 
-            if isinstance(node_instance, WebhookAgent):
-                # For WebhookAgent, list active endpoints and their server status
-                for agent_node_id, server_key in node_instance._endpoint_to_server_map.items():
-                    host, port = server_key
-                    is_running = server_key in node_instance._server_tasks and not node_instance._server_tasks[server_key].done()
+            if isinstance(node_instance, BaseWebhookAgent):
+                # For BaseWebhookAgent, list active endpoints
+                for agent_node_id, workflow_config in node_instance._workflows.items():
+                    nodes = workflow_config.get("nodes_structure", [])
+                    node_data = next((n for n in nodes if n.get("id") == agent_node_id), {})
+                    props = node_data.get("data", {}).get("properties") or node_instance.properties or {}
+                    base_path = props.get("base_path", "").strip("/")
+                    if not base_path:
+                        base_path = agent_node_id
+                    
                     info["active_instances"].append({
                         "agent_node_id": agent_node_id,
                         "type": "webhook",
-                        "host": host,
-                        "port": port,
-                        "path": f"/{node_instance.properties['path'].strip('/')}/{agent_node_id}",
-                        "status": "running" if is_running else "stopped",
-                        "workflow_id": node_instance._workflows.get(agent_node_id, {}).get("id")
+                        "host": "gateway",
+                        "port": 8000,
+                        "path": f"/webhooks/run/{base_path}",
+                        "status": "running" if workflow_config.get("is_enabled", True) else "stopped",
+                        "workflow_id": workflow_config.get("id")
                     })
             elif isinstance(node_instance, SchedulerAgent):
                 # For SchedulerAgent, list active tasks
@@ -385,3 +390,38 @@ async def configure_customer_nodes_bulk(
         
     await db.commit()
     return {"status": "success"}
+
+
+@router.get("/audit-logs", response_model=List[Dict[str, Any]])
+async def list_audit_logs(
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reads the data from the audit_logs table in reverse date order.
+    - system_admin: shows all logs.
+    - admin: shows only logs matching their customer_id.
+    """
+    stmt = select(AuditLogDB).order_by(AuditLogDB.created_at.desc())
+    if current_user.role == "admin":
+        stmt = stmt.where(AuditLogDB.customer_id == current_user.customer_id)
+        
+    result = await db.execute(stmt)
+    logs = result.scalars().all()
+    
+    return [
+        {
+            "id": log.id,
+            "action": log.action,
+            "resource_type": log.resource_type,
+            "resource_id": log.resource_id,
+            "status": log.status,
+            "actor_user_id": log.actor_user_id,
+            "actor_role": log.actor_role,
+            "customer_id": log.customer_id,
+            "details": log.details,
+            "created_at": log.created_at
+        }
+        for log in logs
+    ]

@@ -184,8 +184,35 @@ class NodesRegistry:
 
             return merged_list
 
+        from sqlalchemy import text
         async with AsyncSessionLocal() as session:
             async with session.begin():
+                # # Clean up webhook nodes to only have base_path in system_properties/property_schema, removing port/host/workers
+                # await session.execute(
+                #     text(
+                #         "UPDATE nodes SET "
+                #         "user_properties = '[]', "
+                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"api-webhook\", \"value\": \"api-webhook\"}]' "
+                #         "WHERE name = 'api_webhook_agent';"
+                #     )
+                # )
+                # await session.execute(
+                #     text(
+                #         "UPDATE nodes SET "
+                #         "user_properties = '[]', "
+                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"stocks\", \"value\": \"stocks\"}]' "
+                #         "WHERE name = 'stocks_webhook_agent';"
+                #     )
+                # )
+                # await session.execute(
+                #     text(
+                #         "UPDATE nodes SET "
+                #         "user_properties = '[]', "
+                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"db\", \"value\": \"db\"}]' "
+                #         "WHERE name = 'db_webhook_agent';"
+                #     )
+                # )
+
                 # 2. Sync Discovered Nodes
                 for node_name, node in cls._nodes.items():
                     stmt = select(NodeDB).where(NodeDB.name == node_name)

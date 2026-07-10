@@ -12,6 +12,11 @@ class QdrantWebhookNode(BaseWebhookAgent):
     icon: str = "database"
     color: str = "#2ECC71"
     
+    system_properties: Dict[str, Any] = {
+        "base_path": "qdrant-webhook"
+    }
+    user_properties: Dict[str, Any] = {}
+    
     async def init(self):
         await super().init()
         

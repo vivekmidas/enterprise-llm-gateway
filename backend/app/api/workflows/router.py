@@ -225,6 +225,8 @@ async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
     try:
         return await toggle_workflow_in_store(workflow_id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -250,6 +252,8 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
         saved_workflow = await save_workflow(workflow, customer_id=current_user.customer_id)
         logger.info("create_workflow_success", workflow_id=request.id)
         return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("create_workflow_error", workflow_id=request.id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")

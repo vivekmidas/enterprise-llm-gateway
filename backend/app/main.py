@@ -12,7 +12,9 @@ from app.api.observability.router import router as obs_router
 from app.api.categories.router import router as categories_router
 from app.api.auth.router import router as base_auth_router
 from app.api.webhooks import email as email_webhooks
+from app.api.webhooks import run as run_webhooks
 from app.nodes.registry import NodesRegistry
+
 from app.api.admin.users import router as users
 
 from app.core.database import init_db
@@ -68,7 +70,9 @@ app.include_router(categories_router)
 app.include_router(auth_router)
 app.include_router(base_auth_router)
 app.include_router(email_webhooks.router)
+app.include_router(run_webhooks.router)
 app.include_router(users.router)
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -21,8 +21,11 @@ class DBWebhookAgent(WebhookAgent, abc.ABC):
     name: str = "db_webhook_agent"
     description: str = "DB Webhook Agent for DB operations"
     version: str = "1.0.0"
-    category: str = 10
     node_type: str = "trigger"
+    
+    system_properties: Dict[str, Any] = {
+        "base_path": "db"
+    }
     #label="Base DB webhook agent",
     #group="Databases",
     #icon="database",

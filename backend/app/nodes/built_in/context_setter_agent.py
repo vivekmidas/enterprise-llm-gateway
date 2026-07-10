@@ -32,7 +32,7 @@ class ContextSetterAgent(BaseNode):
         await super().init()
        
     async def execute (self, inp: NodeInput) -> NodeOutput:
-        self.logger.info(f"Execution Started for  {self.name}")
+        self.logger.info(f"Execution Started for  {self.name}", trace_id=inp.trace_id)
         start = time.time()
         
         # Simulate CRM lookup (replace with real API/DB call)
@@ -51,7 +51,7 @@ class ContextSetterAgent(BaseNode):
             new_data_val = f"User Context: {user_context}\n\nUser Message: {data_val}"
 
         enriched_content = self.set_output_data(inp, new_data_val)
-        self.logger.info(f"Execution Ended for  {self.name}")
+        self.logger.info(f"Execution Ended for  {self.name}", trace_id=inp.trace_id)
   
         return NodeOutput(
             trace_id=inp.trace_id,

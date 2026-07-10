@@ -15,6 +15,11 @@ class StocksWebhookAgent(BaseWebhookAgent):
     icon: str = "trending-up"
     color: str = "#2ECC71"
     
+    system_properties: Dict[str, Any] = {
+        "base_path": "stocks"
+    }
+    user_properties: Dict[str, Any] = {}
+    
     async def validate_request(self, request: Request, payload: str) -> bool:
         # Custom authorization logic
         expected_key = self.properties.get("api_key")
@@ -27,7 +32,7 @@ class StocksWebhookAgent(BaseWebhookAgent):
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
         self.logger.info("webhook_execution_started", trace_id=inp.trace_id, agent_name=self.name)
-        self.logger.debug("webhook_execution_data", data=inp.data,properties=self.properties)
+        self.logger.debug("webhook_execution_data", trace_id=inp.trace_id,data=inp.data,properties=self.properties)
         
         return NodeOutput(
             trace_id=inp.trace_id,

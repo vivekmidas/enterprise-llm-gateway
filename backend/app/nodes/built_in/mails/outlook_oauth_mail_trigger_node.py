@@ -69,6 +69,7 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
         """
         workflow_config = self._workflows.get(agent_node_id, {})
         config = self._get_node_config(agent_node_id, workflow_config)
+        trace_id = f"outlook-{int(time.time())}"
         try:
             access_token = await self._authenticate(agent_node_id, config)
             async with httpx.AsyncClient() as client:
@@ -88,7 +89,7 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
                         "id": msg.get("id")
                     })
                     
-                    await self.execute_dynamic_agent(agent_node_id, payload)
+                    await self.execute_dynamic_agent(agent_node_id, payload, trace_id=trace_id)
                     
                     # 3. Mark as read
                     if config.get("mark_as_read", True):
@@ -97,4 +98,4 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
                                          json={"isRead": True})
 
         except Exception as e:
-            self.logger.error("outlook_webhook_processing_failed", error=str(e), agent_node_id=agent_node_id)
+            self.logger.error("outlook_webhook_processing_failed", trace_id=trace_id, error=str(e), agent_node_id=agent_node_id)

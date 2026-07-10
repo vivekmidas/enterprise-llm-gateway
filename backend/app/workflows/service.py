@@ -227,13 +227,13 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
     Factory function to generate the conditional router.
     """
     async def router(state: Any) -> Any:
-        logger.info("routing_evaluation_started", violations=state.violations, metadata=state.metadata)
+        logger.info("routing_evaluation_started", violations=state.violations, metadata=state.metadata, trace_id=state.trace_id)
         
         # Check for failure
         has_failed = bool(state.violations)
         
         if has_failed:
-            logger.info("node_failed_routing_checking", mapping_keys=list(mapping.keys()))
+            logger.info("node_failed_routing_checking",  trace_id=state.trace_id,mapping_keys=list(mapping.keys()))
             targets = []
             # Check failure / has_violations conditions
             if "failure" in mapping:
@@ -242,10 +242,10 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
                 targets = mapping["has_violations"]["targets"]
             
             if not targets:
-                logger.info("no_failure_path_defined_graceful_stop")
+                logger.info("no_failure_path_defined_graceful_stop", trace_id=state.trace_id)
                 return "__end__"
             
-            logger.info("following_failure_path", targets=targets)
+            logger.info("following_failure_path", targets=targets, trace_id=state.trace_id)
             return targets[0] if len(targets) == 1 else targets
 
         # On Success:
@@ -256,7 +256,7 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
             if cond_name not in special_keys:
                 expr_to_eval = info.get("expression") or cond_name
                 if evaluate_condition_expression(expr_to_eval, state):
-                    logger.info("expression_condition_matched", condition=cond_name, expression=expr_to_eval, targets=info["targets"])
+                    logger.info("expression_condition_matched", condition=cond_name, expression=expr_to_eval, targets=info["targets"], trace_id=state.trace_id)
                     matched_expression_targets.extend(info["targets"])
 
         # 2. Check standard success conditions / unconditional edges
@@ -275,10 +275,10 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
         all_success_targets = list(set(matched_expression_targets + success_targets))
         
         if not all_success_targets:
-            logger.info("no_matching_success_path_stop")
+            logger.info("no_matching_success_path_stop", trace_id=state.trace_id)
             return "__end__"
         
-        logger.info("following_success_paths", targets=all_success_targets)
+        logger.info("following_success_paths", targets=all_success_targets, trace_id=state.trace_id)
         return all_success_targets[0] if len(all_success_targets) == 1 else all_success_targets
     return router
 
