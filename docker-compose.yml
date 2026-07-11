@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+      - mysql
 
   frontend:
     build: ./frontend
@@ -39,3 +40,13 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage
     restart: unless-stopped
+
+  mysql:
+    image: alpine/mysql:latest
+    container_name: gateway-mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    

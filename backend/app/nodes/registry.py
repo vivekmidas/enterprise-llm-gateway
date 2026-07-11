@@ -89,16 +89,12 @@ class NodesRegistry:
         except ImportError:
             cls.logger.warning("built_in_agents_package_not_found")
 
-        # 2. Discover plugin agents from 'plugins/agents' folder (allows dropping new .py files)
-        plugins_dir = os.path.join(os.getcwd(), "plugins", "nodes")
-        if os.path.exists(plugins_dir):
-            import sys
-            if plugins_dir not in sys.path:
-                sys.path.append(plugins_dir)
-            cls.logger.info("scanning_plugins_directory", path=plugins_dir)
-            await cls._scan_package([plugins_dir], "")
-        else:
-            cls.logger.debug("plugins_directory_not_found", path=plugins_dir)
+        # 2. Discover plugin agents from 'plugins/nodes/system' folder
+        plugins_dir = os.path.join(os.getcwd(), "plugins", "nodes", "system")
+        await cls._load_plugins_from_directory(plugins_dir, customer_id=0)
+
+        # 3. Discover customer-specific plugins from CustomerDB paths
+        await cls._load_customer_custom_plugins()
 
         # Log the "output" of the discovery process
         cls.logger.info(
@@ -108,7 +104,7 @@ class NodesRegistry:
         )
 
         # Sync definitions with DB to load global properties/schema overrides 
-        await cls.sync_with_db()
+        # await cls.sync_with_db()
 
     @classmethod
     async def sync_with_db(cls):
@@ -187,33 +183,7 @@ class NodesRegistry:
         from sqlalchemy import text
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                # # Clean up webhook nodes to only have base_path in system_properties/property_schema, removing port/host/workers
-                # await session.execute(
-                #     text(
-                #         "UPDATE nodes SET "
-                #         "user_properties = '[]', "
-                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"api-webhook\", \"value\": \"api-webhook\"}]' "
-                #         "WHERE name = 'api_webhook_agent';"
-                #     )
-                # )
-                # await session.execute(
-                #     text(
-                #         "UPDATE nodes SET "
-                #         "user_properties = '[]', "
-                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"stocks\", \"value\": \"stocks\"}]' "
-                #         "WHERE name = 'stocks_webhook_agent';"
-                #     )
-                # )
-                # await session.execute(
-                #     text(
-                #         "UPDATE nodes SET "
-                #         "user_properties = '[]', "
-                #         "system_properties = '[{\"key\": \"base_path\", \"type\": \"string\", \"label\": \"Webhook Path\", \"default\": \"db\", \"value\": \"db\"}]' "
-                #         "WHERE name = 'db_webhook_agent';"
-                #     )
-                # )
-
-                # 2. Sync Discovered Nodes
+                # 1. Sync Discovered Nodes
                 for node_name, node in cls._nodes.items():
                     stmt = select(NodeDB).where(NodeDB.name == node_name)
                     result = await session.execute(stmt)
@@ -280,9 +250,29 @@ class NodesRegistry:
                             user_properties=user_props_code,
                             system_properties=system_props_code,
                             input_contract=node.input_contract,
-                            output_contract=node.output_contract
+                            output_contract=node.output_contract,
+                            customer_id=None if getattr(node, "customer_id", None) == 0 else getattr(node, "customer_id", None)
                         )
                         session.add(new_db_node)
+                        
+                        # Automatically create and enable the node assignment for customer-scoped custom nodes
+                        cust_id = getattr(node, "customer_id", None)
+                        if cust_id is not None and cust_id != 0:
+                            from app.models.db_models import CustomerNodeDB
+                            stmt_cn = select(CustomerNodeDB).where(
+                                CustomerNodeDB.customer_id == cust_id,
+                                CustomerNodeDB.node_name == node_name
+                            )
+                            res_cn = await session.execute(stmt_cn)
+                            db_cn = res_cn.scalar_one_or_none()
+                            if not db_cn:
+                                new_cn = CustomerNodeDB(
+                                    customer_id=cust_id,
+                                    node_name=node_name,
+                                    properties={},
+                                    is_enabled=True
+                                )
+                                session.add(new_cn)
                     # else:
                     #     cls.logger.info("syncing_existing_node_schema_to_db", name=node_name)
 
@@ -347,3 +337,269 @@ class NodesRegistry:
                         cls.logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
         except Exception as e:
             cls.logger.error("node_module_load_failed", module=module_name, error=str(e))
+
+    @classmethod
+    async def add_node_to_db(cls, node: BaseNode):
+        """
+        Saves the node's manifest data / metadata to the database.
+        If a node with the same name already exists in NodeDB, it is overwritten/updated
+        only if its version number matches the new node's version.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.db_models import NodeDB, CustomerNodeDB
+        from sqlalchemy import select
+
+        cls.logger.info("adding_node_to_db_started", node_name=node.name, version=node.version)
+
+        # Retrieve default properties cleanly from the class schema
+        user_props_code = []
+        system_props_code = []
+
+        def get_clean_default(field_obj):
+            if not field_obj:
+                return []
+            val = getattr(field_obj, "default", [])
+            if val is None or "Undefined" in val.__class__.__name__:
+                factory = getattr(field_obj, "default_factory", None)
+                if factory is not None:
+                    try:
+                        val = factory()
+                    except Exception:
+                        val = []
+                else:
+                    val = []
+            return val
+
+        if hasattr(node.__class__, "model_fields"):
+            user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
+            system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
+        elif hasattr(node.__class__, "__fields__"):
+            user_props_code = get_clean_default(node.__class__.__fields__.get("user_properties"))
+            system_props_code = get_clean_default(node.__class__.__fields__.get("system_properties"))
+        else:
+            user_props_code = node.user_properties or []
+            system_props_code = node.system_properties or []
+
+        # Map node category to the corresponding Category ID
+        node_category = str(getattr(node, "category", "") or "Node")
+        category_id = "1"
+        if node_category.lower() in ["guardrails", "safety guardrails"]:
+            category_id = "2"
+        elif node_category.lower() in ["external systems", "external"]:
+            category_id = "3"
+        elif node_category.lower() in ["data operations", "transform"]:
+            category_id = "4"
+        elif node_category.lower() in ["databases", "database"]:
+            category_id = "5"
+        elif node_category.lower() in ["triggers", "trigger"]:
+            category_id = "6"
+        else:
+            category_id = "1"
+
+        cust_id = getattr(node, "customer_id", None)
+        db_cust_id = None if cust_id == 0 else cust_id
+
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                stmt = select(NodeDB).where(NodeDB.name == node.name)
+                result = await session.execute(stmt)
+                db_node = result.scalars().first()
+
+                if not db_node:
+                    cls.logger.info("registering_new_node_to_db", name=node.name)
+                    new_db_node = NodeDB(
+                        name=node.name,
+                        label=node.label,
+                        node_type=node.node_type.upper() if node.node_type else "NODE",
+                        description=node.description,
+                        version=node.version,
+                        category=category_id,
+                        group=node.group,
+                        icon=node.icon or "bot",
+                        color=node.color,
+                        badge=node.badge,
+                        sub_label=node.sub_label,
+                        user_properties=user_props_code,
+                        system_properties=system_props_code,
+                        input_contract=node.input_contract,
+                        output_contract=node.output_contract,
+                        customer_id=db_cust_id
+                    )
+                    session.add(new_db_node)
+                else:
+                    if db_node.version == node.version:
+                        cls.logger.info("overwriting_existing_node_in_db", name=node.name, version=node.version)
+                        db_node.label = node.label
+                        db_node.node_type = node.node_type.upper() if node.node_type else "NODE"
+                        db_node.description = node.description
+                        db_node.category = category_id
+                        db_node.group = node.group
+                        db_node.icon = node.icon or "bot"
+                        db_node.color = node.color
+                        db_node.badge = node.badge
+                        db_node.sub_label = node.sub_label
+                        db_node.user_properties = user_props_code
+                        db_node.system_properties = system_props_code
+                        db_node.input_contract = node.input_contract
+                        db_node.output_contract = node.output_contract
+                        db_node.customer_id = db_cust_id
+                        session.add(db_node)
+                    else:
+                        cls.logger.info(
+                            "skipping_db_overwrite_version_mismatch",
+                            name=node.name,
+                            db_version=db_node.version,
+                            node_version=node.version
+                        )
+
+                # Automatically assign/enable node for customer-scoped custom nodes
+                if cust_id is not None and cust_id != 0:
+                    stmt_cn = select(CustomerNodeDB).where(
+                        CustomerNodeDB.customer_id == cust_id,
+                        CustomerNodeDB.node_name == node.name
+                    )
+                    res_cn = await session.execute(stmt_cn)
+                    db_cn = res_cn.scalar_one_or_none()
+                    if not db_cn:
+                        new_cn = CustomerNodeDB(
+                            customer_id=cust_id,
+                            node_name=node.name,
+                            properties={},
+                            is_enabled=True
+                        )
+                        session.add(new_cn)
+
+    @classmethod
+    async def _load_plugins_from_directory(cls, directory_path: str, customer_id: int):
+        """
+        Loads custom nodes (plugins) from subdirectories of `directory_path`.
+        If customer_id is 0, these are system plugins.
+        """
+        from importlib.machinery import SourceFileLoader
+        import sys
+
+        cls.logger.info("loading_plugins_from_directory_started", path=directory_path, customer_id=customer_id)
+        
+        abs_path = os.path.abspath(directory_path)
+        if not os.path.exists(abs_path):
+            cls.logger.debug("plugin_storage_path_not_found", customer_id=customer_id, path=abs_path)
+            return
+
+        cls.logger.info("scanning_plugins", customer_id=customer_id, path=abs_path)
+        
+        # Scan sub-directories in storage_path
+        for item in os.listdir(abs_path):
+            subdir_path = os.path.join(abs_path, item)
+            if not os.path.isdir(subdir_path):
+                continue
+            
+            # Skip python internal directories
+            if item.startswith("__"):
+                continue
+
+            manifest_path = os.path.join(subdir_path, "manifest.json")
+            if not os.path.exists(manifest_path):
+                cls.logger.debug("manifest_missing, ignoring the plugin", path=subdir_path)
+                continue
+
+            try:
+                with open(manifest_path, "r") as f:
+                    manifest = json.load(f)
+            except Exception as e:
+                cls.logger.error("failed_to_parse_manifest", path=manifest_path, error=str(e))
+                continue
+
+            # Check mandatory fields
+            mandatory_fields = ["name", "label", "file_name", "class_name"]
+            missing = [field for field in mandatory_fields if not manifest.get(field)]
+            if missing:
+                cls.logger.warning(
+                    "custom_plugin_rejected_missing_fields",
+                    path=manifest_path,
+                    missing_fields=missing
+                )
+                continue
+
+            script_path = os.path.join(subdir_path, manifest["file_name"])
+            if not os.path.exists(script_path):
+                cls.logger.error("plugin_script_missing", path=script_path)
+                continue
+
+            # Add subdir to sys.path to allow imports from within plugin code
+            if subdir_path not in sys.path:
+                sys.path.append(subdir_path)
+
+            try:
+                # Load module using SourceFileLoader to prevent namespace collisions
+                if customer_id != 0:
+                    module_name = f"client_{customer_id}_{item}"
+                else:
+                    module_name = f"system_plugin_{item}"
+                
+                loader = SourceFileLoader(module_name, script_path)
+                module = loader.load_module()
+
+                class_name = manifest["class_name"]
+                cls_obj = getattr(module, class_name, None)
+                if not cls_obj or not issubclass(cls_obj, BaseNode) or inspect.isabstract(cls_obj):
+                    cls.logger.error(
+                        "invalid_node_class_in_plugin",
+                        class_name=class_name,
+                        path=script_path
+                    )
+                    continue
+
+                instance = cls_obj()
+                instance.customer_id = customer_id
+                
+                # Override name to prevent collisions across tenants
+                if customer_id != 0:
+                    instance.name = f"client_{customer_id}_{manifest['name']}"
+                else:
+                    # For system plugins, keep the manifest name (no prefix)
+                    instance.name = manifest["name"]
+
+                # Register the instantiated custom node
+                await cls.register(instance)
+                await cls.add_node_to_db(instance)
+                cls.logger.info(
+                    "plugin_loaded",
+                    customer_id=customer_id,
+                    node_name=instance.name
+                )
+            except Exception as e:
+                cls.logger.error(
+                    "failed_to_load_plugin",
+                    customer_id=customer_id,
+                    path=subdir_path,
+                    error=str(e)
+                )
+
+    @classmethod
+    async def _load_customer_custom_plugins(cls):
+        """
+        Queries CustomerDB for tenants with custom plugins enabled and loads their custom nodes.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.models.db_models import CustomerDB
+        from sqlalchemy import select
+
+        cls.logger.info("loading_customer_custom_plugins_started")
+        try:
+            async with AsyncSessionLocal() as session:
+                stmt = select(CustomerDB).where(
+                    CustomerDB.custom_plugins_enabled == True,
+                    CustomerDB.plugin_storage_path != None
+                )
+                result = await session.execute(stmt)
+                customers = result.scalars().all()
+
+                for customer in customers:
+                    storage_path = customer.plugin_storage_path
+                    if not storage_path:
+                        continue
+                    # Resolve to absolute path if relative
+                    abs_path = os.path.abspath(storage_path)
+                    await cls._load_plugins_from_directory(abs_path, customer.id)
+        except Exception as e:
+            cls.logger.error("error_loading_customer_custom_plugins", error=str(e))

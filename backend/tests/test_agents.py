@@ -9,6 +9,7 @@ from app.nodes.registry import NodesRegistry
 
 @pytest.mark.asyncio
 async def test_presidio():
+    await NodesRegistry.node_auto_discover()
     agent = NodesRegistry.get_node("presidio_ner_guard")
     assert agent is not None, "presidio_ner_guard not found in registry — plugin may have failed to load"
     trace_id = str(uuid.uuid4())

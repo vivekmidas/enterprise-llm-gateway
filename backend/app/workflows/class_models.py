@@ -22,6 +22,7 @@ class WorkflowDefinition(BaseModel):
     edges: List[Dict]  # or EdgeConfig model
     entry_point: str = "input_guard"
     is_enabled: bool = True
+    is_runnable: bool = True
     #global_config: O[Dict[str, Any] = Field(default_factory=dict)  # profanity, PII thresholds, trace settings
     #metadata: Dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

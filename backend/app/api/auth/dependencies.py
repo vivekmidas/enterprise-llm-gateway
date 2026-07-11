@@ -76,7 +76,7 @@ async def get_current_admin(
         )
     return current_user
 
-def require_resource_access(resource_type: str = ""):
+def require_resource_access(request:Request,resource_id:str,resource_type:str):
     
     async def _check_access(
         request: Request,

@@ -136,6 +136,7 @@ def _build_workflow_definition_from_db(db_workflow: WorkflowDB) -> WorkflowDefin
         "version": str(db_workflow.version),
         "category": db_workflow.category,
         "is_enabled": db_workflow.is_enabled,
+        "is_runnable": getattr(db_workflow, "is_runnable", True),
         "user_id": db_workflow.user_id,
         "customer_id": db_workflow.customer_id,
         "updated_at": db_workflow.updated_at,
@@ -668,6 +669,7 @@ async def save_workflow_to_store(
                     db_workflow.description = sanitized_definition.description or ""
                     db_workflow.version = int(sanitized_definition.version) if str(sanitized_definition.version).isdigit() else 1
                     db_workflow.is_enabled = sanitized_definition.is_enabled
+                    db_workflow.is_runnable = sanitized_definition.is_runnable
                     db_workflow.category = sanitized_definition.category or "default"
                     
                     # Only store ReactFlow/UI specific data in the definition column

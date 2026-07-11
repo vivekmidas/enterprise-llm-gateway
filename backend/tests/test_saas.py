@@ -419,3 +419,272 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
         ])))
         await session.commit()
 
+
+@pytest.mark.asyncio
+async def test_deletion_protections(client: AsyncClient, system_admin_headers: dict):
+    # 1. Try to delete customer ID 0
+    res = await client.delete("/admin/customers/0", headers=system_admin_headers)
+    assert res.status_code == 400
+    assert "system customer/account cannot be deleted" in res.json()["detail"].lower()
+
+    # 2. Try to delete a customer with name "System Account"
+    cust_payload = {
+        "name": "System Account",
+        "domain": "sys-acc.com",
+        "icon": "Building",
+        "color_schema": "#000000"
+    }
+    create_res = await client.post("/admin/customers", json=cust_payload, headers=system_admin_headers)
+    assert create_res.status_code == 201
+    sys_cust_id = create_res.json()["id"]
+
+    try:
+        # Try to delete it
+        del_res = await client.delete(f"/admin/customers/{sys_cust_id}", headers=system_admin_headers)
+        assert del_res.status_code == 400
+        assert "system customer/account cannot be deleted" in del_res.json()["detail"].lower()
+    finally:
+        # Clean up database directly (bypassing the API safeguard)
+        from app.models.db_models import CustomerNodeDB
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == sys_cust_id))
+            await session.execute(delete(CustomerDB).where(CustomerDB.id == sys_cust_id))
+            await session.commit()
+
+    # 3. Create a normal customer, a normal user, and a system_admin user under it
+    cust_payload = {
+        "name": "Normal Corp",
+        "domain": "normal.com",
+        "icon": "Building",
+        "color_schema": "#0000ff"
+    }
+    create_res = await client.post("/admin/customers", json=cust_payload, headers=system_admin_headers)
+    assert create_res.status_code == 201
+    normal_cust_id = create_res.json()["id"]
+
+    try:
+        # Create a normal user via API first
+        user_payload = {
+            "email": "normal_user@normal.com",
+            "password": "password123",
+            "name": "Normal User",
+            "role": "user"
+        }
+        user_res = await client.post(f"/admin/customers/{normal_cust_id}/users", json=user_payload, headers=system_admin_headers)
+        assert user_res.status_code == 201
+        normal_user_id = user_res.json()["id"]
+
+        # Create a company admin user under it via API
+        admin_payload = {
+            "email": "normal_admin@normal.com",
+            "password": "password123",
+            "name": "Normal Admin",
+            "role": "admin"
+        }
+        admin_res = await client.post(f"/admin/customers/{normal_cust_id}/users", json=admin_payload, headers=system_admin_headers)
+        assert admin_res.status_code == 201
+        normal_admin_id = admin_res.json()["id"]
+
+        # Get access token for company admin
+        normal_admin_token = create_access_token({
+            "user_id": str(normal_admin_id),
+            "email": "normal_admin@normal.com",
+            "role": "admin",
+            "customer_id": normal_cust_id
+        })
+        normal_admin_headers = {"Authorization": f"Bearer {normal_admin_token}"}
+
+        # Create a system_admin user in the database directly under this customer
+        async with AsyncSessionLocal() as session:
+            db_sys_user = UserDB(
+                username="temp_sys_admin@normal.com",
+                email_id="temp_sys_admin@normal.com",
+                password=get_password_hash("password123"),
+                name="Temp Sys Admin",
+                role="system_admin",
+                customer_id=normal_cust_id,
+                status="active"
+            )
+            session.add(db_sys_user)
+            await session.commit()
+            await session.refresh(db_sys_user)
+            temp_sys_user_id = db_sys_user.id
+
+        try:
+            # 4. Try to delete the customer containing a system_admin user
+            del_cust_res = await client.delete(f"/admin/customers/{normal_cust_id}", headers=system_admin_headers)
+            assert del_cust_res.status_code == 400
+            assert "customers with system admin users cannot be deleted" in del_cust_res.json()["detail"].lower()
+
+            # 5. Try to delete the system_admin user directly
+            del_user_res = await client.delete(f"/admin/users/{temp_sys_user_id}", headers=system_admin_headers)
+            assert del_user_res.status_code == 400
+            assert "system admin users cannot be deleted" in del_user_res.json()["detail"].lower()
+
+            # 6. Try to delete the normal user using company admin headers
+            del_normal_res = await client.delete(f"/admin/users/{normal_user_id}", headers=normal_admin_headers)
+            assert del_normal_res.status_code == 204
+
+            # 7. Try to delete the company admin user from another customer tenant
+            other_cust_payload = {
+                "name": "Other Corp",
+                "domain": "othercorp.com",
+                "icon": "Building",
+                "color_schema": "#00ff00"
+            }
+            other_cust_res = await client.post("/admin/customers", json=other_cust_payload, headers=system_admin_headers)
+            assert other_cust_res.status_code == 201
+            other_cust_id = other_cust_res.json()["id"]
+
+            try:
+                # Create a user in the other customer tenant
+                other_user_payload = {
+                    "email": "other_user@othercorp.com",
+                    "password": "password123",
+                    "name": "Other User",
+                    "role": "user"
+                }
+                other_user_res = await client.post(f"/admin/customers/{other_cust_id}/users", json=other_user_payload, headers=system_admin_headers)
+                assert other_user_res.status_code == 201
+                other_user_id = other_user_res.json()["id"]
+
+                # Try to delete other tenant's user with normal_admin_headers (should fail with 403)
+                cross_del_res = await client.delete(f"/admin/users/{other_user_id}", headers=normal_admin_headers)
+                assert cross_del_res.status_code == 403
+                assert "you do not have permission" in cross_del_res.json()["detail"].lower()
+            finally:
+                # Cleanup other customer
+                async with AsyncSessionLocal() as session:
+                    await session.execute(delete(UserDB).where(UserDB.customer_id == other_cust_id))
+                    await session.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == other_cust_id))
+                    await session.execute(delete(CustomerDB).where(CustomerDB.id == other_cust_id))
+                    await session.commit()
+
+        finally:
+            # Cleanup temp_sys_admin user
+            async with AsyncSessionLocal() as session:
+                await session.execute(delete(UserDB).where(UserDB.id == temp_sys_user_id))
+                await session.commit()
+
+    finally:
+        # Cleanup normal_cust
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(UserDB).where(UserDB.customer_id == normal_cust_id))
+            await session.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == normal_cust_id))
+            await session.execute(delete(CustomerDB).where(CustomerDB.id == normal_cust_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_selective_node_config_updates(client: AsyncClient, system_admin_headers: dict):
+    from app.models.db_models import CustomerNodeDB
+    
+    # Clean up test data if any
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(UserDB).where(UserDB.email_id == "selective_admin@selective.com"))
+        cust_ids = (await session.execute(select(CustomerDB.id).where(CustomerDB.domain == "selective.com"))).scalars().all()
+        if cust_ids:
+            await session.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id.in_(cust_ids)))
+        await session.execute(delete(CustomerDB).where(CustomerDB.domain == "selective.com"))
+        await session.commit()
+
+    # 1. Create a customer tenant
+    cust_res = await client.post("/admin/customers", json={
+        "name": "Selective Corp",
+        "domain": "selective.com",
+        "icon": "Settings",
+        "color_schema": "#0000ff"
+    }, headers=system_admin_headers)
+    assert cust_res.status_code == 201
+    selective_cust_id = cust_res.json()["id"]
+
+    try:
+        # 2. Bootstrap Company Admin
+        user_res = await client.post(f"/admin/customers/{selective_cust_id}/users", json={
+            "email": "selective_admin@selective.com",
+            "password": "password123",
+            "name": "Selective Admin",
+            "role": "admin"
+        }, headers=system_admin_headers)
+        assert user_res.status_code == 201
+        sel_admin_db = user_res.json()
+
+        # 3. Generate JWT
+        sel_admin_token = create_access_token({
+            "user_id": str(sel_admin_db["id"]),
+            "email": sel_admin_db["email"],
+            "role": sel_admin_db["role"],
+            "customer_id": int(sel_admin_db["customer_id"])
+        })
+        sel_admin_headers = {"Authorization": f"Bearer {sel_admin_token}"}
+
+        # 4. Set initial properties (using normal PUT full updates)
+        init_res = await client.put(
+            "/nodes/customer/config/generic_llm_agent",
+            json={"is_enabled": True, "properties": {"api_key": "initial_key", "temperature": 0.5}},
+            headers=sel_admin_headers
+        )
+        assert init_res.status_code == 200
+        assert init_res.json()["properties"]["api_key"] == "initial_key"
+        assert init_res.json()["properties"]["temperature"] == 0.5
+
+        # 5. Format 1: Single field selective update (label)
+        label_res = await client.put(
+            "/nodes/customer/config/generic_llm_agent",
+            json={"fieldname": "label", "value": "Selective Node"},
+            headers=sel_admin_headers
+        )
+        assert label_res.status_code == 200
+        assert label_res.json()["label"] == "Selective Node"
+        assert label_res.json()["properties"]["api_key"] == "initial_key"
+        assert label_res.json()["properties"]["temperature"] == 0.5
+
+        # 6. Format 1: Nested property selective update (properties.temperature)
+        temp_res = await client.put(
+            "/nodes/customer/config/generic_llm_agent",
+            json={"fieldname": "properties.temperature", "value": 0.8},
+            headers=sel_admin_headers
+        )
+        assert temp_res.status_code == 200
+        assert temp_res.json()["properties"]["temperature"] == 0.8
+        assert temp_res.json()["properties"]["api_key"] == "initial_key"
+
+        # 7. Format 2: Batch updates
+        batch_res = await client.put(
+            "/nodes/customer/config/generic_llm_agent",
+            json={
+                "updates": [
+                    {"fieldname": "label", "value": "Batch Selective Node"},
+                    {"fieldname": "properties.api_key", "value": "batch_key"}
+                ]
+            },
+            headers=sel_admin_headers
+        )
+        assert batch_res.status_code == 200
+        assert batch_res.json()["label"] == "Batch Selective Node"
+        assert batch_res.json()["properties"]["api_key"] == "batch_key"
+        assert batch_res.json()["properties"]["temperature"] == 0.8
+
+        # 8. Format 3: Standard dict but with dot-notation keys
+        dot_res = await client.put(
+            "/nodes/customer/config/generic_llm_agent",
+            json={
+                "properties.temperature": 0.2,
+                "label": "Format 3 Node"
+            },
+            headers=sel_admin_headers
+        )
+        assert dot_res.status_code == 200
+        assert dot_res.json()["label"] == "Format 3 Node"
+        assert dot_res.json()["properties"]["temperature"] == 0.2
+        assert dot_res.json()["properties"]["api_key"] == "batch_key"
+
+    finally:
+        # Cleanup
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(UserDB).where(UserDB.customer_id == selective_cust_id))
+            await session.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == selective_cust_id))
+            await session.execute(delete(CustomerDB).where(CustomerDB.id == selective_cust_id))
+            await session.commit()
+
+

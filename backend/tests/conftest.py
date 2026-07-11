@@ -1,9 +1,14 @@
+# Mock presidio and spacy libraries to prevent network calls and spaCy downloads during registry auto-discovery
 import sys
 from unittest.mock import MagicMock
+presidio_mock = MagicMock()
+presidio_mock.__path__ = []
+sys.modules['presidio_analyzer'] = presidio_mock
+sys.modules['presidio_analyzer.nlp_engine'] = MagicMock()
 
-# Mock presidio and spacy libraries to prevent network calls and spaCy downloads during registry auto-discovery
-sys.modules['presidio_analyzer'] = MagicMock()
-sys.modules['presidio_anonymizer'] = MagicMock()
+anonymizer_mock = MagicMock()
+anonymizer_mock.__path__ = []
+sys.modules['presidio_anonymizer'] = anonymizer_mock
 sys.modules['presidio_anonymizer.entities'] = MagicMock()
 sys.modules['spacy'] = MagicMock()
 
