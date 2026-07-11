@@ -191,15 +191,97 @@ Every plugin (regardless of tier) follows the same self-contained directory stru
 ```
 
 #### Manifest Schema (`manifest.json`)
-The manifest dictates how the class loader locates and registers the node:
-- **`name`**: The base name of the node (alphanumeric and underscores, e.g. `slack_notifier`).
-- **`label`**: UI label display name (e.g. `Slack Notifier`).
-- **`description`**: Brief details on what the node does.
-- **`file_name`**: The python entrypoint file relative to the node directory (e.g. `main_node.py`).
-- **`class_name`**: The class inside the entrypoint inheriting from `BaseNode` (e.g. `SlackNotifierNode`).
-- **`category`**: UI categorization (e.g. `Custom`, `Transform`, `Guardrails`).
-- **`icon`**: Tabler/Lucide icon key.
-- **`color`**: Hex color string for UI branding.
+The manifest dictates how the class loader locates and registers the node. The loader **validates mandatory fields on load** — if any are missing, the plugin is **rejected** (skipped with an error log on startup, or returns `400 Bad Request` on publish).
+
+**Mandatory Fields** (plugin rejected if missing):
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Base name (alphanumeric + underscores, e.g. `slack_notifier`) |
+| `label` | `string` | UI display name (e.g. `Slack Notifier`) |
+| `file_name` | `string` | Python entrypoint file relative to node directory (e.g. `main_node.py`) |
+| `class_name` | `string` | Class name inside entrypoint that subclasses `BaseNode` |
+| `version` | `string` | Semantic version (e.g. `1.0.0`) |
+
+**Optional Fields** (defaults applied if missing):
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `description` | `string` | `""` | Brief details on what the node does |
+| `category` | `string` | `"Custom"` | UI categorization (e.g. `Guardrails`, `Transform`) |
+| `icon` | `string` | `"box"` | Tabler/Lucide icon key |
+| `color` | `string` | `"#6B7280"` | Hex color string for UI branding |
+| `badge` | `string` | `"Node"` | Badge text displayed on the node card |
+| `node_type` | `string` | `"NODE"` | `NODE` or `TRIGGER` |
+
+#### Database Persistence & Customer Assignment
+After a plugin is validated and dynamically loaded, the system persists it to the database and assigns it:
+
+1. **`nodes` table (NodeDB)**: An `INSERT` or `UPDATE` is performed keyed by the namespaced `name`:
+   - For **system plugins**: `customer_id = NULL` (available to all tenants).
+   - For **client plugins**: `customer_id = {client_id}` (scoped to that tenant).
+   - All manifest fields (`label`, `description`, `version`, `category`, `icon`, `color`, `badge`, `node_type`) plus the node's `user_properties`, `system_properties`, `input_contract`, and `output_contract` are persisted from the loaded class instance.
+
+2. **`customer_nodes` table (CustomerNodeDB)**: For client-scoped plugins, an entry is created with `is_enabled = True`, linking the node to the customer and making it immediately available in their node catalog.
+
+#### Version & Overwrite Semantics
+
+> [!IMPORTANT]
+> **Same version = overwrite**. If a plugin is published with the same `name` and `version` as an existing entry, the system **overwrites** the existing plugin in-place (files replaced, DB row updated, in-memory instance re-registered). This allows developers to iterate and fix bugs without bumping the version number during development.
+>
+> The overwrite updates:
+> - The plugin files on disk (extracted ZIP replaces existing directory contents)
+> - The `NodeDB` row (all fields refreshed from the new manifest + class)
+> - The in-memory `NodesRegistry._nodes` entry (old instance evicted, new one registered)
+> - Workflow runnability is re-audited via `sync_workflows_runnability()`
+
+#### Properties Ownership Model
+Nodes have two property categories — each with a distinct owner who sets the schema and defaults:
+
+| Property | Set By | Default Values Defined In | Purpose | Example |
+|----------|--------|--------------------------|---------|---------|
+| `system_properties` | **System Admin** (via Admin UI or Node Registry) | The `BaseNode` class definition (hardcoded defaults) or overridden per-node by the System Admin in the DB | Infrastructure/infra settings not exposed to workflow builders | `host`, `port`, `timeout_ms`, `worker_count` |
+| `user_properties` | **Plugin Developer** (in the `BaseNode` subclass) | The `BaseNode` class definition; can be overridden per-workflow by the user in the Workflow Builder | Business logic settings exposed in the Workflow Builder UI | `system_prompt`, `temperature`, `model`, `table_name` |
+
+**Flow**:
+1. The **plugin developer** defines `user_properties` and `system_properties` as class-level fields with sensible defaults in their `BaseNode` subclass.
+2. On publish/load, these are persisted to the `nodes` table in the DB.
+3. **System Admin** can override `system_properties` defaults per-node via the Admin API (`PATCH /nodes/{node_name}`).
+4. **Tenant Admin / Users** configure `user_properties` per-workflow-instance in the Workflow Builder UI; these overrides are stored in `workflow_node_properties`.
+
+#### Customer Custom Plugin Flag
+Not all customers should be allowed to upload custom plugins. A new boolean column on the `customers` table controls this:
+
+```sql
+ALTER TABLE customers ADD COLUMN custom_plugins_enabled BOOLEAN DEFAULT FALSE;
+```
+
+- **`FALSE`** (default): The customer cannot publish custom plugins. The `POST /nodes/publish` endpoint returns `403 Forbidden` for this customer's Tenant Admin.
+- **`TRUE`**: The customer is allowed to publish. The System Admin must also configure the `plugin_storage_path` for this customer.
+
+**Enablement flow**:
+1. System Admin enables custom plugins for a customer:
+   ```
+   PATCH /admin/customers/{customer_id}
+   {
+     "custom_plugins_enabled": true,
+     "plugin_storage_path": "plugins/nodes/client/42"
+   }
+   ```
+2. The publish endpoint checks `custom_plugins_enabled` before accepting uploads.
+3. On startup, client plugin directories are only scanned for customers where `custom_plugins_enabled = TRUE`.
+
+> [!NOTE]
+> System plugins (Tier 2) are always loaded regardless of this flag — they are globally available to all tenants.
+
+#### Startup Loading Optimization (Version Check)
+Plugins are **not blindly reloaded** on every server boot. The registry uses a version-check strategy:
+
+1. On startup, the loader reads each plugin's `manifest.json` and extracts `name` + `version`.
+2. It compares against the existing `version` stored in the `nodes` table in the DB.
+3. **If versions match** → the node is loaded into memory from the existing DB metadata and the class is imported (lightweight), but no file overwrite or DB write occurs.
+4. **If version differs** (or no DB entry exists) → full load: dependencies installed if needed, class imported, DB row created/updated, customer assignment refreshed.
+5. **If `manifest.json` is missing or invalid** → plugin is skipped with an error log, workflows using it marked `is_runnable = False`.
+
+This avoids unnecessary `pip install` and DB writes on every restart when plugins haven't changed.
 
 ---
 

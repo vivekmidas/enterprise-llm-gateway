@@ -100,6 +100,26 @@ class WorkflowExecutor:
         start_time = time.time()
         log = logger.bind(trace_id=trace_id)
         log.info("agent_execution_started", agent_id=self.agent_id)
+
+        # Check if the workflow is marked runnable
+        if self.agent_config.get("is_runnable") is False:
+            log.error("workflow_execution_halted_unrunnable", agent_id=self.agent_id)
+            result_dict = {
+                "status": "failure",
+                "error_message": "Workflow execution halted: Workflow is marked as not runnable due to node loading errors.",
+                "final_response": "Workflow is not runnable due to missing or failed nodes.",
+                "trace_id": trace_id,
+                "workflow_id": self.agent_id,
+                "workflow_name": self.agent_config.get("name"),
+                "customer_id": self.customer_id,
+                "user_id": self.user_id,
+                "latency_ms": 0.0,
+                "timestamp": start_time,
+                "violations": [],
+                "agents_executed": []
+            }
+            await trace_store.save_trace(trace_id, result_dict)
+            raise ValueError("Workflow execution halted: Workflow is marked as not runnable due to node loading errors.")
         
         # Load compiled graph JIT using hybrid cache validation if not already set (e.g., in unit tests)
         if not self.compiled_graph:

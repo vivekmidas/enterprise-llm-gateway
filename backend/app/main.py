@@ -54,6 +54,13 @@ async def startup_event():
     # Scan the project for node definitions and register them in memory
     await NodesRegistry.node_auto_discover()
     logger.info("nodes_registered", count=len(NodesRegistry.list_nodes()))
+
+    # Sync workflow runnability status
+    from app.core.database import AsyncSessionLocal
+    from app.workflows.service import sync_workflows_runnability
+    async with AsyncSessionLocal() as session:
+        await sync_workflows_runnability(session)
+    
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).
     await workflow_auto_discover()

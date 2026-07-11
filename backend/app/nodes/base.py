@@ -78,6 +78,7 @@ class BaseNode(BaseModel, abc.ABC):
     category: str = "Custom"       # Internal functional category
     node_type: str = "default"     # trigger, tool, connector, or default
     group: str = "Custom"          # UI grouping (matches frontend 'group')
+    customer_id: Optional[int] = None # Scoped customer ID for custom tenant plugins
 
     # Contract and Envelope definitions
     input_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"user_id": {"required": True}}
