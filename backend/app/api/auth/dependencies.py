@@ -142,47 +142,47 @@ def require_resource_access(request:Request,resource_id:str,resource_type:str):
 
 
 
-@staticmethod
-def require_user_owner_tenant_admin_system_admin(request:Request,resource_id:str,resource_type:str):
-    owner_id = None
-    actual_tenant_id = None
-    if resource_type == "workflow":
-        from app.workflows.store import get_workflow
-        workflow = get_workflow(resource_id)
-        owner_id = workflow.owner_id
-        actual_tenant_id = workflow.customer_id
-    elif resource_type == "node":
-        from app.applications.store import get_application
-        application = get_application(resource_id)
-        owner_id = application.owner_id
-        actual_tenant_id = application.customer_id
-    elif resource_type == "user":
-        from app.deployments.store import get_deployment
-        deployment = get_deployment(resource_id)
-        owner_id = deployment.owner_id
-        actual_tenant_id = deployment.customer_id
+# @staticmethod
+# def require_user_owner_tenant_admin_system_admin(resource_id:str,resource_type:str):
+#     owner_id = None
+#     actual_tenant_id = None
+#     if resource_type == "workflow":
+#         from app.workflows.store import get_workflow
+#         workflow = get_workflow(resource_id)
+#         owner_id = workflow.owner_id
+#         actual_tenant_id = workflow.customer_id
+#     # elif resource_type == "node":
+#     #     from app.applications.store import get_application
+#     #     application = get_application(resource_id)
+#     #     owner_id = application.owner_id
+#     #     actual_tenant_id = application.customer_id
+#     # elif resource_type == "user":
+#     #     from app.deployments.store import get_deployment
+#     #     deployment = get_deployment(resource_id)
+#     #     owner_id = deployment.owner_id
+#     #     actual_tenant_id = deployment.customer_id
 
-    user_state = request.state.user
-    role = user_state.get("role")
-    curr_user_id = user_state.get("id")
-    tenant = user_state.get("tenant")
+#     user_state = request.state.user
+#     role = user_state.get("role")
+#     curr_user_id = user_state.get("id")
+#     tenant = user_state.get("tenant")
 
-    # 1. System Admin check
-    if role == "system_admin":
-        return
+#     # 1. System Admin check
+#     if role == "system_admin":
+#         return
 
-    # 2. Tenant Admin check
-    if role == "admin" and actual_tenant_id is not None and tenant is not None and str(actual_tenant_id) == str(tenant):
-        return
+#     # 2. Tenant Admin check
+#     if role == "admin" and actual_tenant_id is not None and tenant is not None and str(actual_tenant_id) == str(tenant):
+#         return
 
-    # 3. User Owner check
-    if owner_id is not None and curr_user_id is not None and str(owner_id) == str(curr_user_id):
-        return
+#     # 3. User Owner check
+#     if owner_id is not None and curr_user_id is not None and str(owner_id) == str(curr_user_id):
+#         return
 
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: You must be the owner, a tenant admin, or a system admin to perform this action.",
-    )
+#     raise HTTPException(
+#         status_code=status.HTTP_403_FORBIDDEN,
+#         detail="Access denied: You must be the owner, a tenant admin, or a system admin to perform this action.",
+#     )
 
 @staticmethod
 def require_system_admin(request: Request):

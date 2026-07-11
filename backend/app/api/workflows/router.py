@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_user_customer_id
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user, require_user_owner_tenant_admin_system_admin,require_resource_access, require_admin,require_system_admin
+from app.api.auth.dependencies import get_current_user,require_resource_access
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -260,12 +260,8 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(
-    workflow_id: str, 
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    _: None = Depends(require_resource_access(resource_type="workflow"))
-):
+async def remove_workflow(workflow_id: str, request: Request, current_user: User = Depends(get_current_user)):
+    await require_resource_access(request, workflow_id, "workflow")(request, current_user)
     version = 1
     logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
     try:

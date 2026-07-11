@@ -152,7 +152,7 @@ async def configure_customer_node(
     node_name: str,
     config_data: dict,
     customer_id: Optional[int] = None,
-    current_user: User = Depends(require_user_owner_tenant_admin_system_admin(request=Request,resource_type="node",resource_id=config_data.id)),
+    current_user: User = Depends(require_resource_access),
     db: AsyncSession = Depends(get_db)
 ):
     base_node = None
