@@ -141,24 +141,40 @@ flowchart TD
 - Stored under a per-tenant subdirectory keyed by `client_id`.
 - Namespaced as `customer_{client_id}_{node_name}` to prevent collisions.
 - Uploaded via `POST /nodes/publish` with the tenant's `customer_id`.
-- **Storage backend flexibility**: The `client/` path can be mapped to:
-  - Local filesystem (default)
-  - S3 bucket (e.g. `s3://gateway-plugins/client/{client_id}/`)
-  - Any mounted volume or network storage
-  
-  This is configured via environment variable:
-  ```env
-  PLUGIN_CLIENT_STORAGE_PATH=plugins/nodes/client        # local (default)
-  PLUGIN_CLIENT_STORAGE_PATH=s3://my-bucket/plugins      # S3
-  ```
+
+#### Per-Customer Plugin Storage Path (System Admin Configured)
+The **System Admin** defines the plugin storage path for each customer at onboarding time (or later via the admin API). This path is stored in the `customers` table as a new column:
+
+```sql
+ALTER TABLE customers ADD COLUMN plugin_storage_path VARCHAR DEFAULT NULL;
+```
+
+- **Default behavior**: If `plugin_storage_path` is `NULL`, the system uses the local default: `plugins/nodes/client/{client_id}/`.
+- **Custom paths**: The System Admin can set this to any supported backend per customer:
+  - Local filesystem: `plugins/nodes/client/42/`
+  - S3 bucket: `s3://gateway-plugins/client/42/`
+  - Mounted volume: `/mnt/shared-storage/plugins/client/42/`
+  - Any other path accessible to the server process.
+
+**Admin API**:
+```
+PATCH /admin/customers/{customer_id}
+{
+  "plugin_storage_path": "s3://my-bucket/plugins/client/42"
+}
+```
+
+> [!IMPORTANT]
+> Only **System Admins** can set or change the `plugin_storage_path` for a customer. Tenant Admins can publish nodes to their configured path, but cannot change the path itself.
 
 #### Loading Order & Precedence
 The registry loads nodes in this order on startup:
 1. **Built-in** → always first, guaranteed baseline
 2. **System** → global extensions available to all tenants
-3. **Client** → per-tenant plugins, namespaced
+3. **Client** → per-tenant plugins loaded from each customer's configured `plugin_storage_path`, namespaced
 
 If a name collision occurs between tiers, the **lower tier wins** (client overrides system overrides built-in for that tenant's context).
+
 
 ---
 
