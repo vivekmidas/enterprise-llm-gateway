@@ -87,14 +87,91 @@ stateDiagram-v2
 
 ## 3. Component Design & Workflow
 
-### A. ZIP Packaging Format & Convention
-A custom node must be submitted as a ZIP archive with the following layout:
+### A. Three-Tier Plugin Path Architecture
+The node registry loads plugins from three distinct, ordered paths. Each tier has its own purpose, permissions, and storage semantics.
+
+```mermaid
+flowchart TD
+    subgraph Tier1["Tier 1 — Built-in (Always Load)"]
+        BI_DIR["plugins/nodes/built_in/"]
+        BI_EX1["presidio_ner_guard/"]
+        BI_EX2["generic_llm_agent/"]
+        BI_EX3["sentiment_analyzer/"]
+        BI_DIR --> BI_EX1
+        BI_DIR --> BI_EX2
+        BI_DIR --> BI_EX3
+    end
+
+    subgraph Tier2["Tier 2 — System Plugins (System Admin)"]
+        SYS_DIR["plugins/nodes/system/"]
+        SYS_EX1["custom_rule_guard/"]
+        SYS_EX2["slack_notifier/"]
+        SYS_DIR --> SYS_EX1
+        SYS_DIR --> SYS_EX2
+    end
+
+    subgraph Tier3["Tier 3 — Client Plugins (Per-Tenant)"]
+        CLI_DIR["plugins/nodes/client/{client_id}/"]
+        CLI_EX1["client/1/my_custom_node/"]
+        CLI_EX2["client/2/invoice_parser/"]
+        CLI_DIR --> CLI_EX1
+        CLI_DIR --> CLI_EX2
+    end
+
+    Registry["NodesRegistry"] --> Tier1
+    Registry --> Tier2
+    Registry --> Tier3
 ```
-my_custom_node.zip
-├── manifest.json
-├── main_node.py
-└── vendor/
-    └── some_dependency_library/
+
+#### Tier 1 — Built-in (`plugins/nodes/built_in/`)
+- **Always loaded** on application startup.
+- Ships with the application source code (committed to the repo).
+- Contains core nodes like LLM agents, guardrails, transforms, and triggers.
+- Heavy-dependency nodes (e.g. `presidio_ner_guard` needing `spacy`) are self-contained with their own `requirements.txt` and local `vendor/` folder.
+- **Phase 0 rule**: If a built-in node fails to load (e.g. missing spaCy model), it is logged as a warning and skipped — the app does not crash. Workflows using it are marked `is_runnable = False`.
+
+#### Tier 2 — System Plugins (`plugins/nodes/system/`)
+- Managed exclusively by **System Admins**.
+- Available to all tenants (global scope, `customer_id = NULL`).
+- Uploaded via `POST /nodes/publish` with no `customer_id` parameter.
+- Use case: organization-wide custom integrations, shared guardrails, proprietary connectors.
+
+#### Tier 3 — Client Plugins (`plugins/nodes/client/{client_id}/`)
+- Scoped to a single tenant, managed by **Tenant Admins** or **System Admins**.
+- Stored under a per-tenant subdirectory keyed by `client_id`.
+- Namespaced as `customer_{client_id}_{node_name}` to prevent collisions.
+- Uploaded via `POST /nodes/publish` with the tenant's `customer_id`.
+- **Storage backend flexibility**: The `client/` path can be mapped to:
+  - Local filesystem (default)
+  - S3 bucket (e.g. `s3://gateway-plugins/client/{client_id}/`)
+  - Any mounted volume or network storage
+  
+  This is configured via environment variable:
+  ```env
+  PLUGIN_CLIENT_STORAGE_PATH=plugins/nodes/client        # local (default)
+  PLUGIN_CLIENT_STORAGE_PATH=s3://my-bucket/plugins      # S3
+  ```
+
+#### Loading Order & Precedence
+The registry loads nodes in this order on startup:
+1. **Built-in** → always first, guaranteed baseline
+2. **System** → global extensions available to all tenants
+3. **Client** → per-tenant plugins, namespaced
+
+If a name collision occurs between tiers, the **lower tier wins** (client overrides system overrides built-in for that tenant's context).
+
+---
+
+### B. Directory Layout & Manifest Convention
+Every plugin (regardless of tier) follows the same self-contained directory structure:
+```
+<node_name>/
+├── manifest.json          # Required: loader metadata
+├── <entrypoint>.py        # Required: BaseNode subclass
+├── requirements.txt       # Optional: auto-installed to vendor/
+├── vendor/                # Optional: pre-vendorized or auto-installed deps
+│   └── some_library/
+└── libs/                  # Optional: alternative to vendor/
 ```
 
 #### Manifest Schema (`manifest.json`)
@@ -102,7 +179,7 @@ The manifest dictates how the class loader locates and registers the node:
 - **`name`**: The base name of the node (alphanumeric and underscores, e.g. `slack_notifier`).
 - **`label`**: UI label display name (e.g. `Slack Notifier`).
 - **`description`**: Brief details on what the node does.
-- **`file_name`**: The python entrypoint file relative to zip root (e.g. `main_node.py`).
+- **`file_name`**: The python entrypoint file relative to the node directory (e.g. `main_node.py`).
 - **`class_name`**: The class inside the entrypoint inheriting from `BaseNode` (e.g. `SlackNotifierNode`).
 - **`category`**: UI categorization (e.g. `Custom`, `Transform`, `Guardrails`).
 - **`icon`**: Tabler/Lucide icon key.
@@ -110,8 +187,8 @@ The manifest dictates how the class loader locates and registers the node:
 
 ---
 
-### B. Dynamic Class Loader & Dependency Resolution
-When a custom node is published or loaded on startup, the class loader performs the following steps:
+### C. Dynamic Class Loader & Dependency Resolution
+When a node is published or loaded on startup, the class loader performs the following steps:
 1. Adds the directory containing the node file to python's `sys.path`.
 2. Inspects if a `vendor/` or `libs/` folder exists under the node's directory and inserts it at position `0` of `sys.path` (giving packaged dependencies precedence over system-wide ones).
 3. Dynamically loads the module using standard python import mechanics:
@@ -133,9 +210,9 @@ When a custom node is published or loaded on startup, the class loader performs 
 > We support two methods for resolving custom node dependencies, keeping the execution runtime isolated and self-contained:
 > 
 > 1. **Automatic Server-Side Installation (Recommended)**:
->    If the uploaded ZIP file contains a `requirements.txt` or `pyproject.toml` at its root, the server will automatically detect it during the publish phase and install the listed dependencies into the node's local `vendor/` directory using:
+>    If the plugin directory contains a `requirements.txt` or `pyproject.toml`, the server will automatically detect it during the publish phase (or on first startup) and install the listed dependencies into the node's local `vendor/` directory using:
 >    ```bash
->    pip install -r requirements.txt --target plugins/nodes/customer_{customer_id}/{name}/vendor
+>    pip install -r requirements.txt --target <node_dir>/vendor
 >    ```
 >    This automates dependency setup upon upload, meaning the developer only needs to upload their source code and definition files.
 > 
@@ -146,7 +223,7 @@ When a custom node is published or loaded on startup, the class loader performs 
 
 ---
 
-### C. Database Migration & Schema Alterations
+### D. Database Migration & Schema Alterations
 To support multi-tenancy and status tracking, two new columns are introduced:
 1. **`customer_id`** (`nodes` table): A nullable integer referencing the customer tenant who owns the node. System-wide nodes will have this set to `NULL`.
 2. **`is_runnable`** (`workflows` table): A boolean flag, defaulting to `True`.
@@ -155,20 +232,20 @@ On application startup, database initialization runs table inspection and execut
 
 ---
 
-### D. Workflow Runnability Auditor (`sync_workflows_runnability`)
+### E. Workflow Runnability Auditor (`sync_workflows_runnability`)
 A background synchronization runner performs audits to prevent runtime execution of broken workflows:
-1. Queries the manifests under `plugins/nodes/` to build a list of all *intended* custom node names.
+1. Queries manifests across all three plugin tiers to build a list of all *intended* node names.
 2. Retrieves all workflows from the database.
 3. For each workflow, inspects its ReactFlow definition's nodes structure.
-4. If a workflow references a custom node (starts with `customer_` or exists in the list of intended custom nodes) that is not registered in the active `NodesRegistry._nodes`, the workflow is marked `is_runnable = False` in the database.
+4. If a workflow references a node that is not registered in the active `NodesRegistry._nodes`, the workflow is marked `is_runnable = False` in the database.
 5. If all referenced nodes are valid and registered, it is marked `is_runnable = True`.
 6. This auditor runs:
-   - On application startup (after node auto-discovery completes).
-   - On custom node publish success (which might fix a previously broken workflow).
+   - On application startup (after node auto-discovery completes across all three tiers).
+   - On custom node publish or delete (which might fix or break workflows).
 
 ---
 
-### E. Runtime Guard & Trace Logging
+### F. Runtime Guard & Trace Logging
 During workflow trigger or manual execution:
 1. The `WorkflowExecutor` checks `is_runnable` from the workflow config dictionary.
 2. If `is_runnable` is `False`, execution immediately halts before the LangGraph compiler compiles the graph.
@@ -177,8 +254,8 @@ During workflow trigger or manual execution:
 
 ---
 
-### F. Built-in Node Modularization (Case Study: `presidio-ner-guard-agent`)
-To decouple heavy dependencies from the core application package, built-in nodes that rely on specialized libraries (such as the `presidio-ner-guard-agent` which requires `spacy` and `presidio-analyzer` / `presidio-anonymizer`) are migrated into a matching self-contained plugin subdirectory structure:
+### G. Built-in Node Modularization (Case Study: `presidio-ner-guard-agent`)
+To decouple heavy dependencies from the core application package, built-in nodes that rely on specialized libraries (such as the `presidio-ner-guard-agent` which requires `spacy` and `presidio-analyzer` / `presidio-anonymizer`) are migrated into the Tier 1 plugin structure:
 - **Directory Layout**:
   ```
   plugins/nodes/built_in/presidio_ner_guard/
