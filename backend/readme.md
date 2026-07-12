@@ -2,9 +2,15 @@ sqlite3 '/Users/vivekjain/projects/enterprise-llm-gateway/backend/enterprise_gat
 sqlite3 '/Users/vivekjain/projects/enterprise-llm-gateway/backend/enterprise_gateway.db' < backend/extras/db.sql
 sqlite3 '/Users/vivekjain/projects/enterprise-llm-gateway/backend/enterprise_gateway.db' < backend/extras/sanitize.sql
 
-## 
+## To Get Token
+curl -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "vivek@midasminds.in",
+    "password": "test"
+  }'
 
-TOKEN="<your-access-token>"
+TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwicm9sZSI6InVzZXIiLCJ0ZW5hbnQiOiIxIiwiZG9tYWluIjoibWlkYXNtaW5kcyIsImV4cCI6MTc4NDEwMTY4MSwiaWF0IjoxNzgzODg1NjgxLCJqdGkiOiJiMGU5Yjk3Yi00ZjAwLTQzYWMtYWE5Zi1jNWEwYWE1M2ViMDYiLCJ0eXBlIjoiYWNjZXNzIiwiaXNzIjoiaHR0cDovL2xvY2FsaG9zdC5jb20iLCJhdWQiOiJlbnRlcnByaXNlIn0.V5zU5juEjcuFNPwwexDelFHbZgpHQktycMHr7AoK80Q
 
 curl -X POST "http://localhost:8000/api/knowledge/bases" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -26,6 +32,7 @@ The platform supports workflow orchestration, knowledge retrieval, guardrails, o
 
 Customer data is isolated by tenant.
 EOF
+
 
 ## Qdrant
 
