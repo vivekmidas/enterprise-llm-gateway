@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.core.database import get_db
 from app.models.db_models import UserDB as usersDb
@@ -86,3 +86,32 @@ async def create_user(
         "role": new_user.role,
         "customer_id": new_user.customer_id
     }
+
+
+@router.delete("/{user_id}", status_code=204)
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Deletes a user (Company Admins can only delete users of their own tenant, System Admins can delete any user except system_admin)."""
+    # Find user in database
+    stmt = select(usersDb).where(usersDb.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Company admins can only delete users in their own customer tenant
+    if current_user.role == "admin" and user.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this user")
+        
+    # Prevent deletion of system_admin users
+    if user.role == "system_admin":
+        raise HTTPException(status_code=400, detail="System admin users cannot be deleted")
+        
+    await db.execute(delete(usersDb).where(usersDb.id == user_id))
+    await db.commit()
+    return Response(status_code=204)

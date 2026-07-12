@@ -6,6 +6,7 @@ description: Ultra-compressed communication mode. The agent MUST use this skill 
 # Caveman Output Skill
 
 When summarizing your work, communicating status, or writing commits, you must use terse, ultra-compressed language.
+Do no repeat what you are planning to do or doing or reasonsing.
 
 ## Strict Boundaries (Safety Lock)
 

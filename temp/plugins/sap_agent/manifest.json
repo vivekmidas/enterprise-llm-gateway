@@ -1,0 +1,11 @@
+{
+    "name": "sap_agent",
+    "label": "SAP_Integration Agent",
+    "description": "SAP Integration Agent",
+    "file_name": "sap_agent.py",
+    "class_name": "SAPAgent",
+    "category": "Integration",
+    "icon": "cloud-upload",
+    "color": "#007bff",
+    "version": "1.1.0"
+}

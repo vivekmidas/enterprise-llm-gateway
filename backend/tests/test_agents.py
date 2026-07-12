@@ -5,11 +5,13 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app  # Assuming the FastAPI app is initialized in app/main.py
 
 from app.nodes.base import NodeInput
-from app.nodes.built_in.presidio.presidio_ner_guard_agent import PresidioNERGuardAgent
+from app.nodes.registry import NodesRegistry
 
 @pytest.mark.asyncio
 async def test_presidio():
-    agent = PresidioNERGuardAgent()
+    await NodesRegistry.node_auto_discover()
+    agent = NodesRegistry.get_node("presidio_ner_guard")
+    assert agent is not None, "presidio_ner_guard not found in registry — plugin may have failed to load"
     trace_id = str(uuid.uuid4())
     
     test_input = NodeInput(

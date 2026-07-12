@@ -145,6 +145,11 @@ async def list_customers(
             "status": c.status,
             "icon": c.icon,
             "color_schema": c.color_schema,
+            "custom_plugins_enabled": c.custom_plugins_enabled,
+            "plugin_storage_path": c.plugin_storage_path,
+            "email": c.email,
+            "address": c.address,
+            "contact_person": c.contact_person,
             "dateadded": c.dateadded
         } for c in customers
     ]
@@ -172,6 +177,11 @@ async def create_customer(
         domain=domain,
         icon=customer_data.get("icon"),
         color_schema=customer_data.get("color_schema"),
+        custom_plugins_enabled=customer_data.get("custom_plugins_enabled", False),
+        plugin_storage_path=customer_data.get("plugin_storage_path"),
+        email=customer_data.get("email"),
+        address=customer_data.get("address"),
+        contact_person=customer_data.get("contact_person"),
         status="active"
     )
     db.add(new_cust)
@@ -197,7 +207,12 @@ async def create_customer(
         "name": new_cust.name,
         "domain": new_cust.domain,
         "icon": new_cust.icon,
-        "color_schema": new_cust.color_schema
+        "color_schema": new_cust.color_schema,
+        "custom_plugins_enabled": new_cust.custom_plugins_enabled,
+        "plugin_storage_path": new_cust.plugin_storage_path,
+        "email": new_cust.email,
+        "address": new_cust.address,
+        "contact_person": new_cust.contact_person
     }
 
 
@@ -225,6 +240,16 @@ async def update_customer(
         customer.color_schema = customer_data["color_schema"]
     if "status" in customer_data:
         customer.status = customer_data["status"]
+    if "custom_plugins_enabled" in customer_data:
+        customer.custom_plugins_enabled = customer_data["custom_plugins_enabled"]
+    if "plugin_storage_path" in customer_data:
+        customer.plugin_storage_path = customer_data["plugin_storage_path"]
+    if "email" in customer_data:
+        customer.email = customer_data["email"]
+    if "address" in customer_data:
+        customer.address = customer_data["address"]
+    if "contact_person" in customer_data:
+        customer.contact_person = customer_data["contact_person"]
         
     customer.dateupdated = datetime.utcnow().isoformat()
     await db.commit()
@@ -236,7 +261,12 @@ async def update_customer(
         "domain": customer.domain,
         "icon": customer.icon,
         "color_schema": customer.color_schema,
-        "status": customer.status
+        "status": customer.status,
+        "custom_plugins_enabled": customer.custom_plugins_enabled,
+        "plugin_storage_path": customer.plugin_storage_path,
+        "email": customer.email,
+        "address": customer.address,
+        "contact_person": customer.contact_person
     }
 
 
@@ -247,11 +277,24 @@ async def delete_customer(
     db: AsyncSession = Depends(get_db)
 ):
     """Deletes a customer tenant (System Admin only)."""
+    if customer_id == 0:
+        raise HTTPException(status_code=400, detail="System customer/account cannot be deleted")
+
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == customer_id))
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
         
+    if customer.name.lower() in ("system", "system account", "system_account") or (customer.domain and customer.domain.lower() in ("system", "system_account")):
+        raise HTTPException(status_code=400, detail="System customer/account cannot be deleted")
+
+    # Check if there are any system admin users under this customer
+    sys_admin_check = await db.execute(
+        select(UserDB).where(UserDB.customer_id == customer_id, UserDB.role == "system_admin")
+    )
+    if sys_admin_check.scalars().first():
+        raise HTTPException(status_code=400, detail="Customers with system admin users cannot be deleted")
+
     await db.execute(delete(UserDB).where(UserDB.customer_id == customer_id))
     await db.execute(delete(CustomerDB).where(CustomerDB.id == customer_id))
     await db.commit()

@@ -12,6 +12,11 @@ class CustomerDB(Base):
     status = Column(String, default="active")  # active, suspended
     icon = Column(String, nullable=True)
     color_schema = Column(String, nullable=True)
+    custom_plugins_enabled = Column(Boolean, default=False)
+    plugin_storage_path = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    contact_person = Column(String, nullable=True)
     dateadded = Column(String, default=lambda: datetime.utcnow().isoformat())
     dateupdated = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
@@ -57,6 +62,7 @@ class NodeDB(Base):
     system_properties = Column(JSON)
     input_contract=Column(JSON)
     output_contract=Column(JSON)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
 
 
 class CustomerNodeDB(Base):
@@ -95,6 +101,7 @@ class WorkflowDB(Base):
     definition = Column(JSON, nullable=True)
     updated_at = Column(String)
     is_enabled = Column(Boolean, default=True)
+    is_runnable = Column(Boolean, default=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     user_id = Column(String, nullable=True, index=True) # User ID of the creator
     

@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import HTTPException
 from datetime import datetime
 from sqlalchemy import update, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import NodeDB
 from typing import Dict, Any, List, Optional, Callable
@@ -91,6 +92,70 @@ async def workflow_auto_discover():
         logger.info("workflow_auto_discover_completed", count=len(workflows))
     except Exception as e:
         logger.error("workflow_auto_discover_failed", error=str(e))
+
+
+async def sync_workflows_runnability(db: AsyncSession) -> None:
+    """
+    Audits all workflows in the database to verify if all their referenced nodes
+    are present and loaded in the NodesRegistry.
+    Marks workflows as runnable (is_runnable=True) or unrunnable (is_runnable=False).
+    """
+    from app.nodes.registry import NodesRegistry
+    from app.models.db_models import WorkflowDB
+    
+    logger.info("sync_workflows_runnability_started")
+    try:
+        # Fetch all workflows
+        result = await db.execute(select(WorkflowDB))
+        workflows = result.scalars().all()
+        
+        registered_node_names = set(NodesRegistry._nodes.keys())
+        
+        for workflow in workflows:
+            runnable = True
+            # Load/parse nodes_structure or definition
+            nodes_structure_str = workflow.nodes_structure
+            nodes = []
+            if nodes_structure_str:
+                try:
+                    nodes = json.loads(nodes_structure_str)
+                except Exception:
+                    pass
+            elif workflow.definition:
+                # Fallback to definition
+                definition = workflow.definition
+                if isinstance(definition, str):
+                    try:
+                        definition = json.loads(definition)
+                    except Exception:
+                        pass
+                if isinstance(definition, dict):
+                    nodes = definition.get("nodes") or definition.get("nodes_structure") or []
+            
+            # Check each node in the workflow structure
+            referenced_node_names = []
+            for node in nodes:
+                # ReactFlow structure puts node metadata in "data" attribute
+                node_data = node.get("data", {})
+                node_name = node_data.get("name") or node.get("name")
+                if node_name:
+                    referenced_node_names.append(node_name)
+            
+            for name in referenced_node_names:
+                if name not in registered_node_names:
+                    logger.warning("workflow_unrunnable_due_to_missing_node", workflow_id=workflow.id, node_name=name)
+                    runnable = False
+                    break
+            
+            if workflow.is_runnable != runnable:
+                logger.info("updating_workflow_runnability", workflow_id=workflow.id, old_status=workflow.is_runnable, new_status=runnable)
+                workflow.is_runnable = runnable
+                db.add(workflow)
+                
+        await db.commit()
+        logger.info("sync_workflows_runnability_completed")
+    except Exception as e:
+        logger.error("sync_workflows_runnability_failed", error=str(e))
 
 
 async def delete_workflow(workflow_id: str, version: Optional[str] = None, client_id: Optional[str] = None) -> bool:
