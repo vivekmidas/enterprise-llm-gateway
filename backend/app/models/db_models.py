@@ -155,3 +155,110 @@ class AuditLogDB(Base):
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat(), index=True)
 
                         
+class KnowledgeBaseDB(Base):
+    __tablename__ = "knowledge_bases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    description = Column(String, nullable=True)
+    status = Column(String, default="active", index=True)
+
+    customer_id = Column(
+        Integer, ForeignKey("customers.id"), nullable=False, index=True
+    )
+    created_by = Column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    settings = Column(JSON, nullable=True)
+
+    created_at = Column(
+        String, default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+
+
+class KnowledgeDocumentDB(Base):
+    __tablename__ = "knowledge_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        index=True,
+    )
+
+    customer_id = Column(
+        Integer, ForeignKey("customers.id"), nullable=False, index=True
+    )
+
+    created_by = Column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    name = Column(String, nullable=False)
+    source_type = Column(String, default="upload")
+    source_uri = Column(String, nullable=True)
+    mime_type = Column(String, nullable=True)
+
+    metadata_json = Column(JSON, nullable=True)
+
+    status = Column(
+        String,
+        default="pending",
+        index=True,
+    )
+
+    error_message = Column(String, nullable=True)
+
+    created_at = Column(
+        String, default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+    file_path = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=True)
+    checksum = Column(String, nullable=True, index=True)
+    chunk_count = Column(Integer, default=0)
+
+class KnowledgeChunkDB(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        index=True,
+    )
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id"),
+        nullable=False,
+        index=True,
+    )
+
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(String, nullable=False)
+    metadata_json = Column(JSON, nullable=True)
+
+    created_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+    )

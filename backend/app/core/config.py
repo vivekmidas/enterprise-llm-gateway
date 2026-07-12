@@ -17,6 +17,25 @@ class Settings(BaseSettings):
     ALGORITHM:str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES:int = 3600          # Short-lived
     REFRESH_TOKEN_EXPIRE_DAYS:int = 7
+    KNOWLEDGE_STORAGE_PATH: str = "./data/knowledge"
+    KNOWLEDGE_MAX_FILE_SIZE_MB: int = 25
+    KNOWLEDGE_CHUNK_SIZE: int = 1000
+    KNOWLEDGE_CHUNK_OVERLAP: int = 200
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_COLLECTION: str = "enterprise_knowledge"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    EMBEDDING_PROVIDER: str = "ollama" # change to "openai" if you want to use openai embeddings
+    EMBEDDING_MODEL: str = "nomic-embed-text"
+    EMBEDDING_DIMENSION: int = 768
+    # EMBEDDING_PROVIDER: str = "openai"
+    # EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # EMBEDDING_DIMENSION: int = 1536
+    OPENAI_API_KEY: str | None = None
+    RERANK_ENABLED: bool = True
+    RERANK_PROVIDER: str = "ollama"
+    RERANK_MODEL: str = "qwen3.5:0.8b"
+    RERANK_CANDIDATE_LIMIT: int = 20    
 
     class Config:
         env_file = ".env"
