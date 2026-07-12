@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     RERANK_ENABLED: bool = True
     RERANK_PROVIDER: str = "ollama"
     RERANK_MODEL: str = "qwen3.5:0.8b"
-    RERANK_CANDIDATE_LIMIT: int = 20    
+    RERANK_CANDIDATE_LIMIT: int = 5
 
     class Config:
         env_file = ".env"
