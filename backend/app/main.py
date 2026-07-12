@@ -20,6 +20,7 @@ from app.api.admin.users import router as users
 from app.core.database import init_db
 from app.workflows.service import workflow_auto_discover
 from app.core.security.jwt import AuthenticationMiddleware
+from app.api.knowledge.router import router as knowledge_router
 
 load_dotenv()
 
@@ -79,6 +80,7 @@ app.include_router(base_auth_router)
 app.include_router(email_webhooks.router)
 app.include_router(run_webhooks.router)
 app.include_router(users.router)
+app.include_router(knowledge_router)
 
 
 if __name__ == "__main__":

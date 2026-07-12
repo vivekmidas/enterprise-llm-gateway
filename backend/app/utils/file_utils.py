@@ -45,3 +45,27 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         return text
     except ImportError:
         raise ImportError("The 'pypdf' package is not installed on this system. Please run 'pip install pypdf' to enable PDF parsing.")
+
+from pathlib import Path
+
+
+SUPPORTED_KNOWLEDGE_EXTENSIONS = {".pdf", ".txt", ".md"}
+
+
+def extract_text_from_file(file_path: str) -> str:
+    """Extract text from a supported knowledge document."""
+
+    path = Path(file_path)
+    extension = path.suffix.lower()
+
+    if extension not in SUPPORTED_KNOWLEDGE_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported file type: {extension}. "
+            f"Supported types: {sorted(SUPPORTED_KNOWLEDGE_EXTENSIONS)}"
+        )
+
+    if extension == ".pdf":
+        return extract_text_from_pdf(path.read_bytes())
+
+    # TXT and Markdown are UTF-8 text sources.
+    return path.read_text(encoding="utf-8")

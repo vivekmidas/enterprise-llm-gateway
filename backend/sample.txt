@@ -1,0 +1,5 @@
+Enterprise LLM Gateway allows businesses to create AI agents that automate workflows.
+
+The platform supports workflow orchestration, knowledge retrieval, guardrails, observability, and human approval workflows.
+
+Customer data is isolated by tenant.

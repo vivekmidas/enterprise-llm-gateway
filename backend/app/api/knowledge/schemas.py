@@ -1,0 +1,93 @@
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, Field
+
+
+class KnowledgeBaseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+
+class KnowledgeBaseUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+
+class KnowledgeBaseResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    status: str
+    customer_id: int
+    created_by: int
+    settings: Optional[Dict[str, Any]]
+    created_at: str
+    updated_at: str
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeDocumentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    source_type: str = "upload"
+    source_uri: Optional[str] = None
+    mime_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class KnowledgeDocumentUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    metadata: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    id: int
+    knowledge_base_id: int
+    customer_id: int
+    created_by: int
+
+    name: str
+    source_type: str
+    source_uri: Optional[str]
+    mime_type: Optional[str]
+
+    metadata_json: Optional[Dict[str, Any]]
+
+    status: str
+    error_message: Optional[str]
+
+    created_at: str
+    updated_at: str
+
+    file_path: Optional[str]
+    file_size: Optional[int]
+    checksum: Optional[str]
+    chunk_count: int
+
+class RetrievalRequest(BaseModel):
+    query: str = Field(min_length=1)
+    knowledge_base_ids: list[int]
+    top_k: int = Field(default=5, ge=1, le=50)
+
+class Citation(BaseModel):
+    document_id: int
+    document_name: str
+    chunk_index: int
+
+
+class RetrievalResult(BaseModel):
+    rank: int
+    chunk_id: int
+    document_id: int
+    document_name: str
+    knowledge_base_id: int
+    content: str
+
+    score: float
+    vector_score: float | None = None
+
+    metadata: dict[str, Any] | None = None
+    citation: Citation
