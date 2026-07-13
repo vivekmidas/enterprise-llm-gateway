@@ -1,5 +1,5 @@
-import logging
 import time
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,9 +11,9 @@ from app.knowledge.retrieval_models import (
     RetrievalResult,
     RetrievalStatistics,
 )
-from app.models.db_models import KnowledgeCollectionDB
+from app.models.db_models import KnowledgeCollectionDB, CustomerDB
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class RetrievalService:
@@ -23,14 +23,48 @@ class RetrievalService:
     async def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         """
         Orchestrate the 11-step retrieval pipeline:
-        1. Query Qdrant and MySQL.
-        2. Merge and rank results.
-        3. Dedup and format chunks under a strict token budget.
-        4. Capture statistics.
+        1. Receive query (via request payload)
+        2. Authenticate tenant (ensure customer is active in MySQL)
+        3. Resolve Knowledge Bases (verified in core_retrieve)
+        4. Resolve searchable collections (resolved in core_retrieve)
+        5. Generate query embedding (executed in core_retrieve)
+        6. Search Qdrant (executed in core_retrieve)
+        7. Merge results (RRF in core_retrieve)
+        8. Remove duplicate chunks (content deduplication in core_retrieve)
+        9. Apply token budget (managed in build_context)
+        10. Generate context (formatted in build_context)
+        11. Return response (RetrievalResult packaged here)
         """
         start_time = time.perf_counter()
 
-        # Run core hybrid query retrieval
+        # =========================================================
+        # Step 1: Receive query
+        # =========================================================
+        logger.info(
+            "retrieval_step_1_receive_query",
+            query_length=len(request.query),
+            knowledge_base_ids=request.knowledge_base_ids,
+            customer_id=request.customer_id,
+        )
+
+        # =========================================================
+        # Step 2: Authenticate tenant (check CustomerDB)
+        # =========================================================
+        logger.info("retrieval_step_2_authenticate_tenant_started", customer_id=request.customer_id)
+        cust_stmt = select(CustomerDB).where(
+            CustomerDB.id == request.customer_id,
+            CustomerDB.status == "active"
+        )
+        cust_res = await self.db.execute(cust_stmt)
+        customer = cust_res.scalar_one_or_none()
+        if not customer:
+            logger.error("retrieval_step_2_tenant_auth_failed", customer_id=request.customer_id)
+            raise ValueError(f"Tenant {request.customer_id} not found or is inactive")
+        logger.info("retrieval_step_2_authenticate_tenant_success", customer_name=customer.name)
+
+        # =========================================================
+        # Steps 3 to 8: Executed inside core_retrieve
+        # =========================================================
         chunks = await core_retrieve(
             db=self.db,
             query=request.query,
@@ -41,10 +75,22 @@ class RetrievalService:
             enable_reranking=request.enable_reranking,
         )
 
-        # Apply token budget and format context string
+        # =========================================================
+        # Step 9: Apply token budget & Step 10: Generate context
+        # =========================================================
+        logger.info(
+            "retrieval_step_9_10_context_builder_started",
+            chunks_count=len(chunks),
+            max_tokens=request.max_context_tokens,
+        )
         context_obj = build_context(
             chunks=chunks,
             max_tokens=request.max_context_tokens,
+        )
+        logger.info(
+            "retrieval_step_9_10_context_builder_success",
+            included_chunks=context_obj.total_chunks,
+            total_tokens=context_obj.total_tokens,
         )
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -114,8 +160,12 @@ class RetrievalService:
             self.db.add(audit_log)
             await self.db.flush()
         except Exception as e:
-            logger.error("failed_to_write_search_audit_log", extra={"error": str(e)})
+            logger.error("failed_to_write_search_audit_log", error=str(e))
 
+        # =========================================================
+        # Step 11: Return response
+        # =========================================================
+        logger.info("retrieval_step_11_return_response", elapsed_ms=elapsed_ms)
         return RetrievalResult(
             response=response,
             statistics=stats,

@@ -59,6 +59,7 @@ class OllamaReranker(RerankerProvider):
         )
 
         try:
+            logger.info("Calling Ollama reranker", extra={"model": self.model, "url": f"{self.base_url}/api/chat", "candidate_count": len(candidates)})
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
@@ -82,10 +83,18 @@ class OllamaReranker(RerankerProvider):
                 response.raise_for_status()
 
             payload = response.json()
+            if "message" not in payload or "content" not in payload["message"]:
+                logger.error("ollama_reranking_invalid_response", response=payload)
+                raise ValueError("Malformed response from Ollama API: missing message or content")
+            
             content = payload["message"]["content"]
-            parsed = json.loads(content)
+            if not content:
+                logger.error("ollama_reranking_empty_content")
+                raise ValueError("Empty content returned from Ollama API")
 
+            parsed = json.loads(content)
             ranked_ids = parsed.get("ranked_candidate_ids", [])
+            logger.info("Ollama reranker succeeded", extra={"ranked_ids": ranked_ids})
 
             return self._resolve_results(
                 candidates=candidates,

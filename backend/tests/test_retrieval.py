@@ -76,6 +76,9 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
     mock_provider.embed_documents = AsyncMock(return_value=[[0.1] * 768])
     mock_provider.embed_query = AsyncMock(return_value=[0.1] * 768)
 
+    # Track dynamically generated IDs for the mock
+    seeded_ids = {}
+
     # Mock Qdrant client
     mock_qdrant_client = AsyncMock()
     mock_qdrant_client.collection_exists = AsyncMock(return_value=True)
@@ -86,9 +89,19 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
     async def mock_query_points(collection_name, query, **kwargs):
         res = MagicMock()
         if "kb_collection_1" in collection_name or "1" in collection_name:
-            res.points = [MockPoint(chunk_id=101, score=0.95, kb_id=1, doc_id=10)]
+            res.points = [MockPoint(
+                chunk_id=seeded_ids.get("chunk1_id", 101), 
+                score=0.95, 
+                kb_id=seeded_ids.get("kb1_id", 1), 
+                doc_id=seeded_ids.get("doc1_id", 10)
+            )]
         else:
-            res.points = [MockPoint(chunk_id=202, score=0.88, kb_id=2, doc_id=20)]
+            res.points = [MockPoint(
+                chunk_id=seeded_ids.get("chunk2_id", 202), 
+                score=0.88, 
+                kb_id=seeded_ids.get("kb2_id", 2), 
+                doc_id=seeded_ids.get("doc2_id", 20)
+            )]
         return res
 
     mock_qdrant_client.query_points = AsyncMock(side_effect=mock_query_points)
@@ -120,7 +133,6 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
             async with AsyncSessionLocal() as session:
                 # Add mock documents
                 doc1 = KnowledgeDocumentDB(
-                    id=10,
                     knowledge_base_id=kb1["id"],
                     customer_id=tenant.id,
                     created_by=tenant_admin.id,
@@ -128,7 +140,6 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                     status="ready",
                 )
                 doc2 = KnowledgeDocumentDB(
-                    id=20,
                     knowledge_base_id=kb2["id"],
                     customer_id=tenant.id,
                     created_by=tenant_admin.id,
@@ -139,7 +150,6 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                 await session.flush()
 
                 chunk1 = KnowledgeChunkDB(
-                    id=101,
                     document_id=doc1.id,
                     knowledge_base_id=kb1["id"],
                     customer_id=tenant.id,
@@ -147,7 +157,6 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                     content="Setup product guide SSO parameters.",
                 )
                 chunk2 = KnowledgeChunkDB(
-                    id=202,
                     document_id=doc2.id,
                     knowledge_base_id=kb2["id"],
                     customer_id=tenant.id,
@@ -156,6 +165,14 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                 )
                 session.add_all([chunk1, chunk2])
                 await session.commit()
+
+                # Update the seeded_ids mapping for mock points
+                seeded_ids["doc1_id"] = doc1.id
+                seeded_ids["doc2_id"] = doc2.id
+                seeded_ids["chunk1_id"] = chunk1.id
+                seeded_ids["chunk2_id"] = chunk2.id
+                seeded_ids["kb1_id"] = kb1["id"]
+                seeded_ids["kb2_id"] = kb2["id"]
 
             # 2. Search across both KBs
             search_payload = {
@@ -178,8 +195,8 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
             assert "Support instructions for account recovery." in chunk_contents
 
             # Verify Document & KB lists are populated
-            assert 10 in search_data["documents"]
-            assert 20 in search_data["documents"]
+            assert seeded_ids["doc1_id"] in search_data["documents"]
+            assert seeded_ids["doc2_id"] in search_data["documents"]
             assert kb1["id"] in search_data["knowledge_bases"]
             assert kb2["id"] in search_data["knowledge_bases"]
 

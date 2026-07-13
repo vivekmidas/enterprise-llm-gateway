@@ -1,4 +1,4 @@
-import logging
+import structlog
 import asyncio
 from typing import Any
 
@@ -18,7 +18,7 @@ from app.models.db_models import (
     KnowledgeCollectionDB,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 settings = get_settings()
 
 
@@ -62,8 +62,9 @@ async def retrieve(
 
     try:
         # =========================================================
-        # 1. Resolve and Validate Knowledge Bases
+        # Step 3: Resolve Knowledge Bases
         # =========================================================
+        logger.info("retrieval_step_3_resolve_kbs_started", customer_id=customer_id, knowledge_base_ids=knowledge_base_ids)
         kb_result = await db.execute(
             select(KnowledgeBaseDB).where(
                 KnowledgeBaseDB.id.in_(knowledge_base_ids),
@@ -75,14 +76,18 @@ async def retrieve(
 
         if not validated_kb_ids:
             logger.warning(
-                "no_valid_knowledge_bases_found_for_tenant",
-                extra={"requested_kbs": knowledge_base_ids, "customer_id": customer_id},
+                "retrieval_step_3_no_valid_knowledge_bases_found",
+                requested_kbs=knowledge_base_ids,
+                customer_id=customer_id,
             )
             return []
+        
+        logger.info("retrieval_step_3_resolve_kbs_success", validated_kb_ids=validated_kb_ids)
 
         # =========================================================
-        # 2. Resolve Active Collections
+        # Step 4: Resolve searchable collections
         # =========================================================
+        logger.info("retrieval_step_4_resolve_collections_started", customer_id=customer_id, validated_kb_ids=validated_kb_ids)
         col_result = await db.execute(
             select(KnowledgeCollectionDB).where(
                 KnowledgeCollectionDB.knowledge_base_id.in_(validated_kb_ids),
@@ -94,13 +99,15 @@ async def retrieve(
 
         if not collections:
             logger.warning(
-                "no_active_collections_found_for_kbs",
-                extra={"kb_ids": validated_kb_ids},
+                "retrieval_step_4_no_active_collections_found",
+                kb_ids=validated_kb_ids,
             )
             return []
+        
+        logger.info("retrieval_step_4_resolve_collections_success", collections=[c.name for c in collections])
 
         # =========================================================
-        # 3. Dense Semantic Search (Parallel Across Collections)
+        # Step 5: Generate query embedding & Step 6: Search Qdrant
         # =========================================================
         candidate_limit = max(
             top_k * 4,
@@ -121,6 +128,8 @@ async def retrieve(
             cache_key = (provider_name, model_name)
             if cache_key not in embedding_cache:
                 try:
+                    # Step 5: Generate query embedding
+                    logger.info("retrieval_step_5_generate_embedding_started", provider=provider_name, model=model_name, collection=coll.name)
                     from app.knowledge.embeddings import get_embedding_provider_for_model
                     provider = get_embedding_provider_for_model(
                         provider_name=provider_name,
@@ -128,22 +137,23 @@ async def retrieve(
                         dimension=coll.vector_dimension,
                     )
                     embedding_cache[cache_key] = await provider.embed_query(query)
+                    logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name)
                 except Exception as e:
                     logger.error(
-                        "failed_to_embed_query_for_collection",
-                        extra={
-                            "collection": coll.name,
-                            "provider": provider_name,
-                            "model": model_name,
-                            "error": str(e),
-                        },
+                        "retrieval_step_5_generate_embedding_failed",
+                        collection=coll.name,
+                        provider=provider_name,
+                        model=model_name,
+                        error=str(e),
                     )
                     return []
 
             query_vector = embedding_cache[cache_key]
 
             try:
-                return await vector_store.search(
+                # Step 6: Search Qdrant
+                logger.info("retrieval_step_6_search_qdrant_started", collection=coll.name, customer_id=customer_id)
+                res_points = await vector_store.search(
                     vector=query_vector,
                     customer_id=customer_id,
                     knowledge_base_ids=[coll.knowledge_base_id],
@@ -153,10 +163,13 @@ async def retrieve(
                     metadata=metadata,
                     score_threshold=score_threshold,
                 )
+                logger.info("retrieval_step_6_search_qdrant_success", collection=coll.name, points_count=len(res_points))
+                return res_points
             except Exception as e:
                 logger.error(
-                    "qdrant_search_failed_for_collection",
-                    extra={"collection": coll.name, "error": str(e)},
+                    "retrieval_step_6_search_qdrant_failed",
+                    collection=coll.name,
+                    error=str(e),
                 )
                 return []
 
@@ -178,10 +191,9 @@ async def retrieve(
             if coll_chunk_ids:
                 ranked_lists.append(coll_chunk_ids)
 
-        # =========================================================
-        # 4. Keyword Search (MySQL)
-        # =========================================================
+        # Keyword Search (MySQL) - hybrid search part of Step 6
         try:
+            logger.info("retrieval_step_6_keyword_search_started", customer_id=customer_id, validated_kb_ids=validated_kb_ids)
             keyword_chunk_ids = await keyword_search(
                 db=db,
                 query=query,
@@ -189,8 +201,9 @@ async def retrieve(
                 knowledge_base_ids=validated_kb_ids,
                 limit=candidate_limit,
             )
+            logger.info("retrieval_step_6_keyword_search_success", count=len(keyword_chunk_ids))
         except Exception as e:
-            logger.error("keyword_search_failed", extra={"error": str(e)})
+            logger.error("retrieval_step_6_keyword_search_failed", error=str(e))
             keyword_chunk_ids = []
 
         if document_ids and keyword_chunk_ids:
@@ -208,17 +221,17 @@ async def retrieve(
             ranked_lists.append(keyword_chunk_ids)
 
         # =========================================================
-        # 5. Reciprocal Rank Fusion & Deduplication
+        # Step 7: Merge results
         # =========================================================
+        logger.info("retrieval_step_7_merge_results_started", lists_count=len(ranked_lists))
         fused_results = reciprocal_rank_fusion(ranked_lists)
+        logger.info("retrieval_step_7_merge_results_success", merged_count=len(fused_results))
 
         if not fused_results:
             logger.info(
                 "knowledge_retrieval_no_results",
-                extra={
-                    "customer_id": customer_id,
-                    "knowledge_base_ids": validated_kb_ids,
-                },
+                customer_id=customer_id,
+                knowledge_base_ids=validated_kb_ids,
             )
             return []
 
@@ -241,6 +254,7 @@ async def retrieve(
         # =========================================================
         # 6. Load Canonical DB Chunks & Documents
         # =========================================================
+        logger.info("retrieval_load_canonical_chunks_started", count=len(selected_chunk_ids))
         result = await db.execute(
             select(
                 KnowledgeChunkDB,
@@ -262,22 +276,36 @@ async def retrieve(
             chunk.id: (chunk, document)
             for chunk, document in result.all()
         }
+        logger.info("retrieval_load_canonical_chunks_success", loaded_count=len(records))
 
-        # Build candidates list
+        # =========================================================
+        # Step 8: Remove duplicate chunks (Content-based deduplication)
+        # =========================================================
+        logger.info("retrieval_step_8_remove_duplicates_started", candidates_count=len(selected_chunk_ids))
         candidates = []
+        seen_contents = set()
         for rank, chunk_id in enumerate(selected_chunk_ids, start=1):
             record = records.get(chunk_id)
             if not record:
                 logger.warning(
                     "knowledge_chunk_missing_from_database",
-                    extra={
-                        "chunk_id": chunk_id,
-                        "customer_id": customer_id,
-                    },
+                    chunk_id=chunk_id,
+                    customer_id=customer_id,
                 )
                 continue
 
             chunk, document = record
+
+            # Normalize content to identify duplicate texts
+            normalized_content = " ".join(chunk.content.split()).strip().lower()
+            if normalized_content in seen_contents:
+                logger.info(
+                    "retrieval_step_8_duplicate_chunk_removed",
+                    chunk_id=chunk.id,
+                    document_id=document.id,
+                )
+                continue
+            seen_contents.add(normalized_content)
 
             candidates.append(
                 {
@@ -293,6 +321,7 @@ async def retrieve(
                     "chunk_index": chunk.chunk_index,
                 }
             )
+        logger.info("retrieval_step_8_remove_duplicates_success", final_count=len(candidates))
 
         # =========================================================
         # 7. Optional Reranking
@@ -311,7 +340,7 @@ async def retrieve(
             candidates = candidates[:top_k]
 
         # =========================================================
-        # 8. Build Final RetrievedChunk Objects
+        # Build Final RetrievedChunk Objects
         # =========================================================
         retrieved_chunks = []
         for index, item in enumerate(candidates, start=1):
@@ -331,13 +360,12 @@ async def retrieve(
 
         return retrieved_chunks
 
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "knowledge_hybrid_retrieval_failed",
-            extra={
-                "customer_id": customer_id,
-                "knowledge_base_ids": knowledge_base_ids,
-                "query_length": len(query),
-            },
+            customer_id=customer_id,
+            knowledge_base_ids=knowledge_base_ids,
+            query_length=len(query),
+            error=str(exc),
         )
         raise

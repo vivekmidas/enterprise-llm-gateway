@@ -341,19 +341,6 @@ Conversation-aware Retrieval
 
 ---
 
-# 13. Implementation Status
-
-| Feature | Status |
-|----------|--------|
-| Retrieval Models | ✅ Complete |
-| KB Resolver | ✅ Complete |
-| Context Builder | ✅ Complete (Design) |
-| Repository Layer | ⏳ Pending |
-| Retrieval Service | ⏳ Pending |
-| Retrieval API | ⏳ Pending |
-| Tests | ⏳ Pending |
-
----
 
 # 14. Decisions
 

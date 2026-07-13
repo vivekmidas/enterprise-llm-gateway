@@ -8,18 +8,26 @@ import os
 
 from app.api.auth.dependencies import get_current_user, get_current_admin
 from app.core.database import get_db
-from app.core.dependencies.retrieval import get_retrieval_service
+from app.core.dependencies.retrieval import get_retrieval_service, get_response_generation_service, get_rag_service
 from app.core.types.users import User
 from app.services.retrieval_service import RetrievalService
+from app.services.response_generation_service import ResponseGenerationService
+from app.services.rag_service import RAGService
 from app.knowledge.retrieval_models import (
     RetrievalRequest as RetrievalServiceRequest,
     RetrievalResponse,
+    ResponseGenerationRequest as ResponseGenerationServiceRequest,
+    ResponseGenerationResult,
+    RAGRequest as RAGServiceRequest,
+    RAGResponse,
 )
 from app.api.knowledge.schemas import (
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
     KnowledgeDocumentResponse,
     RetrievalRequest,
+    ResponseGenerationRequest,
+    RAGRequest,
 )
 from app.models.db_models import (
     KnowledgeBaseDB,
@@ -340,6 +348,58 @@ async def retrieve_knowledge(
 
     result = await retrieval_service.retrieve(request)
     return result.response
+
+
+@router.post(
+    "/generate",
+    response_model=ResponseGenerationResult,
+    status_code=status.HTTP_200_OK,
+)
+async def generate_response(
+    payload: ResponseGenerationRequest,
+    current_user: User = Depends(get_current_user),
+    generation_service: ResponseGenerationService = Depends(get_response_generation_service),
+):
+    """Query LLM to generate response from provided context."""
+    _require_tenant(current_user)
+
+    request = ResponseGenerationServiceRequest(
+        query=payload.query,
+        context=payload.context,
+        temperature=payload.temperature,
+        max_generation_tokens=payload.max_generation_tokens,
+    )
+
+    return await generation_service.generate_response(request)
+
+
+@router.post(
+    "/rag",
+    response_model=RAGResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def rag_query(
+    payload: RAGRequest,
+    current_user: User = Depends(get_current_user),
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    """Query end-to-end RAG service including retrieval and generation."""
+    customer_id = _require_tenant(current_user)
+
+    request = RAGServiceRequest(
+        customer_id=customer_id,
+        user_id=int(current_user.id) if current_user.id else None,
+        query=payload.query,
+        knowledge_base_ids=payload.knowledge_base_ids,
+        top_k=payload.top_k,
+        **({"min_score": payload.min_score} if payload.min_score is not None else {}),
+        **({"enable_reranking": payload.enable_reranking} if payload.enable_reranking is not None else {}),
+        max_context_tokens=payload.max_context_tokens,
+        temperature=payload.temperature,
+        max_generation_tokens=payload.max_generation_tokens,
+    )
+
+    return await rag_service.process_query(request)
 
 
 @router.delete(

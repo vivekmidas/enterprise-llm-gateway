@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "enterprise_knowledge"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    LLM_PROVIDER: str = "vllm"
+    OLLAMA_MODEL: str = "qwen:0.5b"
     EMBEDDING_PROVIDER: str = "ollama" # change to "openai" if you want to use openai embeddings
     EMBEDDING_MODEL: str = "nomic-embed-text"
     EMBEDDING_DIMENSION: int = 768
@@ -36,6 +38,11 @@ class Settings(BaseSettings):
     RERANK_PROVIDER: str = "ollama"
     RERANK_MODEL: str = "qwen3.5:0.8b"
     RERANK_CANDIDATE_LIMIT: int = 5
+    SYSTEM_PROMPT: str = (
+        "You are a helpful enterprise assistant. Answer the user's query using only the provided context. "
+        "If the context does not contain enough information to answer the query, you must respond with 'no answer' and nothing else. "
+        "Do not try to make up or extrapolate any answers."
+    )
 
     class Config:
         env_file = ".env"

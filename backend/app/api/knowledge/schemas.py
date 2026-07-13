@@ -93,3 +93,21 @@ class RetrievalResult(BaseModel):
 
     metadata: dict[str, Any] | None = None
     citation: Citation
+
+
+class ResponseGenerationRequest(BaseModel):
+    query: str = Field(min_length=1)
+    context: Any  # Should map to RetrievalContext
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    max_generation_tokens: int = Field(default=1024, ge=1)
+
+
+class RAGRequest(BaseModel):
+    query: str = Field(min_length=1)
+    knowledge_base_ids: list[int]
+    top_k: int = Field(default=5, ge=1, le=50)
+    min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    max_context_tokens: int = Field(default=6000, ge=500)
+    enable_reranking: Optional[bool] = None
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    max_generation_tokens: int = Field(default=1024, ge=1)

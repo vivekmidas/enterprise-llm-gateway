@@ -251,3 +251,79 @@ class RetrievalResult(BaseModel):
     response: RetrievalResponse
 
     statistics: RetrievalStatistics
+
+
+# -------------------------------------------------------------------------
+# Response Generation
+# -------------------------------------------------------------------------
+
+
+class ResponseGenerationRequest(BaseModel):
+    """Input model for response generation."""
+
+    model_config = ConfigDict(
+        frozen=True,
+    )
+
+    query: str
+    context: RetrievalContext
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    max_generation_tokens: int = Field(default=1024, ge=1)
+
+
+class ResponseGenerationResult(BaseModel):
+    """Output returned by Response Generation Service."""
+
+    model_config = ConfigDict(
+        frozen=True,
+    )
+
+    answer: str
+    used_tokens: int | None = None
+
+
+# -------------------------------------------------------------------------
+# RAG (Retrieval-Augmented Generation)
+# -------------------------------------------------------------------------
+
+
+class RAGRequest(BaseModel):
+    """Input model for end-to-end RAG."""
+
+    model_config = ConfigDict(
+        frozen=True,
+    )
+
+    customer_id: int
+    user_id: int | None = None
+
+    query: str
+    knowledge_base_ids: list[int]
+    top_k: int = Field(default=5, ge=1)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_context_tokens: int = Field(default=6000, ge=500)
+    enable_reranking: bool | None = None
+
+    # Generation parameters
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    max_generation_tokens: int = Field(default=1024, ge=1)
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Query cannot be empty.")
+        return value
+
+
+class RAGResponse(BaseModel):
+    """Output returned by the RAG Service."""
+
+    model_config = ConfigDict(
+        frozen=True,
+    )
+
+    answer: str
+    retrieval: RetrievalResponse
+    statistics: RetrievalStatistics

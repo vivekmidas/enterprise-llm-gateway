@@ -39,12 +39,19 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return self._dimension
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        logger.info("Embedding documents via OpenAI", extra={"count": len(texts), "model": self.model_name})
         response = await self.client.embeddings.create(
             model=self.model_name,
             input=texts,
             dimensions=self.dimension,
         )
-        return [item.embedding for item in response.data]
+        if not response.data:
+            logger.error("openai_embedding_empty_response", model=self.model_name)
+            raise ValueError("OpenAI embedding response returned empty data list")
+        
+        embeddings = [item.embedding for item in response.data]
+        logger.info("openai_embedding_success", count=len(embeddings))
+        return embeddings
 
     async def embed_query(self, text: str) -> list[float]:
         return (await self.embed_documents([text]))[0]
@@ -67,7 +74,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         texts: list[str],
     ) -> list[list[float]]:
         try:
-            logger.info("Embedding documents", extra={"count": len(texts), "texts": texts, "model": self.model_name, "base_url": self.base_url})
+            logger.info("Embedding documents via Ollama", extra={"count": len(texts), "model": self.model_name, "base_url": self.base_url})
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.base_url}/api/embed",
@@ -78,7 +85,14 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
                 )
                 response.raise_for_status()
 
-            return response.json()["embeddings"]
+            res_data = response.json()
+            if "embeddings" not in res_data or not res_data["embeddings"]:
+                logger.error("ollama_embedding_empty_response", model=self.model_name, response=res_data)
+                raise ValueError(f"Ollama embedding response is missing 'embeddings' or empty: {res_data}")
+
+            embeddings = res_data["embeddings"]
+            logger.info("ollama_embedding_success", count=len(embeddings))
+            return embeddings
 
         except Exception:
             logger.exception(
