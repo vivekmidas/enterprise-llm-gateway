@@ -724,6 +724,9 @@ class BaseNode(BaseModel, abc.ABC):
             if contract_output:
                 return contract_output
 
+            validation_output = await self.validate_input(inp)
+            if validation_output:
+                return validation_output
 
             # 2. Execution logic
             self.logger.info(f"Node execution started {self.name}",trace_id=inp.trace_id)

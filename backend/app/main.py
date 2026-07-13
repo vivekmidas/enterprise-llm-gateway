@@ -81,6 +81,7 @@ app.include_router(email_webhooks.router)
 app.include_router(run_webhooks.router)
 app.include_router(users.router)
 app.include_router(knowledge_router)
+app.include_router(jobs_router)
 
 
 if __name__ == "__main__":

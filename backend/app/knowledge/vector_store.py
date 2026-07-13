@@ -15,9 +15,11 @@ class QdrantVectorStore:
             url=settings.QDRANT_URL,
             api_key=settings.QDRANT_API_KEY,
         )
-        self.collection = settings.QDRANT_COLLECTION
+        
 
-    async def ensure_collection(self, dimension: int) -> None:
+    async def ensure_collection(self, 
+        dimension: int,    
+        collection_name: str) -> None:
         if await self.client.collection_exists(self.collection):
             return
 
@@ -35,8 +37,8 @@ class QdrantVectorStore:
         return str(uuid5(NAMESPACE_URL, f"knowledge-chunk:{chunk_id}"))
 
     async def upsert_chunks(
-        self,
-        chunks: list,
+        self,    collection_name: str,
+        chunks: list,    collection_name: str,
         vectors: list[list[float]],
     ) -> None:
         if len(chunks) != len(vectors):
@@ -72,10 +74,12 @@ class QdrantVectorStore:
         vector: list[float],
         customer_id: int,
         knowledge_base_ids: list[int],
-        limit: int = 5,
+        limit: int = 5,    
+        collection_name: str,
         document_ids: list[int] | None = None,
         metadata: dict | None = None,
         score_threshold: float | None = None,
+        collection_name: str
     ):
         """
         Search Qdrant using mandatory tenant and knowledge-base filters,

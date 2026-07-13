@@ -2,7 +2,17 @@ from sqlalchemy import Column, String, JSON, Integer, Boolean
 from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey
 from app.core.database import Base
 from datetime import datetime
+from sqlalchemy import JSON
+from sqlalchemy import DateTime
+from sqlalchemy import Enum
+from sqlalchemy import Integer
+from sqlalchemy import String
+from sqlalchemy import Text
+from sqlalchemy.sql import func
 
+from app.jobs.enums import JobStatus
+from app.jobs.enums import JobType
+from app.jobs.enums import EntityType
 
 class CustomerDB(Base):
     __tablename__ = "customers"
@@ -229,6 +239,10 @@ class KnowledgeDocumentDB(Base):
     file_size = Column(Integer, nullable=True)
     checksum = Column(String, nullable=True, index=True)
     chunk_count = Column(Integer, default=0)
+    collection_name = Column(String(255), unique=True, nullable=False, index=True)
+    embedding_model = Column(String(255), nullable=True)
+    vector_dimension = Column(Integer, nullable=True)
+    distance_metric = Column(String(50), default="COSINE")
 
 class KnowledgeChunkDB(Base):
     __tablename__ = "knowledge_chunks"
@@ -262,3 +276,71 @@ class KnowledgeChunkDB(Base):
         String,
         default=lambda: datetime.utcnow().isoformat(),
     )
+
+
+
+class JobDB(Base):
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    customer_id = Column(Integer, nullable=False, index=True)
+
+    job_type = Column(
+        Enum(JobType),
+        nullable=False,
+        index=True
+    )
+
+    entity_type = Column(
+        Enum(EntityType),
+        nullable=False,
+        index=True
+    )
+
+    entity_id = Column(
+        Integer,
+        nullable=True,
+        index=True
+    )
+
+    status = Column(
+        Enum(JobStatus),
+        nullable=False,
+        default=JobStatus.QUEUED,
+        index=True
+    )
+
+    progress = Column(
+        Integer,
+        nullable=False,
+        default=0
+    )
+
+    message = Column(Text)
+
+    error = Column(Text)
+
+    metadata = Column(JSON, default=dict)
+
+    started_at = Column(DateTime(timezone=True))
+
+    completed_at = Column(DateTime(timezone=True))
+
+    created_by = Column(Integer)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    retry_count = Column(Integer, nullable=False, default=0)
+    worker_id = Column(String(100))
+    cancel_requested = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+    updated_at: Optional[datetime] = None
+    error: Optional[str] = None
+    metadata: dict | None = None
