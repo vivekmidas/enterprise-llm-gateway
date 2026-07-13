@@ -8,3 +8,4 @@ __pycache__
 enterprise_gateway.db
 */qdrant_storage/*
 */qdrant_data/*
+*/data/knowledge/*
