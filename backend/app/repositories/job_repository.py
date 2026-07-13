@@ -5,7 +5,6 @@ from app.models.db_models import JobDB
 
 
 class JobRepository:
-
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -36,12 +35,7 @@ class JobRepository:
         if status:
             stmt = stmt.where(JobDB.status == status)
 
-        stmt = (
-            stmt.order_by(JobDB.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-
+        stmt = stmt.order_by(JobDB.created_at.desc()).limit(limit).offset(offset)
         result = await self.db.execute(stmt)
 
         return result.scalars().all()
@@ -51,7 +45,6 @@ class JobRepository:
         *,
         status: str | None = None,
     ) -> int:
-
         stmt = select(func.count(JobDB.id))
 
         if status:
@@ -62,14 +55,12 @@ class JobRepository:
         return result.scalar_one()
 
     async def delete(self, job_id: int) -> bool:
-
         job = await self.get(job_id)
 
         if job is None:
             return False
 
         await self.db.delete(job)
-
         await self.db.commit()
 
         return True
@@ -81,7 +72,6 @@ class JobRepository:
         progress: int,
         message: str | None = None,
     ):
-
         job = await self.get(job_id)
 
         if job is None:
@@ -103,7 +93,6 @@ class JobRepository:
         status: str,
         message: str | None = None,
     ):
-
         job = await self.get(job_id)
 
         if job is None:

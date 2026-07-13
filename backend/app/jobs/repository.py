@@ -29,7 +29,7 @@ class JobRepository:
             entity_id=entity_id,
             status=JobStatus.QUEUED,
             progress=0,
-            metadata=metadata or {},
+            job_metadata=metadata or {},
             created_by=created_by,
         )
 

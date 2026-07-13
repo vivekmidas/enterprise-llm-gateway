@@ -37,8 +37,9 @@ class QdrantVectorStore:
         return str(uuid5(NAMESPACE_URL, f"knowledge-chunk:{chunk_id}"))
 
     async def upsert_chunks(
-        self,    collection_name: str,
-        chunks: list,    collection_name: str,
+        self,    
+        collection_name: str,
+        chunks: list,    
         vectors: list[list[float]],
     ) -> None:
         if len(chunks) != len(vectors):
@@ -79,7 +80,6 @@ class QdrantVectorStore:
         document_ids: list[int] | None = None,
         metadata: dict | None = None,
         score_threshold: float | None = None,
-        collection_name: str
     ):
         """
         Search Qdrant using mandatory tenant and knowledge-base filters,

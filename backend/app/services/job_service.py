@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.jobs.enums import JobStatus
 from app.models.db_models import JobDB
-from app.models.enums import JobStatus
 from app.repositories.job_repository import JobRepository
 
 
 class JobService:
-
     def __init__(self, repository: JobRepository):
         self.repository = repository
 
@@ -22,14 +21,13 @@ class JobService:
         created_by: int | None = None,
         metadata: dict | None = None,
     ) -> JobDB:
-
         job = JobDB(
             customer_id=customer_id,
             job_type=job_type,
             entity_type=entity_type,
             entity_id=entity_id,
             created_by=created_by,
-            metadata=metadata or {},
+            job_metadata=metadata or {},
             status=JobStatus.QUEUED,
             progress=0,
         )
@@ -64,7 +62,6 @@ class JobService:
         job_id: int,
         message: str = "Started",
     ):
-
         job = await self.repository.get(job_id)
 
         if job is None:
@@ -83,9 +80,7 @@ class JobService:
         progress: int,
         message: str | None = None,
     ):
-
         progress = max(0, min(progress, 100))
-
         job = await self.repository.get(job_id)
 
         if job is None:
@@ -103,7 +98,6 @@ class JobService:
         job_id: int,
         message: str = "Completed",
     ):
-
         job = await self.repository.get(job_id)
 
         if job is None:
@@ -121,7 +115,6 @@ class JobService:
         job_id: int,
         error: str,
     ):
-
         job = await self.repository.get(job_id)
 
         if job is None:
@@ -138,7 +131,6 @@ class JobService:
         job_id: int,
         message: str = "Cancelled",
     ):
-
         job = await self.repository.get(job_id)
 
         if job is None:

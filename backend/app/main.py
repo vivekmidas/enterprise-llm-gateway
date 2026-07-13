@@ -14,6 +14,7 @@ from app.api.auth.router import router as base_auth_router
 from app.api.webhooks import email as email_webhooks
 from app.api.webhooks import run as run_webhooks
 from app.nodes.registry import NodesRegistry
+from app.api.jobs import router as jobs_router
 
 from app.api.admin.users import router as users
 

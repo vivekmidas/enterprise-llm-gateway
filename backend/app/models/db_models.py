@@ -9,7 +9,6 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
 from sqlalchemy.sql import func
-
 from app.jobs.enums import JobStatus
 from app.jobs.enums import JobType
 from app.jobs.enums import EntityType
@@ -150,7 +149,6 @@ class OAuthProviderDB(Base):
     callback_url = Column(String, nullable=False)
     icon = Column(String, nullable=True)
 
-
 class AuditLogDB(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)
@@ -164,6 +162,30 @@ class AuditLogDB(Base):
     details = Column(JSON, nullable=True)
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat(), index=True)
 
+
+class JobDB(Base):
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    job_type = Column(Enum(JobType), nullable=False, index=True)
+    entity_type = Column(Enum(EntityType), nullable=True, index=True)
+    entity_id = Column(Integer, nullable=True, index=True)
+    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.QUEUED, index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    message = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+    job_metadata = Column("metadata", JSON, nullable=False, default=dict)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __init__(self, **kwargs):
+        metadata = kwargs.pop("metadata", None)
+        super().__init__(**kwargs)
+        self.job_metadata = metadata or {}
                         
 class KnowledgeBaseDB(Base):
     __tablename__ = "knowledge_bases"
@@ -172,14 +194,12 @@ class KnowledgeBaseDB(Base):
     name = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
     status = Column(String, default="active", index=True)
-
     customer_id = Column(
         Integer, ForeignKey("customers.id"), nullable=False, index=True
     )
     created_by = Column(
         Integer, ForeignKey("users.id"), nullable=False, index=True
     )
-
     settings = Column(JSON, nullable=True)
 
     created_at = Column(
@@ -203,11 +223,9 @@ class KnowledgeDocumentDB(Base):
         nullable=False,
         index=True,
     )
-
     customer_id = Column(
         Integer, ForeignKey("customers.id"), nullable=False, index=True
     )
-
     created_by = Column(
         Integer, ForeignKey("users.id"), nullable=False, index=True
     )
@@ -216,7 +234,6 @@ class KnowledgeDocumentDB(Base):
     source_type = Column(String, default="upload")
     source_uri = Column(String, nullable=True)
     mime_type = Column(String, nullable=True)
-
     metadata_json = Column(JSON, nullable=True)
 
     status = Column(
@@ -276,71 +293,3 @@ class KnowledgeChunkDB(Base):
         String,
         default=lambda: datetime.utcnow().isoformat(),
     )
-
-
-
-class JobDB(Base):
-    __tablename__ = "jobs"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    customer_id = Column(Integer, nullable=False, index=True)
-
-    job_type = Column(
-        Enum(JobType),
-        nullable=False,
-        index=True
-    )
-
-    entity_type = Column(
-        Enum(EntityType),
-        nullable=False,
-        index=True
-    )
-
-    entity_id = Column(
-        Integer,
-        nullable=True,
-        index=True
-    )
-
-    status = Column(
-        Enum(JobStatus),
-        nullable=False,
-        default=JobStatus.QUEUED,
-        index=True
-    )
-
-    progress = Column(
-        Integer,
-        nullable=False,
-        default=0
-    )
-
-    message = Column(Text)
-
-    error = Column(Text)
-
-    metadata = Column(JSON, default=dict)
-
-    started_at = Column(DateTime(timezone=True))
-
-    completed_at = Column(DateTime(timezone=True))
-
-    created_by = Column(Integer)
-
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now()
-    )
-    retry_count = Column(Integer, nullable=False, default=0)
-    worker_id = Column(String(100))
-    cancel_requested = Column(Boolean, nullable=False, default=False)
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now()
-    )
-    updated_at: Optional[datetime] = None
-    error: Optional[str] = None
-    metadata: dict | None = None
