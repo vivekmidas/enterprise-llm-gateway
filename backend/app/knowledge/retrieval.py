@@ -29,6 +29,7 @@ async def retrieve(
     document_ids: list[int] | None = None,
     metadata: dict[str, Any] | None = None,
     score_threshold: float | None = None,
+    collection_name: str | None = None,
 ) -> list[dict]:
     """
     Perform hybrid knowledge retrieval with optional reranking.
@@ -81,6 +82,7 @@ async def retrieve(
             limit=candidate_limit,
             document_ids=document_ids,
             metadata=metadata,
+            collection_name=collection_name,
             score_threshold=score_threshold,
         )
 

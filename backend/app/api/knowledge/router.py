@@ -253,7 +253,7 @@ async def delete_document(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 from fastapi import File, HTTPException, UploadFile
-from app.api.knowledge.ingestion import knowledge_ingestion_service
+from app.services.document_ingestion_service import document_ingestion_service
 
 @router.post(
     "/bases/{knowledge_base_id}/upload",
@@ -268,25 +268,12 @@ async def upload_document(
 ):
     await get_knowledge_base(db, knowledge_base_id, current_user)
 
-    document = KnowledgeDocumentDB(
-        knowledge_base_id=knowledge_base_id,
-        customer_id=current_user.customer_id,
-        created_by=int(current_user.id),
-        name=file.filename or "unnamed-document",
-        source_type="upload",
-        mime_type=file.content_type,
-        status="pending",
-    )
-
-    db.add(document)
-    await db.commit()
-    await db.refresh(document)
-
     try:
-        return await knowledge_ingestion_service.ingest(
+        return await document_ingestion_service.start_ingestion(
             db=db,
-            document=document,
-            upload=file,
+            upload_file=file,
+            knowledge_base_id=knowledge_base_id,
+            current_user=current_user,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -294,6 +281,7 @@ async def upload_document(
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        logger.exception("Document ingestion failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document ingestion failed",

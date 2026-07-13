@@ -15,16 +15,18 @@ class QdrantVectorStore:
             url=settings.QDRANT_URL,
             api_key=settings.QDRANT_API_KEY,
         )
+        self.collection = settings.QDRANT_COLLECTION
         
 
     async def ensure_collection(self, 
         dimension: int,    
-        collection_name: str) -> None:
-        if await self.client.collection_exists(self.collection):
+        collection_name: str | None = None) -> None:
+        col_name = collection_name or self.collection
+        if await self.client.collection_exists(col_name):
             return
 
         await self.client.create_collection(
-            collection_name=self.collection,
+            collection_name=col_name,
             vectors_config=models.VectorParams(
                 size=dimension,
                 distance=models.Distance.COSINE,
@@ -38,9 +40,9 @@ class QdrantVectorStore:
 
     async def upsert_chunks(
         self,    
-        collection_name: str,
         chunks: list,    
         vectors: list[list[float]],
+        collection_name: str | None = None,
     ) -> None:
         if len(chunks) != len(vectors):
             raise ValueError("Chunk and vector counts do not match")
@@ -63,8 +65,9 @@ class QdrantVectorStore:
                 )
             )
 
+        col_name = collection_name or self.collection
         await self.client.upsert(
-            collection_name=self.collection,
+            collection_name=col_name,
             points=points,
             wait=True,
         )
@@ -76,7 +79,7 @@ class QdrantVectorStore:
         customer_id: int,
         knowledge_base_ids: list[int],
         limit: int = 5,    
-        collection_name: str,
+        collection_name: str | None = None,
         document_ids: list[int] | None = None,
         metadata: dict | None = None,
         score_threshold: float | None = None,
@@ -118,8 +121,9 @@ class QdrantVectorStore:
                     )
                 )
 
+            col_name = collection_name or self.collection
             response = await self.client.query_points(
-                collection_name=self.collection,
+                collection_name=col_name,
                 query=vector,
                 query_filter=models.Filter(
                     must=must_conditions

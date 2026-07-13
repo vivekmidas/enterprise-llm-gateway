@@ -82,6 +82,22 @@ def _refresh_workflows_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE workflows ADD COLUMN is_runnable BOOLEAN DEFAULT 1")
 
 
+def _refresh_knowledge_documents_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_documents"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("knowledge_documents")}
+    if "collection_name" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN collection_name VARCHAR(255)")
+    if "embedding_model" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN embedding_model VARCHAR(255)")
+    if "vector_dimension" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN vector_dimension INTEGER")
+    if "distance_metric" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN distance_metric VARCHAR(50) DEFAULT 'COSINE'")
+
+
 async def init_db():
     """Initializes the database schema."""
     async with engine.begin() as conn:
@@ -90,6 +106,7 @@ async def init_db():
         await conn.run_sync(_refresh_customers_table)
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)
+        await conn.run_sync(_refresh_knowledge_documents_table)
         await conn.run_sync(Base.metadata.create_all)
 
 async def get_db():

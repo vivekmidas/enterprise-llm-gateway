@@ -1,11 +1,20 @@
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
 class BaseRepository(Generic[T]):
 
-    async def get()
+    async def get(self):
+        pass
 
-    async def create()
+    async def create(self):
+        pass
 
-    async def update()
+    async def update(self):
+        pass
 
-    async def delete()
+    async def delete(self):
+        pass
 
-    async def list()app/services/document_ingestion_service.py
+    async def list(self):
+        pass
