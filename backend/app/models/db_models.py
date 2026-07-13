@@ -211,6 +211,38 @@ class KnowledgeBaseDB(Base):
         onupdate=lambda: datetime.utcnow().isoformat(),
     )
 
+class KnowledgeCollectionDB(Base):
+    __tablename__ = "knowledge_collections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    embedding_model = Column(String(255), nullable=True)
+    vector_dimension = Column(Integer, nullable=True)
+    distance_metric = Column(String(50), default="COSINE")
+    status = Column(String(50), default="active", index=True)
+
+    created_at = Column(
+        String, default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+
 
 class KnowledgeDocumentDB(Base):
     __tablename__ = "knowledge_documents"
@@ -228,6 +260,12 @@ class KnowledgeDocumentDB(Base):
     )
     created_by = Column(
         Integer, ForeignKey("users.id"), nullable=False, index=True
+    )
+    collection_id = Column(
+        Integer,
+        ForeignKey("knowledge_collections.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
 
     name = Column(String, nullable=False)
@@ -256,10 +294,11 @@ class KnowledgeDocumentDB(Base):
     file_size = Column(Integer, nullable=True)
     checksum = Column(String, nullable=True, index=True)
     chunk_count = Column(Integer, default=0)
-    collection_name = Column(String(255), unique=True, nullable=False, index=True)
+    collection_name = Column(String(255), nullable=True, index=True)
     embedding_model = Column(String(255), nullable=True)
     vector_dimension = Column(Integer, nullable=True)
     distance_metric = Column(String(50), default="COSINE")
+
 
 class KnowledgeChunkDB(Base):
     __tablename__ = "knowledge_chunks"

@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.jobs.enums import EntityType, JobType
-from app.models.db_models import KnowledgeChunkDB, KnowledgeDocumentDB
+from app.models.db_models import KnowledgeChunkDB, KnowledgeDocumentDB, KnowledgeCollectionDB
 from app.repositories.job_repository import JobRepository
 from app.services.job_service import JobService
 from app.utils.file_utils import extract_text_from_file
 from app.utils.text_splitter import chunk_text
-from app.knowledge.embeddings import get_embedding_provider
+from app.knowledge.embeddings import get_embedding_provider_for_model, get_embedding_provider
 from app.knowledge.vector_store import vector_store
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,38 @@ class DocumentIngestionService:
             created_by=int(current_user.id),
         )
 
-        # Create unique collection name for the document DB column constraint
-        unique_col_name = f"col_{uuid4().hex}"
+        # Resolve or create the mapped KnowledgeCollectionDB
+        stmt_col = select(KnowledgeCollectionDB).where(
+            KnowledgeCollectionDB.knowledge_base_id == knowledge_base_id
+        )
+        res_col = await db.execute(stmt_col)
+        collection = res_col.scalar_one_or_none()
+
+        if not collection:
+            collection = KnowledgeCollectionDB(
+                name=f"kb_collection_{knowledge_base_id}",
+                knowledge_base_id=knowledge_base_id,
+                customer_id=current_user.customer_id,
+                embedding_model=settings.EMBEDDING_MODEL,
+                vector_dimension=settings.EMBEDDING_DIMENSION,
+                distance_metric="COSINE",
+                status="active",
+            )
+            db.add(collection)
+            await db.commit()
+            await db.refresh(collection)
 
         # Get embedding provider settings for document metadata
-        provider = get_embedding_provider()
+        provider_name = settings.EMBEDDING_PROVIDER
+        model_name = collection.embedding_model or settings.EMBEDDING_MODEL
+        if model_name.startswith("text-embedding") or provider_name == "openai":
+            provider_name = "openai"
+
+        provider = get_embedding_provider_for_model(
+            provider_name=provider_name,
+            model_name=model_name,
+            dimension=collection.vector_dimension,
+        )
 
         # Create KnowledgeDocumentDB in DB (status "pending")
         document = KnowledgeDocumentDB(
@@ -78,8 +105,9 @@ class DocumentIngestionService:
             file_path=str(file_path),
             file_size=len(content),
             checksum=checksum,
-            collection_name=unique_col_name,
-            embedding_model=settings.EMBEDDING_MODEL,
+            collection_id=collection.id,
+            collection_name=collection.name,
+            embedding_model=model_name,
             vector_dimension=provider.dimension,
             distance_metric="COSINE",
         )
@@ -188,10 +216,33 @@ class DocumentIngestionService:
                 await db.flush()
 
                 # Qdrant Upsert
-                await vector_store.ensure_collection(provider.dimension)
+                # Resolve the collection name mapped to the KB
+                stmt_col_job = select(KnowledgeCollectionDB).where(
+                    KnowledgeCollectionDB.knowledge_base_id == knowledge_base_id
+                )
+                res_col_job = await db.execute(stmt_col_job)
+                col_obj = res_col_job.scalar_one_or_none()
+                col_name = col_obj.name if col_obj else f"kb_collection_{knowledge_base_id}"
+
+                provider_name = settings.EMBEDDING_PROVIDER
+                model_name = (col_obj.embedding_model if col_obj else None) or settings.EMBEDDING_MODEL
+                if model_name.startswith("text-embedding") or provider_name == "openai":
+                    provider_name = "openai"
+
+                provider = get_embedding_provider_for_model(
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    dimension=col_obj.vector_dimension if col_obj else settings.EMBEDDING_DIMENSION,
+                )
+
+                await vector_store.ensure_collection(
+                    dimension=provider.dimension,
+                    collection_name=col_name,
+                )
                 await vector_store.upsert_chunks(
                     chunks=chunk_objects,
                     vectors=vectors,
+                    collection_name=col_name,
                 )
 
                 # Update MySQL

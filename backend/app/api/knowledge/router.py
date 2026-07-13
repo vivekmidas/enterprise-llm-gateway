@@ -1,31 +1,51 @@
+import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_admin
+from app.api.auth.dependencies import get_current_user, get_current_admin
+from app.core.database import get_db
+from app.core.dependencies.retrieval import get_retrieval_service
+from app.core.types.users import User
+from app.services.retrieval_service import RetrievalService
+from app.knowledge.retrieval_models import (
+    RetrievalRequest as RetrievalServiceRequest,
+    RetrievalResponse,
+)
 from app.api.knowledge.schemas import (
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
-    KnowledgeBaseUpdate,
-    KnowledgeDocumentCreate,
     KnowledgeDocumentResponse,
-    KnowledgeDocumentUpdate,
+    RetrievalRequest,
 )
-from app.api.knowledge.service import get_document, get_knowledge_base
-from app.core.database import get_db
-from app.core.types.users import User
-from app.models.db_models import KnowledgeBaseDB, KnowledgeDocumentDB
-from app.knowledge.retrieval import retrieve
-from app.models.db_models import KnowledgeChunkDB
-from app.api.knowledge.schemas import RetrievalResult,RetrievalRequest
+from app.models.db_models import (
+    KnowledgeBaseDB,
+    KnowledgeCollectionDB,
+    KnowledgeDocumentDB,
+)
+from app.api.knowledge.ingestion import knowledge_ingestion_service
+from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+router = APIRouter(prefix="/api/knowledge", tags=["Knowledge"])
 
 
-router = APIRouter(
-    prefix="/api/knowledge",
-    tags=["Knowledge Management"],
-)
+def _require_tenant(user: User) -> int:
+    if user.customer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not associated with a customer (tenant).",
+        )
+    return int(user.customer_id)
+
+
+# =============================================================================
+# Knowledge Base Management
+# =============================================================================
 
 
 @router.post(
@@ -38,19 +58,58 @@ async def create_knowledge_base(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    knowledge_base = KnowledgeBaseDB(
-        name=payload.name,
-        description=payload.description,
-        settings=payload.settings,
-        customer_id=current_user.customer_id,
-        created_by=int(current_user.id),
-    )
+    """Create a new knowledge base and provision its physical Qdrant collection."""
+    customer_id = _require_tenant(current_user)
 
-    db.add(knowledge_base)
-    await db.commit()
-    await db.refresh(knowledge_base)
+    try:
+        # Create knowledge base metadata
+        db_kb = KnowledgeBaseDB(
+            name=payload.name,
+            description=payload.description,
+            status="active",
+            customer_id=customer_id,
+            created_by=int(current_user.id),
+            settings=payload.settings or {},
+        )
+        db.add(db_kb)
+        await db.flush()  # Generate db_kb.id
 
-    return knowledge_base
+        # Create mapped collection config
+        db_coll = KnowledgeCollectionDB(
+            name=f"kb_collection_{db_kb.id}",
+            knowledge_base_id=db_kb.id,
+            customer_id=customer_id,
+            embedding_model=settings.EMBEDDING_MODEL,
+            vector_dimension=settings.EMBEDDING_DIMENSION,
+            distance_metric="COSINE",
+            status="active",
+        )
+        db.add(db_coll)
+        await db.commit()
+        await db.refresh(db_kb)
+
+        # Provision physical Qdrant collection
+        try:
+            from app.knowledge.vector_store import vector_store
+            await vector_store.ensure_collection(
+                dimension=settings.EMBEDDING_DIMENSION,
+                collection_name=db_coll.name,
+            )
+        except Exception as e:
+            logger.error(
+                "qdrant_collection_provision_failed",
+                extra={"kb_id": db_kb.id, "error": str(e)},
+            )
+
+        return db_kb
+
+    except Exception as exc:
+        logger.exception("create_knowledge_base_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create knowledge base: {exc}",
+        )
 
 
 @router.get(
@@ -58,249 +117,138 @@ async def create_knowledge_base(
     response_model=List[KnowledgeBaseResponse],
 )
 async def list_knowledge_bases(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(KnowledgeBaseDB)
-        .where(
-            KnowledgeBaseDB.customer_id == current_user.customer_id
-        )
-        .order_by(KnowledgeBaseDB.id.desc())
-    )
+    """List all knowledge bases for the current tenant."""
+    customer_id = _require_tenant(current_user)
 
+    stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.customer_id == customer_id
+    )
     result = await db.execute(stmt)
     return result.scalars().all()
 
 
-@router.get(
-    "/bases/{knowledge_base_id}",
-    response_model=KnowledgeBaseResponse,
-)
-async def read_knowledge_base(
-    knowledge_base_id: int,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    return await get_knowledge_base(
-        db,
-        knowledge_base_id,
-        current_user,
-    )
-
-
-@router.patch(
-    "/bases/{knowledge_base_id}",
-    response_model=KnowledgeBaseResponse,
-)
-async def update_knowledge_base(
-    knowledge_base_id: int,
-    payload: KnowledgeBaseUpdate,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    knowledge_base = await get_knowledge_base(
-        db,
-        knowledge_base_id,
-        current_user,
-    )
-
-    for field, value in payload.model_dump(
-        exclude_unset=True
-    ).items():
-        setattr(knowledge_base, field, value)
-
-    await db.commit()
-    await db.refresh(knowledge_base)
-
-    return knowledge_base
-
-
-@router.delete(
-    "/bases/{knowledge_base_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_knowledge_base(
-    knowledge_base_id: int,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    knowledge_base = await get_knowledge_base(
-        db,
-        knowledge_base_id,
-        current_user,
-    )
-
-    await db.delete(knowledge_base)
-    await db.commit()
-
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+# =============================================================================
+# Document Management & Ingestion
+# =============================================================================
 
 
 @router.post(
-    "/bases/{knowledge_base_id}/documents",
-    response_model=KnowledgeDocumentResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_document(
-    knowledge_base_id: int,
-    payload: KnowledgeDocumentCreate,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    await get_knowledge_base(
-        db,
-        knowledge_base_id,
-        current_user,
-    )
-
-    document = KnowledgeDocumentDB(
-        knowledge_base_id=knowledge_base_id,
-        customer_id=current_user.customer_id,
-        created_by=int(current_user.id),
-        name=payload.name,
-        source_type=payload.source_type,
-        source_uri=payload.source_uri,
-        mime_type=payload.mime_type,
-        metadata_json=payload.metadata,
-    )
-
-    db.add(document)
-    await db.commit()
-    await db.refresh(document)
-
-    return document
-
-
-@router.get(
-    "/bases/{knowledge_base_id}/documents",
-    response_model=List[KnowledgeDocumentResponse],
-)
-async def list_documents(
-    knowledge_base_id: int,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    await get_knowledge_base(
-        db,
-        knowledge_base_id,
-        current_user,
-    )
-
-    stmt = (
-        select(KnowledgeDocumentDB)
-        .where(
-            KnowledgeDocumentDB.knowledge_base_id
-            == knowledge_base_id,
-            KnowledgeDocumentDB.customer_id
-            == current_user.customer_id,
-        )
-        .order_by(KnowledgeDocumentDB.id.desc())
-    )
-
-    result = await db.execute(stmt)
-    return result.scalars().all()
-
-
-@router.patch(
-    "/documents/{document_id}",
-    response_model=KnowledgeDocumentResponse,
-)
-async def update_document(
-    document_id: int,
-    payload: KnowledgeDocumentUpdate,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    document = await get_document(
-        db,
-        document_id,
-        current_user,
-    )
-
-    updates = payload.model_dump(exclude_unset=True)
-
-    if "metadata" in updates:
-        document.metadata_json = updates.pop("metadata")
-
-    for field, value in updates.items():
-        setattr(document, field, value)
-
-    await db.commit()
-    await db.refresh(document)
-
-    return document
-
-
-@router.delete(
-    "/documents/{document_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_document(
-    document_id: int,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    document = await get_document(
-        db,
-        document_id,
-        current_user,
-    )
-
-    await db.delete(document)
-    await db.commit()
-
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-from fastapi import File, HTTPException, UploadFile
-from app.services.document_ingestion_service import document_ingestion_service
-
-@router.post(
-    "/bases/{knowledge_base_id}/upload",
+    "/bases/{kb_id}/documents",
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    knowledge_base_id: int,
+    kb_id: int,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    await get_knowledge_base(db, knowledge_base_id, current_user)
+    """Upload and ingest a document into a specific knowledge base."""
+    customer_id = _require_tenant(current_user)
+
+    # Verify Knowledge Base exists and belongs to the tenant
+    kb_stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id == kb_id,
+        KnowledgeBaseDB.customer_id == customer_id,
+    )
+    kb_res = await db.execute(kb_stmt)
+    kb = kb_res.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found.",
+        )
 
     try:
-        return await document_ingestion_service.start_ingestion(
-            db=db,
-            upload_file=file,
-            knowledge_base_id=knowledge_base_id,
-            current_user=current_user,
+        # Create document DB record in pending status
+        db_doc = KnowledgeDocumentDB(
+            knowledge_base_id=kb.id,
+            customer_id=customer_id,
+            created_by=int(current_user.id),
+            name=file.filename or "uploaded_file",
+            status="pending",
         )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        db.add(db_doc)
+        await db.commit()
+        await db.refresh(db_doc)
+
+        # Run ingestion pipeline (text extraction, chunking, embedding, Qdrant indexing)
+        await knowledge_ingestion_service.ingest(
+            db=db,
+            document=db_doc,
+            upload=file,
+        )
+
+        return db_doc
+
     except Exception as exc:
-        logger.exception("Document ingestion failed")
+        logger.exception("document_ingestion_api_failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Document ingestion failed",
-        ) from exc  
+            detail=f"In-flight document ingestion failed: {exc}",
+        )
+
+
+@router.get(
+    "/bases/{kb_id}/documents",
+    response_model=List[KnowledgeDocumentResponse],
+)
+async def list_documents(
+    kb_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all documents under a specific knowledge base."""
+    customer_id = _require_tenant(current_user)
+
+    # Verify KB ownership
+    kb_stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id == kb_id,
+        KnowledgeBaseDB.customer_id == customer_id,
+    )
+    kb_res = await db.execute(kb_stmt)
+    if not kb_res.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found.",
+        )
+
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        KnowledgeDocumentDB.customer_id == customer_id,
+    )
+    doc_res = await db.execute(doc_stmt)
+    return doc_res.scalars().all()
+
+
+# =============================================================================
+# Knowledge Retrieval
+# =============================================================================
+
 
 @router.post(
     "/retrieve",
-    response_model=list[RetrievalResult],
+    response_model=RetrievalResponse,
+    status_code=status.HTTP_200_OK,
 )
 async def retrieve_knowledge(
     payload: RetrievalRequest,
-    current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    retrieval_service: RetrievalService = Depends(get_retrieval_service),
 ):
-    # Tenant isolation is enforced again inside Qdrant and SQL.
-    return await retrieve(
-        db=db,
+    """Query the retrieval service to search across specified knowledge bases."""
+    customer_id = _require_tenant(current_user)
+
+    request = RetrievalServiceRequest(
+        customer_id=customer_id,
+        user_id=int(current_user.id) if current_user.id else None,
         query=payload.query,
-        customer_id=int(current_user.customer_id),
         knowledge_base_ids=payload.knowledge_base_ids,
         top_k=payload.top_k,
     )
+
+    result = await retrieval_service.retrieve(request)
+    return result.response

@@ -77,7 +77,7 @@ class QdrantVectorStore:
         *,
         vector: list[float],
         customer_id: int,
-        knowledge_base_ids: list[int],
+        knowledge_base_ids: list[int] | None = None,
         limit: int = 5,    
         collection_name: str | None = None,
         document_ids: list[int] | None = None,
@@ -85,8 +85,8 @@ class QdrantVectorStore:
         score_threshold: float | None = None,
     ):
         """
-        Search Qdrant using mandatory tenant and knowledge-base filters,
-        with optional document and metadata filtering.
+        Search Qdrant using mandatory tenant filter,
+        with optional knowledge base, document, and metadata filtering.
         """
 
         try:
@@ -95,11 +95,15 @@ class QdrantVectorStore:
                     key="customer_id",
                     match=models.MatchValue(value=customer_id),
                 ),
-                models.FieldCondition(
-                    key="knowledge_base_id",
-                    match=models.MatchAny(any=knowledge_base_ids),
-                ),
             ]
+
+            if knowledge_base_ids:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key="knowledge_base_id",
+                        match=models.MatchAny(any=knowledge_base_ids),
+                    )
+                )
 
             # Optional document filtering.
             if document_ids:
@@ -147,6 +151,7 @@ class QdrantVectorStore:
             )
 
             return response.points
+
 
         except Exception:
             logger.exception(

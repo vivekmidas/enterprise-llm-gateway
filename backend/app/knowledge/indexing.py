@@ -3,18 +3,27 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.knowledge.embeddings import get_embedding_provider
+from app.core.config import get_settings
+from app.knowledge.embeddings import get_embedding_provider_for_model
 from app.knowledge.vector_store import vector_store
-from app.models.db_models import KnowledgeChunkDB, KnowledgeDocumentDB
+from app.models.db_models import (
+    KnowledgeChunkDB,
+    KnowledgeDocumentDB,
+    KnowledgeCollectionDB,
+)
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 async def index_document(
     db: AsyncSession,
     document: KnowledgeDocumentDB,
 ) -> None:
-    """Embed all persisted chunks and index them in Qdrant."""
+    """
+    Embed all chunks for a document and index them in a partitioned Qdrant collection.
+    Resolves the collection metadata and embedding model from MySQL first.
+    """
 
     result = await db.execute(
         select(KnowledgeChunkDB)
@@ -26,19 +35,71 @@ async def index_document(
     if not chunks:
         raise ValueError("Document contains no chunks to index")
 
-    provider = get_embedding_provider()
-    await vector_store.ensure_collection(provider.dimension)
+    # Resolve or create the mapped KnowledgeCollectionDB
+    col_stmt = select(KnowledgeCollectionDB).where(
+        KnowledgeCollectionDB.knowledge_base_id == document.knowledge_base_id
+    )
+    col_res = await db.execute(col_stmt)
+    collection = col_res.scalar_one_or_none()
 
+    if not collection:
+        logger.info(
+            "auto_creating_default_collection_for_kb",
+            extra={"kb_id": document.knowledge_base_id},
+        )
+        collection = KnowledgeCollectionDB(
+            name=f"kb_collection_{document.knowledge_base_id}",
+            knowledge_base_id=document.knowledge_base_id,
+            customer_id=document.customer_id,
+            embedding_model=settings.EMBEDDING_MODEL,
+            vector_dimension=settings.EMBEDDING_DIMENSION,
+            distance_metric="COSINE",
+            status="active",
+        )
+        db.add(collection)
+        await db.commit()
+        await db.refresh(collection)
+
+    # Link document to the collection
+    document.collection_id = collection.id
+    document.collection_name = collection.name
+    await db.commit()
+
+    # Resolve the embedding provider dynamically
+    provider_name = settings.EMBEDDING_PROVIDER
+    model_name = collection.embedding_model or settings.EMBEDDING_MODEL
+
+    if model_name.startswith("text-embedding") or provider_name == "openai":
+        provider_name = "openai"
+
+    provider = get_embedding_provider_for_model(
+        provider_name=provider_name,
+        model_name=model_name,
+        dimension=collection.vector_dimension,
+    )
+
+    # Ensure collection exists in Qdrant
+    await vector_store.ensure_collection(
+        dimension=provider.dimension,
+        collection_name=collection.name,
+    )
+
+    # Generate embeddings and upsert
     vectors = await provider.embed_documents(
         [chunk.content for chunk in chunks]
     )
 
-    await vector_store.upsert_chunks(chunks, vectors)
+    await vector_store.upsert_chunks(
+        chunks=chunks,
+        vectors=vectors,
+        collection_name=collection.name,
+    )
 
     logger.info(
         "knowledge_document_indexed",
         extra={
             "document_id": document.id,
+            "collection_name": collection.name,
             "chunk_count": len(chunks),
         },
     )

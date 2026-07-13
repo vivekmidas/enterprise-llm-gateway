@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
 from app.core.types.common import NodeInput, NodeOutput
 from app.knowledge.retrieval import retrieve
+from app.knowledge.retrieval_models import RetrievedChunk
 from app.nodes.base import BaseNode
 
 
@@ -201,20 +202,30 @@ class KnowledgeRetrievalNode(BaseNode):
                 top_k=top_k,
             )
 
-            async with AsyncSessionLocal() as db:
-                results = await self._retrieve(
-                    db=db,
-                    query=query,
-                    customer_id=customer_id,
-                    knowledge_base_ids=knowledge_base_ids,
-                    top_k=top_k,
-                    document_ids=document_ids or None,
-                    metadata=metadata or None,
-                    score_threshold=score_threshold,
-                )
+            from app.services.retrieval_service import RetrievalService
+            from app.knowledge.retrieval_models import RetrievalRequest as RetrievalServiceRequest
 
-            context = self._build_context(results)
-            citations = self._build_citations(results)
+            request = RetrievalServiceRequest(
+                customer_id=customer_id,
+                user_id=None,
+                query=query,
+                knowledge_base_ids=knowledge_base_ids,
+                top_k=top_k,
+                min_score=score_threshold or 0.0,
+                include_metadata=True,
+                max_context_tokens=6000,
+            )
+
+            async with AsyncSessionLocal() as db:
+                service = RetrievalService(db=db)
+                retrieval_result = await service.retrieve(request)
+
+            chunks = retrieval_result.response.context.chunks
+            context = retrieval_result.response.context.context
+            citations = self._build_citations(chunks)
+
+            # Convert Pydantic objects to dicts for downstream workflow output serialization
+            results = [chunk.model_dump() for chunk in chunks]
 
             output_data = {
                 "results": results,
@@ -278,7 +289,7 @@ class KnowledgeRetrievalNode(BaseNode):
         document_ids: list[int] | None,
         metadata: dict[str, Any] | None,
         score_threshold: float | None,
-    ) -> list[dict]:
+    ) -> list[RetrievedChunk]:
         """Isolated retrieval call for easier testing and extension."""
 
         return await retrieve(
@@ -335,17 +346,20 @@ class KnowledgeRetrievalNode(BaseNode):
         return [int(item) for item in value]
 
     @staticmethod
-    def _build_context(results: list[dict]) -> str:
+    def _build_context(results: list) -> str:
         """Build LLM-ready context from retrieved chunks."""
 
         chunks: list[str] = []
 
-        for result in results:
-            content = (
-                result.get("content")
-                or result.get("text")
-                or result.get("chunk")
-            )
+        for item in results:
+            if hasattr(item, "content"):
+                content = item.content
+            else:
+                content = (
+                    item.get("content")
+                    or item.get("text")
+                    or item.get("chunk")
+                )
 
             if content:
                 chunks.append(str(content).strip())
@@ -353,26 +367,38 @@ class KnowledgeRetrievalNode(BaseNode):
         return "\n\n---\n\n".join(chunks)
 
     @staticmethod
-    def _build_citations(results: list[dict]) -> list[dict]:
+    def _build_citations(results: list) -> list[dict]:
         """Create compact source references from retrieval results."""
 
         citations: list[dict] = []
 
-        for index, result in enumerate(results, start=1):
+        for index, item in enumerate(results, start=1):
+            if hasattr(item, "document_id"):
+                doc_id = item.document_id
+                kb_id = item.knowledge_base_id
+                score = item.score
+                metadata = item.metadata or {}
+                doc_name = metadata.get("document_name") or f"Doc {doc_id}"
+            else:
+                doc_id = item.get("document_id")
+                kb_id = item.get("knowledge_base_id")
+                score = item.get("score")
+                metadata = item.get("metadata", {})
+                doc_name = (
+                    item.get("document_name")
+                    or item.get("file_name")
+                    or item.get("source")
+                    or f"Doc {doc_id}"
+                )
+
             citations.append(
                 {
                     "index": index,
-                    "document_id": result.get("document_id"),
-                    "document_name": (
-                        result.get("document_name")
-                        or result.get("file_name")
-                        or result.get("source")
-                    ),
-                    "knowledge_base_id": result.get(
-                        "knowledge_base_id"
-                    ),
-                    "score": result.get("score"),
-                    "metadata": result.get("metadata", {}),
+                    "document_id": doc_id,
+                    "document_name": doc_name,
+                    "knowledge_base_id": kb_id,
+                    "score": score,
+                    "metadata": metadata,
                 }
             )
 
