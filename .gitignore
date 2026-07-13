@@ -9,3 +9,5 @@ enterprise_gateway.db
 */qdrant_storage/*
 qdrant_data/*
 
+backend/enterprise_gateway.db
+backend/data/*
