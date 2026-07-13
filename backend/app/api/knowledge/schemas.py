@@ -71,6 +71,8 @@ class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)
     knowledge_base_ids: list[int]
     top_k: int = Field(default=5, ge=1, le=50)
+    min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    enable_reranking: Optional[bool] = None
 
 class Citation(BaseModel):
     document_id: int

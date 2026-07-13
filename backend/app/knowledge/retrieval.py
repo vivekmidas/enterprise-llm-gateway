@@ -32,6 +32,7 @@ async def retrieve(
     document_ids: list[int] | None = None,
     metadata: dict[str, Any] | None = None,
     score_threshold: float | None = None,
+    enable_reranking: bool | None = None,
 ) -> list[RetrievedChunk]:
     """
     Perform hybrid knowledge retrieval with multi-collection parallel search and optional reranking.
@@ -296,7 +297,9 @@ async def retrieve(
         # =========================================================
         # 7. Optional Reranking
         # =========================================================
-        reranker = get_reranker()
+        # Per-request override: False disables, True/None uses global setting
+        should_rerank = enable_reranking if enable_reranking is not None else True
+        reranker = get_reranker() if should_rerank else None
 
         if reranker and candidates:
             candidates = await reranker.rerank(

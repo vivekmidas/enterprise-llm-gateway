@@ -1,9 +1,10 @@
 import logging
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+import os
 
 from app.api.auth.dependencies import get_current_user, get_current_admin
 from app.core.database import get_db
@@ -24,6 +25,7 @@ from app.models.db_models import (
     KnowledgeBaseDB,
     KnowledgeCollectionDB,
     KnowledgeDocumentDB,
+    KnowledgeChunkDB,
 )
 from app.api.knowledge.ingestion import knowledge_ingestion_service
 from app.core.config import get_settings
@@ -140,14 +142,41 @@ async def list_knowledge_bases(
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@router.post(
+    "/bases/{kb_id}/upload",
+    response_model=KnowledgeDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_document(
     kb_id: int,
     file: UploadFile = File(...),
+    description: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    doc_type: Optional[str] = Form(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and ingest a document into a specific knowledge base."""
     customer_id = _require_tenant(current_user)
+
+    # 1. Validate file size (limit: 50MB)
+    content = await file.read(50 * 1024 * 1024 + 1)
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds the 50 MB limit."
+        )
+    await file.seek(0)
+
+    # 2. Validate file type (extension check)
+    filename = file.filename or "uploaded_file"
+    allowed_extensions = {".txt", ".pdf", ".doc", ".docx"}
+    _, ext = os.path.splitext(filename.lower())
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type. Allowed types: {', '.join(allowed_extensions)}"
+        )
 
     # Verify Knowledge Base exists and belongs to the tenant
     kb_stmt = select(KnowledgeBaseDB).where(
@@ -163,26 +192,55 @@ async def upload_document(
         )
 
     try:
-        # Create document DB record in pending status
-        db_doc = KnowledgeDocumentDB(
-            knowledge_base_id=kb.id,
-            customer_id=customer_id,
-            created_by=int(current_user.id),
-            name=file.filename or "uploaded_file",
-            status="pending",
+        # 3. Check for existing documents with the same name under this KB to archive them (Upsert behaviour)
+        old_docs_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.knowledge_base_id == kb.id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+            KnowledgeDocumentDB.name == filename,
+            KnowledgeDocumentDB.status != "archived"
         )
-        db.add(db_doc)
+        old_docs_res = await db.execute(old_docs_stmt)
+        old_docs = old_docs_res.scalars().all()
+        
+        for old_doc in old_docs:
+            old_doc.status = "archived"
+            db.add(old_doc)
+            
+            # Delete old chunks in database
+            await db.execute(
+                delete(KnowledgeChunkDB).where(KnowledgeChunkDB.document_id == old_doc.id)
+            )
+            
+            # Delete old points in Qdrant
+            if old_doc.collection_name:
+                try:
+                    from app.knowledge.vector_store import vector_store
+                    await vector_store.delete_document_points(
+                        collection_name=old_doc.collection_name,
+                        document_id=old_doc.id
+                    )
+                except Exception as e:
+                    logger.error(
+                        "failed_to_delete_old_qdrant_points_on_upsert",
+                        extra={"doc_id": old_doc.id, "error": str(e)}
+                    )
+
         await db.commit()
-        await db.refresh(db_doc)
 
-        # Run ingestion pipeline (text extraction, chunking, embedding, Qdrant indexing)
-        await knowledge_ingestion_service.ingest(
+        # 4. Delegate to background ingestion service
+        from app.services.document_ingestion_service import document_ingestion_service
+        
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        
+        return await document_ingestion_service.start_ingestion(
             db=db,
-            document=db_doc,
-            upload=file,
+            upload_file=file,
+            knowledge_base_id=kb.id,
+            current_user=current_user,
+            description=description,
+            tags=tags_list,
+            doc_type=doc_type,
         )
-
-        return db_doc
 
     except Exception as exc:
         logger.exception("document_ingestion_api_failed")
@@ -208,7 +266,7 @@ async def list_documents(
     kb_stmt = select(KnowledgeBaseDB).where(
         KnowledgeBaseDB.id == kb_id,
         KnowledgeBaseDB.customer_id == customer_id,
-    )
+    ).order_by(KnowledgeBaseDB.created_at.desc())
     kb_res = await db.execute(kb_stmt)
     if not kb_res.scalar_one_or_none():
         raise HTTPException(
@@ -222,6 +280,34 @@ async def list_documents(
     )
     doc_res = await db.execute(doc_stmt)
     return doc_res.scalars().all()
+
+
+@router.get(
+    "/bases/{kb_id}/documents/{doc_id}",
+    response_model=KnowledgeDocumentResponse,
+)
+async def get_document(
+    kb_id: int,
+    doc_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get status/details of a specific document."""
+    customer_id = _require_tenant(current_user)
+
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        KnowledgeDocumentDB.customer_id == customer_id,
+    )
+    doc_res = await db.execute(doc_stmt)
+    doc = doc_res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+    return doc
 
 
 # =============================================================================
@@ -248,7 +334,145 @@ async def retrieve_knowledge(
         query=payload.query,
         knowledge_base_ids=payload.knowledge_base_ids,
         top_k=payload.top_k,
+        **({"min_score": payload.min_score} if payload.min_score is not None else {}),
+        **({"enable_reranking": payload.enable_reranking} if payload.enable_reranking is not None else {}),
     )
 
     result = await retrieval_service.retrieve(request)
     return result.response
+
+
+@router.delete(
+    "/bases/{kb_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_knowledge_base(
+    kb_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a Knowledge Base and clean up all metadata and physical collections."""
+    customer_id = _require_tenant(current_user)
+
+    # 1. Fetch KB and verify tenant ownership
+    kb_stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id == kb_id,
+        KnowledgeBaseDB.customer_id == customer_id,
+    )
+    kb_res = await db.execute(kb_stmt)
+    kb = kb_res.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found.",
+        )
+
+    # 2. Get associated collection
+    col_stmt = select(KnowledgeCollectionDB).where(
+        KnowledgeCollectionDB.knowledge_base_id == kb_id,
+        KnowledgeCollectionDB.customer_id == customer_id,
+    )
+    col_res = await db.execute(col_stmt)
+    coll = col_res.scalar_one_or_none()
+
+    try:
+        # Delete Qdrant collection if exists
+        if coll and coll.name:
+            try:
+                from app.knowledge.vector_store import vector_store
+                await vector_store.delete_collection(coll.name)
+            except Exception as e:
+                logger.error(
+                    "qdrant_collection_delete_failed_on_kb_deletion",
+                    extra={"collection": coll.name, "error": str(e)}
+                )
+
+        # Delete database records in order to prevent foreign key violations
+        await db.execute(
+            delete(KnowledgeChunkDB).where(KnowledgeChunkDB.knowledge_base_id == kb_id)
+        )
+        await db.execute(
+            delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.knowledge_base_id == kb_id)
+        )
+        if coll:
+            await db.execute(
+                delete(KnowledgeCollectionDB).where(KnowledgeCollectionDB.id == coll.id)
+            )
+        await db.execute(
+            delete(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
+        )
+
+        await db.commit()
+        return {"message": "Knowledge base and associated documents successfully deleted."}
+
+    except Exception as exc:
+        logger.exception("delete_knowledge_base_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete knowledge base: {exc}",
+        )
+
+
+@router.delete(
+    "/bases/{kb_id}/documents/{doc_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_document(
+    kb_id: int,
+    doc_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a specific document and its vector embeddings."""
+    customer_id = _require_tenant(current_user)
+
+    # 1. Fetch document and verify tenant ownership/KB ID
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        KnowledgeDocumentDB.customer_id == customer_id,
+    )
+    doc_res = await db.execute(doc_stmt)
+    doc = doc_res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    try:
+        # Delete old points in Qdrant
+        if doc.collection_name:
+            try:
+                from app.knowledge.vector_store import vector_store
+                await vector_store.delete_document_points(
+                    collection_name=doc.collection_name,
+                    document_id=doc.id
+                )
+            except Exception as e:
+                logger.error(
+                    "failed_to_delete_qdrant_points_on_doc_deletion",
+                    extra={"doc_id": doc.id, "error": str(e)}
+                )
+
+        # Delete database chunks
+        await db.execute(
+            delete(KnowledgeChunkDB).where(KnowledgeChunkDB.document_id == doc_id)
+        )
+        
+        # Delete document record
+        await db.execute(
+            delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == doc_id)
+        )
+
+        await db.commit()
+        return {"message": "Document and associated embeddings successfully deleted."}
+
+    except Exception as exc:
+        logger.exception("delete_document_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete document: {exc}",
+        )

@@ -33,6 +33,9 @@ class DocumentIngestionService:
         upload_file: UploadFile,
         knowledge_base_id: int,
         current_user,
+        description: str | None = None,
+        tags: list[str] | None = None,
+        doc_type: str | None = None,
     ) -> KnowledgeDocumentDB:
         # Read content and validate size
         content = await upload_file.read()
@@ -94,6 +97,14 @@ class DocumentIngestionService:
         )
 
         # Create KnowledgeDocumentDB in DB (status "pending")
+        metadata = {}
+        if description:
+            metadata["description"] = description
+        if tags:
+            metadata["tags"] = tags
+        if doc_type:
+            metadata["type"] = doc_type
+
         document = KnowledgeDocumentDB(
             knowledge_base_id=knowledge_base_id,
             customer_id=current_user.customer_id,
@@ -110,6 +121,7 @@ class DocumentIngestionService:
             embedding_model=model_name,
             vector_dimension=provider.dimension,
             distance_metric="COSINE",
+            metadata_json=metadata,
         )
 
         db.add(document)

@@ -38,6 +38,7 @@ class RetrievalService:
             knowledge_base_ids=request.knowledge_base_ids,
             top_k=request.top_k,
             score_threshold=request.min_score,
+            enable_reranking=request.enable_reranking,
         )
 
         # Apply token budget and format context string
@@ -77,6 +78,43 @@ class RetrievalService:
             documents=docs_used,
             knowledge_bases=kbs_used,
         )
+
+        # Write to audit log database table
+        try:
+            import uuid
+            from app.models.db_models import AuditLogDB, UserDB
+            
+            user_role = "user"
+            if request.user_id:
+                user_stmt = select(UserDB.role).where(UserDB.id == request.user_id)
+                user_res = await self.db.execute(user_stmt)
+                fetched_role = user_res.scalar_one_or_none()
+                if fetched_role:
+                    user_role = fetched_role
+
+            context_snippet = context_obj.context[:500] + "..." if len(context_obj.context) > 500 else context_obj.context
+            
+            audit_log = AuditLogDB(
+                action="knowledge_search",
+                resource_type="knowledge_base",
+                status="success",
+                actor_user_id=request.user_id,
+                actor_role=user_role,
+                customer_id=request.customer_id,
+                details={
+                    "request_id": f"req_{uuid.uuid4().hex[:16]}",
+                    "kb_count": stats.requested_kbs,
+                    "collection_count": stats.searched_collections,
+                    "chunk_count": stats.chunks_after_filtering,
+                    "elapsed_ms": stats.elapsed_ms,
+                    "query": request.query,
+                    "final_response": context_snippet
+                }
+            )
+            self.db.add(audit_log)
+            await self.db.flush()
+        except Exception as e:
+            logger.error("failed_to_write_search_audit_log", extra={"error": str(e)})
 
         return RetrievalResult(
             response=response,

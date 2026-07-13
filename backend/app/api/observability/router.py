@@ -2,6 +2,9 @@ import time
 import json
 from fastapi import APIRouter, Query, Depends
 from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.models.db_models import KnowledgeBaseDB, KnowledgeDocumentDB, KnowledgeChunkDB
 from app.core.cache import trace_store
 from app.api.auth.dependencies import get_current_user
 from app.core.types.users import User
@@ -178,4 +181,65 @@ async def restart_trace(
     return {
         "message": f"Execution trace {trace_id} successfully restarted.",
         "new_trace_id": new_trace_id
+    }
+
+
+@router.get("/knowledge-metrics")
+async def get_knowledge_metrics(
+    customer_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Fetch counts and metadata statistics of knowledge bases, documents, chunks, and storage size."""
+    # Enforce role-based isolation scope
+    target_customer_id = None
+    if current_user.role == "system_admin":
+        target_customer_id = customer_id  # System admin can filter or view aggregate
+    else:
+        target_customer_id = current_user.customer_id # Admins & users are restricted to their tenant
+        
+    from sqlalchemy import select, func
+    
+    # 1. Active Knowledge Bases count
+    kb_query = select(func.count(KnowledgeBaseDB.id)).where(KnowledgeBaseDB.status == "active")
+    if target_customer_id is not None:
+        kb_query = kb_query.where(KnowledgeBaseDB.customer_id == target_customer_id)
+    kb_res = await db.execute(kb_query)
+    total_kbs = kb_res.scalar() or 0
+    
+    # 2. Documents count grouped by status
+    doc_query = select(KnowledgeDocumentDB.status, func.count(KnowledgeDocumentDB.id))
+    if target_customer_id is not None:
+        doc_query = doc_query.where(KnowledgeDocumentDB.customer_id == target_customer_id)
+    doc_query = doc_query.group_by(KnowledgeDocumentDB.status)
+    doc_res = await db.execute(doc_query)
+    
+    doc_stats = {"completed": 0, "pending": 0, "failed": 0, "archived": 0}
+    total_docs = 0
+    for status_str, count in doc_res.all():
+        if status_str in doc_stats:
+            doc_stats[status_str] = count
+        total_docs += count
+        
+    # 3. Total chunks/vectors count
+    chunk_query = select(func.count(KnowledgeChunkDB.id))
+    if target_customer_id is not None:
+        chunk_query = chunk_query.where(KnowledgeChunkDB.customer_id == target_customer_id)
+    chunk_res = await db.execute(chunk_query)
+    total_chunks = chunk_res.scalar() or 0
+    
+    # 4. Total storage size (sum of file_size)
+    storage_query = select(func.sum(KnowledgeDocumentDB.file_size))
+    if target_customer_id is not None:
+        storage_query = storage_query.where(KnowledgeDocumentDB.customer_id == target_customer_id)
+    storage_query = storage_query.where(KnowledgeDocumentDB.status != "archived")
+    storage_res = await db.execute(storage_query)
+    total_bytes = storage_res.scalar() or 0
+    
+    return {
+        "total_kbs": total_kbs,
+        "total_docs": total_docs,
+        "documents_by_status": doc_stats,
+        "total_chunks": total_chunks,
+        "total_bytes": int(total_bytes)
     }

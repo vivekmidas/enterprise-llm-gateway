@@ -51,6 +51,8 @@ class RetrievalRequest(BaseModel):
 
     max_context_tokens: int = Field(default=6000, ge=500)
 
+    enable_reranking: bool | None = None
+
     @field_validator("query")
     @classmethod
     def validate_query(cls, value: str) -> str:

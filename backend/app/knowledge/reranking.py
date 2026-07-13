@@ -59,13 +59,14 @@ class OllamaReranker(RerankerProvider):
         )
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
                     json={
                         "model": self.model,
                         "stream": False,
                         "format": "json",
+                        "think": False,
                         "messages": [
                             {
                                 "role": "user",
@@ -74,6 +75,7 @@ class OllamaReranker(RerankerProvider):
                         ],
                         "options": {
                             "temperature": 0,
+                            "num_predict": 200,
                         },
                     },
                 )
@@ -90,6 +92,7 @@ class OllamaReranker(RerankerProvider):
                 ranked_ids=ranked_ids,
                 top_k=top_k,
             )
+
         except Exception:
             # Retrieval must remain available if reranking fails.
             logger.exception(

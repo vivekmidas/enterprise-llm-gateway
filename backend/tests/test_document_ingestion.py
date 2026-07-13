@@ -69,6 +69,14 @@ async def test_document_ingestion_flow(client: AsyncClient, system_admin_headers
             assert job["status"] == "COMPLETED"
             assert job["progress"] == 100
 
+            # Query single document status endpoint
+            status_res = await client.get(
+                f"/api/knowledge/bases/{kb_id}/documents/{doc_id}",
+                headers=system_admin_headers
+            )
+            assert status_res.status_code == 200
+            assert status_res.json()["status"] == "ready"
+
             # Verify document status is ready in DB
             from app.core.database import AsyncSessionLocal
             async with AsyncSessionLocal() as session:

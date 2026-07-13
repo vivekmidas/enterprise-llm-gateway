@@ -61,13 +61,30 @@ class KnowledgeRetrievalNode(BaseNode):
     }
 
     # Workflow-configurable properties.
-    user_properties: dict[str, Any] = {
-        "knowledge_base_ids": [],
-        "top_k": 5,
-        "document_ids": [],
-        "metadata": {},
-        "score_threshold": None,
-    }
+    user_properties: list[dict[str, Any]] = [
+        {
+            "key": "knowledge_base_ids",
+            "label": "Knowledge Bases",
+            "type": "choice",
+            "multiple": True,
+            "options": [],
+            "description": "Select the Knowledge Bases to query. If none selected, all active knowledge bases will be searched."
+        },
+        {
+            "key": "top_k",
+            "label": "Top K Chunks",
+            "type": "number",
+            "default": 5,
+            "description": "Number of relevant text chunks to retrieve."
+        },
+        {
+            "key": "score_threshold",
+            "label": "Score Threshold",
+            "type": "number",
+            "default": 0.0,
+            "description": "Minimum similarity score threshold (0.0 to 1.0)."
+        }
+    ]
 
     async def init(self) -> None:
         """Load node properties and database overrides."""
@@ -113,18 +130,6 @@ class KnowledgeRetrievalNode(BaseNode):
                 return self._validation_error(
                     inp,
                     "query must be a non-empty string.",
-                )
-
-            knowledge_base_ids = inp.config.get("knowledge_base_ids")
-
-            if not knowledge_base_ids:
-                # Allow runtime payload to override workflow configuration.
-                knowledge_base_ids = data.get("knowledge_base_ids")
-
-            if not knowledge_base_ids:
-                return self._validation_error(
-                    inp,
-                    "At least one knowledge_base_id is required.",
                 )
 
             return None
@@ -192,6 +197,29 @@ class KnowledgeRetrievalNode(BaseNode):
                     error_message="customer_id is required for knowledge retrieval.",
                     violations=["tenant_scope_missing"],
                 )
+
+            # If no knowledge base IDs specified, query all active KBs for tenant
+            if not knowledge_base_ids:
+                from app.models.db_models import KnowledgeBaseDB
+                from sqlalchemy import select
+                async with AsyncSessionLocal() as db:
+                    kb_stmt = select(KnowledgeBaseDB.id).where(
+                        KnowledgeBaseDB.customer_id == customer_id,
+                        KnowledgeBaseDB.status == "active"
+                    )
+                    kb_res = await db.execute(kb_stmt)
+                    knowledge_base_ids = list(kb_res.scalars().all())
+
+                if not knowledge_base_ids:
+                    output_data = {
+                        "results": [],
+                        "context": "",
+                        "citations": [],
+                    }
+                    return NodeOutput(
+                        trace_id=inp.trace_id,
+                        data=self.set_output_data(inp, output_data),
+                    )
 
             self.logger.info(
                 "knowledge_retrieval_started",

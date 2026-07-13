@@ -62,3 +62,29 @@ curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
     "knowledge_base_ids": [1],
     "top_k": 5
   }'
+
+
+# Create KB
+curl -X POST "http://localhost:8000/api/knowledge/bases" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Product Documentation",
+    "description": "Internal product manuals"
+  }'
+
+# Ingest Document
+curl -X POST "http://localhost:8000/api/knowledge/bases/$KB_ID/documents" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -F "file=@/path/to/document.txt"
+
+
+# Retrieve 
+curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SSO parameters setup",
+    "knowledge_base_ids": ['$KB_ID'],
+    "top_k": 5
+  }'
