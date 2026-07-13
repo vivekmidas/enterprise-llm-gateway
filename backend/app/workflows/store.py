@@ -640,6 +640,8 @@ async def save_workflow_to_store(
                                     **_extract_node_properties(n_dict),
                                 }
                                 base_path = instance_properties.get("base_path", "").strip("/")
+                                if base_path=="docs" or base_path=="": #hack to ensure the workflos get saved 
+                                    base_path=definition.name
                                 if base_path:
                                     conflict_stmt = (
                                         select(WorkflowDB.name, WorkflowNodePropertyDB.properties)
@@ -657,6 +659,7 @@ async def save_workflow_to_store(
                                             continue
                                         other_path = other_properties.get("base_path", "").strip("/")
                                         if other_path and other_path == base_path:
+                                            logger.error(f"Webhook path '{base_path}' is already used by enabled workflow '{other_wf_name}'.")
                                             raise HTTPException(
                                                 status_code=400,
                                                 detail=f"Webhook path '{base_path}' is already used by enabled workflow '{other_wf_name}'."
