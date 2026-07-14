@@ -36,6 +36,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         "role" : data.get("role"),
         "tenant": data.get("customer_id"),
         "domain":data.get("domain"),
+        "status":data.get("status"),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "jti": str(uuid.uuid4()),          # Unique token ID for revocation
@@ -111,10 +112,16 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 audience=settings.AUDIENCE,
                 issuer=settings.ISSUER
             )
-
+            if (request.url.path.startswith("/admin")):
+                if (payload.get("role") not in ["admin","system_admin"]):
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Not authorized to access admin panel"}
+                    )
             request.state.user = {
                 "id": payload["sub"],
                 "domain":payload.get("domain"),
+                "status":payload.get("status"),
                 "role": payload.get("role"),
                 "sid": payload.get("sid"),
                 "tenant": payload.get("tenant")

@@ -69,6 +69,7 @@ async def login(request: LoginRequest):
         token_data = {
             "user_id": str(user.id),
             "role": user.role,
+            "status": True if user.status=="active" else False,
             "customer_id": user.customer_id,
             "domain": domain
         }
@@ -77,6 +78,7 @@ async def login(request: LoginRequest):
         return {
             "user_id": str(user.id),
             "token": token,
+            "status": True if user.status=="active" else False,
             "role": user.role,
             "email": user.email_id,
             "customer_id": user.customer_id,

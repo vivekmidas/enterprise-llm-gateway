@@ -162,10 +162,17 @@ async def restart_trace(
     # 4. Generate new trace_id for restarted execution
     new_trace_id = f"tr_{uuid.uuid4().hex[:16]}"
     
-    # Add restart lineage metadata
+    # Add restart lineage metadata and user context
     if "metadata" not in context:
         context["metadata"] = {}
     context["metadata"]["restarted_from_trace_id"] = trace_id
+    
+    user_data = {
+        "user_id": current_user.id if current_user else None,
+        "customer_id": current_user.customer_id if current_user else None,
+        "role": current_user.role if current_user else None
+    }
+    context["user_data"] = user_data
     
     # 5. Execute dynamic agent in background
     import asyncio

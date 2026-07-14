@@ -13,7 +13,7 @@ class QdrantWebhookNode(BaseWebhookAgent):
     color: str = "#2ECC71"
     
     system_properties: Dict[str, Any] = {
-        "base_path": "qdrant-webhook"
+        "base_path": "qdrant"
     }
     user_properties: Dict[str, Any] = {}
     

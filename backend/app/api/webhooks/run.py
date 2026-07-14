@@ -8,7 +8,7 @@ from app.models.db_models import WorkflowDB, WorkflowNodePropertyDB
 from app.workflows.executor import execute_dynamic_agent
 from sqlalchemy import select
 from app.core.types.users import User
-from app.api.auth.dependencies import get_current_user, require_resource_access
+from app.api.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/webhooks/run", tags=["Webhook Runs"])
 logger = structlog.get_logger(__name__)
@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 async def execute_webhook_workflow(
     webhook_path: str = Path(..., description="The configured base path of the webhook"),
     request: Request = None,
-    current_user: User = Depends(require_resource_access)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Unified public endpoint to trigger webhook-enabled workflows.
@@ -26,8 +26,11 @@ async def execute_webhook_workflow(
     """
     user_id = request.state.user.get("id")
     tenant = request.state.user.get("tenant")
+    domain = request.state.user.get("domain")
+    role = request.state.user.get("role")
+    status= True if request.state.user.get("status") else False
     normalized_path = webhook_path.strip("/") # remove leading /, if any
-    logger.info("webhook_run_received", path=normalized_path, tenant=tenant, user_id=user_id, domain=request.state.user.get("domain"), role=request.state.user.get("role"))
+    logger.info("webhook_run_received", path=normalized_path, tenant=tenant, user_id=user_id, domain=domain, role=role, user_status=status)
 
     async with AsyncSessionLocal() as session:
         # Find the enabled workflow belonging to this customer that has a webhook node with the configured base_path
@@ -93,7 +96,7 @@ async def execute_webhook_workflow(
             raise HTTPException(status_code=401, detail="Invalid webhook signature or token validation failed")
 
     # 3. Execute workflow
-    logger.info("webhook_executing_workflow", path=normalized_path, workflow_id=workflow_def.get("id"))
+    logger.info("starting_webhook_workflow_execution", path=normalized_path, workflow_id=workflow_def.get("id"))
     try:
         trace_id = f"{agent_name}-{int(time.time())}"
         
@@ -101,10 +104,20 @@ async def execute_webhook_workflow(
         if node_instance:
             node_instance._workflows[agent_node_id] = workflow_def
 
+        user_data = {
+            "user_id": current_user.id if current_user else request.state.user.get("id"),
+            "customer_id": current_user.customer_id if current_user else request.state.user.get("tenant"),
+            "role": current_user.role if current_user else request.state.user.get("role"),
+            "status": request.state.user.get("status")
+        }
+        context = {"user_data": user_data}
+
+        # THIS IS THE ENTRY POINT FOR THE WORKFLOW EXECUTION PROCESS
         workflow_result = await execute_dynamic_agent(
             workflow_def,
             raw_payload,
-            trace_id
+            trace_id,
+            context=context
         )
         return {
             "status": "completed",
@@ -112,5 +125,5 @@ async def execute_webhook_workflow(
             "result": workflow_result,
         }
     except Exception as e:
-        logger.error("webhook_workflow_execution_failed", error=str(e))
+        logger.error("webhook_workflow_execution_failed", customer_id=user_data.get("customer_id"), workflow_def=workflow_def.get("name"),user_id=user_data.get("user_id"), error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

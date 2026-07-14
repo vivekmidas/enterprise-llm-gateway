@@ -340,12 +340,7 @@ class KnowledgeRetrievalNode(BaseNode):
 
         context = inp.context or {}
 
-        customer_id = (
-            context.get("customer_id")
-            or context.get("tenant_id")
-            or self.customer_id
-        )
-
+        customer_id = context.get("user_data").get("customer_id")
         if customer_id is None:
             return None
 

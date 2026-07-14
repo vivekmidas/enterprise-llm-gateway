@@ -706,6 +706,7 @@ class BaseNode(BaseModel, abc.ABC):
                         **(input_data if isinstance(input_data, dict) else {}),
                         **(inner_data if isinstance(inner_data, dict) else {}),
                         "nodes": inp.context.get("nodes", {}),
+                        "user_data": inp.context.get("user_data", {}),
                     }
 
                     # find and replace all templates in mapping_config
@@ -863,9 +864,7 @@ class TriggerNode(BaseNode, abc.ABC):
 
         # Trigger the workflow execution via the central executor logic
         try:
-            self.logger.debug("WorkflowExecutor started",
-                          name=self.name, trace_id=t_id,
-                         workflow_id=workflow_config.get("id"))
+            self.logger.debug("WorkflowExecutor started", name=self.name, trace_id=t_id, workflow_id=workflow_config.get("id"))
 
             executor = WorkflowExecutor(workflow_config)
 

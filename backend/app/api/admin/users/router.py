@@ -17,8 +17,7 @@ async def list_users(
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Lists users, scoped by tenant for Company Admins, or all users for System Admin."""
-        
+    """Lists users, scoped by tenant for Company Admins, or all users for System Admin."""  
     stmt = select(usersDb)
     if current_user.role == "admin":
         stmt = stmt.where(usersDb.customer_id == current_user.customer_id)

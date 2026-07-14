@@ -445,9 +445,27 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 if dynamic_output_contract is not None:
                     output_schema = dynamic_output_contract
 
+                # Ensure context is added to input_data for the next nodes in the workflow
+                node_data = state.masked_content or state.content
+                ctx = state.context or {}
+                try:
+                    if node_data:
+                        parsed_data = json.loads(node_data)
+                        if isinstance(parsed_data, dict):
+                            parsed_data["context"] = ctx
+                            if "user_data" in ctx:
+                                parsed_data["user_data"] = ctx["user_data"]
+                            node_data = json.dumps(parsed_data)
+                        else:
+                            node_data = json.dumps({"data": parsed_data, "context": ctx, "user_data": ctx.get("user_data")})
+                    else:
+                        node_data = json.dumps({"data": None, "context": ctx, "user_data": ctx.get("user_data")})
+                except Exception:
+                    node_data = json.dumps({"data": node_data, "context": ctx, "user_data": ctx.get("user_data")})
+
                 agent_input = NodeInput(
                     trace_id=state.trace_id,
-                    data=state.masked_content or state.content,
+                    data=node_data,
                     config=node_config or {},
                     context=state.context,
                     metadata=state.metadata,

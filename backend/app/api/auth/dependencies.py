@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status, Request, Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Tuple
+from typing import Tuple, Any, Optional
 from app.core.database import get_db
 from app.core.security.jwt import decode_access_token
 from app.core.types.users import User
@@ -17,6 +17,7 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
+    # gets current user and checks credentials
     token = credentials.credentials
     payload = decode_access_token(token)
     if not payload:
@@ -49,7 +50,7 @@ async def get_current_user(
         )
         
     db_user, domain = row
-    
+    # is user active, if not error
     if db_user.status != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -62,7 +63,8 @@ async def get_current_user(
         email=db_user.email_id,
         customer_id=db_user.customer_id,
         domain=domain,
-        name=db_user.name
+        name=db_user.name,
+        status=db_user.status
     )
 
 @staticmethod
@@ -76,69 +78,145 @@ async def get_current_admin(
         )
     return current_user
 
-def require_resource_access(request:Request,resource_id:str,resource_type:str):
-    
-    async def _check_access(
+def require_resource(resource_type: str, resource_id: Any = None):
+
+    async def dependency(
         request: Request,
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user),
     ):
-        # Extract resource_id from path parameters dynamically
-        resource_id = None
-        if f"{resource_type}_id" in request.path_params:
-            resource_id = request.path_params[f"{resource_type}_id"]
-        elif "workflow_id" in request.path_params:
-            resource_id = request.path_params["workflow_id"]
-        elif request.path_params:
-            resource_id = list(request.path_params.values())[0]
-
-        if not resource_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing path parameter for {resource_type} resource identification."
-            )
-
-        owner_id = None
-        actual_tenant_id = None
-        resource = None
-
-        if resource_type == "workflow":
-            from app.workflows.service import get_workflow
-            try:
-                resource = await get_workflow(resource_id)
-                owner_id = resource.user_id
-                actual_tenant_id = resource.customer_id
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Workflow {resource_id} not found: {str(e)}"
-                )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported resource type: {resource_type}"
-            )
-
-        # Check permissions
-        # 1. System Admin check
-        if current_user.role == "system_admin":
-            return resource
-
-        # 2. Tenant Admin check
-        if current_user.role == "admin" and actual_tenant_id is not None and current_user.customer_id is not None and str(actual_tenant_id) == str(current_user.customer_id):
-            return resource
-
-        # 3. User Owner check
-        if owner_id is not None and current_user.id is not None and str(owner_id) == str(current_user.id):
-            return resource
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: You must be the owner, a tenant admin, or a system admin to perform this action.",
+        return await _require_resource_access(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            current_user=current_user,
+            request=request,
         )
 
-    return _check_access
+    return dependency
+
+async def _require_resource_access(
+    resource_type: str = None,
+    resource_id: str | Any = None,
+    request: Request = None
+) -> Any:
+    if not resource_type and request:
+        if "workflow_id" in request.path_params:
+            resource_type = "workflow"
+            resource_id = request.path_params["workflow_id"]
+        elif "user_id" in request.path_params:
+            resource_type = "user"
+            resource_id = request.path_params["user_id"]
+        elif "knowledge_base_id" in request.path_params:
+            resource_type = "knowledge_base"
+            resource_id = request.path_params["knowledge_base_id"]
+        elif "webhook_path" in request.path_params:
+            return current_user
+
+    if not resource_type or not resource_id:
+        return current_user
+
+    owner_id = None
+    actual_tenant_id = None
+    resource = None
+
+    if resource_type == "workflow":
+        from app.workflows.service import get_workflow
+        try:
+            resource = await get_workflow(resource_id)
+            owner_id = resource.user_id
+            actual_tenant_id = resource.customer_id
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow {resource_id} not found: {str(e)}"
+            )
+
+    elif resource_type == "user":
+        from app.models.db_models import UserDB
+        from app.core.database import AsyncSessionLocal
+        try:
+            async with AsyncSessionLocal() as session:
+                int_id = int(resource_id)
+                stmt = select(UserDB).where(UserDB.id == int_id)
+                result = await session.execute(stmt)
+                resource = result.scalar_one_or_none()
+            if not resource:
+                raise FileNotFoundError
+            owner_id = resource.id
+            actual_tenant_id = resource.customer_id
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User {resource_id} not found"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch user {resource_id}: {str(e)}"
+            )
+
+    elif resource_type == "knowledge_base":
+        from app.models.db_models import KnowledgeBaseDB
+        from app.core.database import AsyncSessionLocal
+        try:
+            async with AsyncSessionLocal() as session:
+                int_id = int(resource_id)
+                stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == int_id)
+                result = await session.execute(stmt)
+                resource = result.scalar_one_or_none()
+            if not resource:
+                raise FileNotFoundError
+            owner_id = resource.created_by
+            actual_tenant_id = resource.customer_id
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Knowledge base {resource_id} not found"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch knowledge base {resource_id}: {str(e)}"
+            )
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported resource type: {resource_type}"
+        )
+
+    # Check permissions
+    # 1. System Admin check
+    if current_user.role == "system_admin":
+        return resource
+
+    # 2. Tenant check (admin or tenant member)
+    is_tenant_member = (
+        actual_tenant_id is not None 
+        and current_user.customer_id is not None 
+        and str(actual_tenant_id) == str(current_user.customer_id)
+    )
+
+    if is_tenant_member:
+        if resource_type in ("workflow", "knowledge_base"):
+            # Any tenant member (admin or standard user) has access
+            return resource
+        elif resource_type == "user":
+            # For user resources, only tenant admin has access to other users' profiles
+            if current_user.role == "admin":
+                return resource
+
+    # 3. User Owner check
+    if owner_id is not None and current_user.id is not None and str(owner_id) == str(current_user.id):
+        return resource
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: You must be the owner, a tenant admin, or a system admin to perform this action.",
+    )
+
+
 
 
 

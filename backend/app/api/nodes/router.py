@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.models.db_models import CategoryDB, NodeDB, CustomerNodeDB
 from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
-from app.api.auth.dependencies import get_current_user, get_current_admin, require_system_admin,require_resource_access
+from app.api.auth.dependencies import get_current_user, get_current_admin, require_system_admin
 from app.core.types.users import User
 
 logger = structlog.get_logger(__name__)
@@ -71,14 +71,19 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
                     continue
             if isinstance(entry, dict):
                 key = entry.get("key")
-                if key and key in overrides_dict:
-                    val = overrides_dict[key]
-                    if mask_sensitive and any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
-                        entry["default"] = "••••••••" if val else ""
-                        entry["value"] = "••••••••" if val else ""
-                    else:
-                        entry["default"] = val
-                        entry["value"] = val
+                if key:
+                    if key in overrides_dict:
+                        val = overrides_dict[key]
+                        if mask_sensitive and any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+                            entry["default"] = "••••••••" if val else ""
+                            entry["value"] = "••••••••" if val else ""
+                        else:
+                            entry["default"] = val
+                            entry["value"] = val
+                    
+                    source_key = f"{key}_source"
+                    if source_key in overrides_dict:
+                        entry["source"] = overrides_dict[source_key]
                 elif mask_sensitive and key:
                     if any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
                         if entry.get("default"):
@@ -152,9 +157,11 @@ async def configure_customer_node(
     node_name: str,
     config_data: dict,
     customer_id: Optional[int] = None,
-    current_user: User = Depends(require_resource_access),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role not in ["admin", "system_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
     base_node = None
     if current_user.role == "admin":
         # update specific customer node definitions
