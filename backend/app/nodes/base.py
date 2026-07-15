@@ -493,7 +493,7 @@ class BaseNode(BaseModel, abc.ABC):
         Checks mandatory fields and data types in the JSON body passed to the node.
         Returns a NodeOutput with failure status if validation fails, otherwise None.
         """
-        self.logger.info("Starting validate_input_contract", trace_id=inp.trace_id, name= self.name)
+        self.logger.info("starting_validate_input_contract:checking_schema", trace_id=inp.trace_id, name= self.name)
         schema = inp.input_schema if getattr(inp, "input_schema", None) is not None else self.input_contract
         if not schema:
             self.logger.debug("No schema found", name= self.name,  trace_id=inp.trace_id,schema=schema)

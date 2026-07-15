@@ -104,7 +104,7 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
         
     # Company admins can only delete users in their own customer tenant
-    if current_user.role == "admin" and user.customer_id != current_user.customer_id:
+    if current_user.role == "admin" and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="You do not have permission to delete this user")
         
     # Prevent deletion of system_admin users

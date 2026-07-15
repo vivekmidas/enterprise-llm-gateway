@@ -6,11 +6,6 @@ from opentelemetry import trace
 from typing import Any, Dict, List, Optional
 from langgraph.types import RetryPolicy
 from langgraph.graph import StateGraph, END, START
-# try:
-#     from langgraph.pregel.retry import RetryPolicy
-# except ImportError:
-#     # Fallback for versions where it's located in the private _retry module
-#     from langgraph.pregel._retry import RetryPolicy
 
 from app.utils.state import WorkflowState as AgentState
 from app.nodes.base import NodeInput, NodeOutput
@@ -48,31 +43,13 @@ class WorkflowExecutor:
     # Centralized task registry mapping trace_id -> asyncio.Task
     active_tasks: Dict[str, Any] = {}
 
-    def __init__(self, agent_config: Dict[str, Any], compiled_graph: Optional[Any] = None):
+    def __init__(self, agent_config: Optional[Dict[str, Any]] = None, compiled_graph: Optional[Any] = None):
         self.agent_config = agent_config
-        self.agent_id = agent_config.get("id")
-        self.customer_id = agent_config.get("customer_id")
-        self.user_id = agent_config.get("user_id")
+        self.agent_id = agent_config.get("id") if agent_config else None
+        self.customer_id = agent_config.get("customer_id") if agent_config else None
+        self.user_id = agent_config.get("user_id") if agent_config else None
         self.compiled_graph = compiled_graph
         self.agents_executed = []
-
-        # Warm up cache or compile synchronously as a fallback
-        if not self.compiled_graph and self.agent_id:
-            version = str(self.agent_config.get("version", "1"))
-            key = f"compiled_graph:{self.agent_id}:v{version}"
-            from app.core.cache import workflow_cache
-            if key in workflow_cache._local_compiled_cache:
-                logger.info("using_locally_cached_graph_sync", agent_id=self.agent_id)
-                self.compiled_graph = workflow_cache._local_compiled_cache[key]
-            else:
-                from app.workflows.service import compile_workflow_graph
-                logger.info("cache_miss_compiling_graph_sync", agent_id=self.agent_id)
-                try:
-                    self.compiled_graph = compile_workflow_graph(self.agent_config)
-                    # Cache locally
-                    workflow_cache._local_compiled_cache[key] = self.compiled_graph
-                except Exception as ce:
-                    logger.error("sync_compilation_failed", agent_id=self.agent_id, error=str(ce))
 
     @classmethod
     def clear_graph_cache(cls, agent_id: Optional[str] = None):
@@ -98,9 +75,10 @@ class WorkflowExecutor:
     # START EXECUTION FROM HERE, MAIN FUNCTION TO EXECUTE THE WORKFLOW
     async def execute_async(self, input_content: str, trace_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Core execution logic (asynchronous)"""
+        logger.info("starting_agent_execution", agent_id=self.agent_id, customer_id=self.customer_id, user_id=self.user_id, input_content=input_content, trace_id=trace_id, context=context)
         start_time = time.time()
         log = logger.bind(trace_id=trace_id)
-        log.info("agent_execution_started", agent_id=self.agent_id)
+        # log.info("starting_agent_execution", agent_id=self.agent_id, customer_id=self.customer_id, user_id=self.user_id)
 
         # Ensure context is a dict
         is_context_none = context is None
@@ -113,132 +91,135 @@ class WorkflowExecutor:
         if not user_data and is_context_none:
             import os
             if "PYTEST_CURRENT_TEST" in os.environ:
-                workflow_user_id = self.user_id or self.agent_config.get("user_id")
+                workflow_customer_id = self.customer_id or (self.agent_config.get("customer_id") if self.agent_config else None)
+                workflow_user_id = self.user_id or (self.agent_config.get("user_id") if self.agent_config else None)
+                user_cust = workflow_customer_id if workflow_customer_id is not None else workflow_user_id
                 user_data = {
-                    "user_id": str(workflow_user_id) if workflow_user_id is not None else None,
-                    "customer_id": str(workflow_user_id) if workflow_user_id is not None else None,
+                    "user_id": str(workflow_user_id) if workflow_user_id is not None else (str(user_cust) if user_cust is not None else None),
+                    "customer_id": user_cust,
                     "role": "admin",
                     "status": True
                 }
                 context["user_data"] = user_data
 
-        # 1- check if the workflow is runnable if not exit with error
-        if self.agent_config.get("is_runnable") is False:
-            log.error("workflow_execution_halted_unrunnable", agent_id=self.agent_id)
-            result_dict = {
-                "status": "failure",
-                "error_message": "Workflow execution halted: Workflow is marked as not runnable due to node loading errors.",
-                "final_response": "Workflow is not runnable due to missing or failed nodes.",
-                "trace_id": trace_id,
-                "workflow_id": self.agent_id,
-                "workflow_name": self.agent_config.get("name"),
-                "customer_id": self.customer_id,
-                "user_id": self.user_id,
-                "latency_ms": 0.0,
-                "timestamp": start_time,
-                "violations": [],
-                "agents_executed": []
-            }
+        # Initialize result_dict before checks
+        result_dict = {
+            "status": "failure",
+            "error_message": "",
+            "final_response": "",
+            "trace_id": trace_id,
+            "workflow_id": self.agent_id,
+            "workflow_name": self.agent_config.get("name") if self.agent_config else None,
+            "customer_id": self.customer_id,
+            "user_id": self.user_id,
+            "latency_ms": 0.0,
+            "timestamp": start_time,
+            "violations": [],
+            "agents_executed": []
+        }
+
+        # Check conditions to validate runnable status and user data
+        is_unrunnable = self.agent_config and self.agent_config.get("is_runnable") is False
+        is_user_invalid = not user_data
+        is_user_inactive = bool(user_data and (user_data.get("status") is False or str(user_data.get("status")).lower() == "false"))
+        
+        workflow_customer_id = self.customer_id or self.user_id
+        user_customer_id = user_data.get("customer_id") if user_data else None
+        customer_mismatch = bool(
+            workflow_customer_id is not None
+            and user_data
+            and user_customer_id != workflow_customer_id
+            and str(user_customer_id) != str(workflow_customer_id)
+        )
+
+        if is_unrunnable or is_user_invalid or is_user_inactive or customer_mismatch:
+            if is_unrunnable:
+                log.error("workflow_execution_halted_unrunnable", agent_id=self.agent_id)
+                error_msg = "Workflow execution halted: Workflow is marked as not runnable due to node loading errors."
+                final_resp = "Workflow is not runnable due to missing or failed nodes."
+            elif is_user_invalid:
+                log.error("workflow_execution_halted_invalid_user", agent_id=self.agent_id, user_data=None, customer_id=self.customer_id, status=None)
+                error_msg = "Workflow execution halted: User is invalid or not in context."
+                final_resp = "User is invalid or not in context."
+            elif is_user_inactive:
+                log.error("workflow_execution_halted_user_inactive", agent_id=self.agent_id)
+                error_msg = "Workflow execution halted: User status is False."
+                final_resp = "User status is False."
+            else:
+                log.error("workflow_execution_halted_customer_id_mismatch", agent_id=self.agent_id, user_customer_id=user_customer_id, workflow_customer_id=workflow_customer_id)
+                error_msg = f"Workflow execution halted: customer_id '{user_customer_id}' does not match workflow user_id '{workflow_customer_id}'."
+                final_resp = "customer_id does not match workflow user_id."
+
+            result_dict["error_message"] = error_msg
+            result_dict["final_response"] = final_resp
             await trace_store.save_trace(trace_id, result_dict)
-            raise ValueError("Workflow execution halted: Workflow is marked as not runnable due to node loading errors.")
+            raise ValueError(error_msg)
 
-        # 2- check if the user is valid (in context) and the customer_id is same as workflow user_id start execution
-        if (not user_data or user_data.get("status")== False or user_data.get("customer_id") != self.customer_id):
-            log.error("workflow_execution_halted_invalid_user", agent_id=self.agent_id, user_data=user_data, customer_id=self.customer_id, status=user_data.get("status"))
-            result_dict = {
-                "status": "failure",
-                "error_message": "Workflow execution halted: User is invalid or not in context.",
-                "final_response": "User is invalid or not in context.",
-                "trace_id": trace_id,
-                "workflow_id": self.agent_id,
-                "workflow_name": self.agent_config.get("name"),
-                "customer_id": self.customer_id,
-                "user_id": self.user_id,
-                "latency_ms": 0.0,
-                "timestamp": start_time,
-                "violations": [],
-                "agents_executed": []
-            }
-            await trace_store.save_trace(trace_id, result_dict)
-            raise ValueError("Workflow execution halted: User is invalid or not authorized.")
-
-        # If user_data has user_id but not status, resolve status from DB
-        # if user_data.get("user_id") and "status" not in user_data:
-        #     try:
-        #         from app.core.database import AsyncSessionLocal
-        #         from app.models.db_models import UserDB
-        #         from sqlalchemy import select
-        #         async with AsyncSessionLocal() as session:
-        #             try:
-        #                 u_id = int(user_data["user_id"])
-        #             except ValueError:
-        #                 u_id = user_data["user_id"]
-        #             stmt = select(UserDB.status).where(UserDB.id == u_id)
-        #             res = await session.execute(stmt)
-        #             status_val = res.scalar_one_or_none()
-        #             if status_val:
-        #                 user_data["status"] = (status_val != "inactive" and status_val != "deactivated" and status_val != "suspended")
-        #     except Exception as e:
-        #         logger.warning("failed_to_resolve_user_status_from_db", error=str(e), user_id=user_data.get("user_id"))
-
-        # if user_customer_id != workflow_user_id and str(user_customer_id) != str(workflow_user_id):
-        #     log.error("workflow_execution_halted_customer_id_mismatch", agent_id=self.agent_id, user_customer_id=user_customer_id, workflow_user_id=workflow_user_id)
-        #     result_dict = {
-        #         "status": "failure",
-        #         "error_message": f"Workflow execution halted: customer_id '{user_customer_id}' does not match workflow user_id '{workflow_user_id}'.",
-        #         "final_response": "customer_id does not match workflow user_id.",
-        #         "trace_id": trace_id,
-        #         "workflow_id": self.agent_id,
-        #         "workflow_name": self.agent_config.get("name"),
-        #         "customer_id": self.customer_id,
-        #         "user_id": self.user_id,
-        #         "latency_ms": 0.0,
-        #         "timestamp": start_time,
-        #         "violations": [],
-        #         "agents_executed": []
-        #     }
-        #     await trace_store.save_trace(trace_id, result_dict)
-        #     raise ValueError(f"Workflow execution halted: customer_id '{user_customer_id}' does not match workflow user_id '{workflow_user_id}'.")
-
-        # # 3- if user status is False, exit
-        # if user_data.get("status") is False or str(user_data.get("status")).lower() == "false":
-        #     log.error("workflow_execution_halted_user_inactive", agent_id=self.agent_id)
-        #     result_dict = {
-        #         "status": "failure",
-        #         "error_message": "Workflow execution halted: User status is False.",
-        #         "final_response": "User status is False.",
-        #         "trace_id": trace_id,
-        #         "workflow_id": self.agent_id,
-        #         "workflow_name": self.agent_config.get("name"),
-        #         "customer_id": self.customer_id,
-        #         "user_id": self.user_id,
-        #         "latency_ms": 0.0,
-        #         "timestamp": start_time,
-        #         "violations": [],
-        #         "agents_executed": []
-        #     }
-        #     await trace_store.save_trace(trace_id, result_dict)
-        #     raise ValueError("Workflow execution halted: User status is False.")
-
-        # Load compiled graph JIT using hybrid cache validation if not already set (e.g., in unit tests)
+        # Load compiled graph and workflow bundle using cache/DB
         if not self.compiled_graph:
-            version = str(self.agent_config.get("version", "1"))
+            logger.info("compiled_graph_not_found, loading from DB", agent_id=self.agent_id, tenant_id=self.customer_id)
+            version = str(self.agent_config.get("version", "1")) if self.agent_config else "1"
             if self.agent_id:
-                from app.core.cache import workflow_cache
-                cached = await workflow_cache.get_compiled_graph(self.agent_id, version)
-                if cached is not None:
-                    self.compiled_graph = cached
-                else:
-                    try:
-                        from app.workflows.service import get_compiled_workflow
-                        self.compiled_graph = await get_compiled_workflow(self.agent_id, version)
-                    except Exception as ce:
-                        logger.warning("jit_load_failed_falling_back", error=str(ce))
+                from app.workflows.service import get_compiled_workflow_data
+                try:
+                    wf_data = await get_compiled_workflow_data(self.agent_id, version,customer_id=self.customer_id)
+                    self.compiled_graph = wf_data["compiled_graph"]
+                    self.agent_config = wf_data["agent_config"]
+                    starting_node = wf_data["starting_node"]
+                except Exception as e:
+                    # Fallback to compiling the passed agent_config directly if load from DB fails
+                    if self.agent_config:
                         from app.workflows.service import compile_workflow_graph
                         self.compiled_graph = compile_workflow_graph(self.agent_config)
-            else:
+                        # Identify starting node from config
+                        nodes_raw = self.agent_config.get("nodes_structure", [])
+                        starting_node = None
+                        for node in nodes_raw:
+                            node_data = node.get("data", {})
+                            raw_type = str(node_data.get("node_type") or node.get("type") or "").upper()
+                            if raw_type in {"TRIGGER", "START"}:
+                                starting_node = node["id"]
+                                break
+                        if not starting_node and nodes_raw:
+                            starting_node = nodes_raw[0]["id"]
+                    else:
+                        raise e
+            elif self.agent_config:
                 from app.workflows.service import compile_workflow_graph
                 self.compiled_graph = compile_workflow_graph(self.agent_config)
+                # Fallback to identify starting node from config
+                nodes_raw = self.agent_config.get("nodes_structure", [])
+                starting_node = None
+                for node in nodes_raw:
+                    node_data = node.get("data", {})
+                    raw_type = str(node_data.get("node_type") or node.get("type") or "").upper()
+                    if raw_type in {"TRIGGER", "START"}:
+                        starting_node = node["id"]
+                        break
+                if not starting_node and nodes_raw:
+                    starting_node = nodes_raw[0]["id"]
+            else:
+                raise ValueError("WorkflowExecutor requires agent_id or agent_config to retrieve/execute workflow.")
+
+            if self.agent_config:
+                self.customer_id = self.agent_config.get("customer_id")
+                self.user_id = self.agent_config.get("user_id")
+
+            log.info("retrieved_compiled_workflow_and_starting_node", agent_id=self.agent_id, starting_node=starting_node)
+        else:
+            # Graph already compiled, find starting node from config if available
+            starting_node = None
+            if self.agent_config:
+                nodes_raw = self.agent_config.get("nodes_structure", [])
+                for node in nodes_raw:
+                    node_data = node.get("data", {})
+                    raw_type = str(node_data.get("node_type") or node.get("type") or "").upper()
+                    if raw_type in {"TRIGGER", "START"}:
+                        starting_node = node["id"]
+                        break
+                if not starting_node and nodes_raw:
+                    starting_node = nodes_raw[0]["id"]
+            log.info("using_precompiled_workflow_and_starting_node", agent_id=self.agent_id, starting_node=starting_node)
 
         # 4- add the context to the input_data for the next nodes in the workflow
         # all nodes in the workflow should be able to read the context
@@ -283,7 +264,7 @@ class WorkflowExecutor:
         initial_trace = {
             "trace_id": trace_id,
             "workflow_id": self.agent_id,
-            "workflow_name": self.agent_config.get("name"),
+            "workflow_name": self.agent_config.get("name") if self.agent_config else None,
             "status": "running",
             "input": input_content,
             "output": "",
@@ -308,7 +289,7 @@ class WorkflowExecutor:
                 "final_response": "Workflow stopped by user",
                 "trace_id": trace_id,
                 "workflow_id": self.agent_id,
-                "workflow_name": self.agent_config.get("name"),
+                "workflow_name": self.agent_config.get("name") if self.agent_config else None,
                 "customer_id": self.customer_id,
                 "user_id": self.user_id,
                 "latency_ms": round((time.time() - start_time) * 1000, 2),
@@ -325,7 +306,7 @@ class WorkflowExecutor:
                 "final_response": f"Workflow failed: {str(e)}",
                 "trace_id": trace_id,
                 "workflow_id": self.agent_id,
-                "workflow_name": self.agent_config.get("name"),
+                "workflow_name": self.agent_config.get("name") if self.agent_config else None,
                 "customer_id": self.customer_id,
                 "user_id": self.user_id,
                 "latency_ms": round((time.time() - start_time) * 1000, 2),
@@ -340,21 +321,21 @@ class WorkflowExecutor:
                 clear_execution_cache(trace_id)
             except Exception as e:
                 logger.warning("failed_to_clear_execution_cache", error=str(e))
- 
+
         if isinstance(result, AgentState):
             result_dict = result.model_dump()
         elif isinstance(result, dict):
             result_dict = result.copy()
         else:
             result_dict = {}
- 
+
         if result_dict.get("violations"):
             result_dict["status"] = "failure"
- 
+
         result_dict["final_response"] = result_dict.get("llm_response") or result_dict.get("content", input_content)
         result_dict["trace_id"] = trace_id
         result_dict["workflow_id"] = self.agent_id
-        result_dict["workflow_name"] = self.agent_config.get("name")
+        result_dict["workflow_name"] = self.agent_config.get("name") if self.agent_config else None
         result_dict["customer_id"] = self.customer_id
         result_dict["user_id"] = self.user_id
         result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
@@ -363,15 +344,15 @@ class WorkflowExecutor:
         # Set status as completed if it didn't fail
         if result_dict.get("status") not in ["failure", "stopped"]:
             result_dict["status"] = "completed"
- 
+
         log.info("agent_execution_completed",
                  latency_ms=result_dict["latency_ms"],
                  violations_count=len(result_dict.get("violations", [])),
                  agents_count=len(result_dict.get("agents_executed", [])))
- 
+
         await trace_store.save_trace(trace_id, result_dict)
         return result_dict
- 
+
     def execute_sync(self, input_content: str, trace_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Synchronous entry point for the executor."""
         import asyncio
@@ -384,7 +365,7 @@ class WorkflowExecutor:
                 return loop.run_until_complete(self.execute_async(input_content, trace_id, context))
             else:
                 raise
- 
+
 async def execute_dynamic_agent(
     agent_config: Dict[str, Any],
     input_content: str,

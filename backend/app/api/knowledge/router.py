@@ -23,7 +23,9 @@ from app.knowledge.retrieval_models import (
 )
 from app.api.knowledge.schemas import (
     KnowledgeBaseCreate,
+    KnowledgeBaseUpdate,
     KnowledgeBaseResponse,
+    KnowledgeDocumentUpdate,
     KnowledgeDocumentResponse,
     RetrievalRequest,
     ResponseGenerationRequest,
@@ -34,6 +36,7 @@ from app.models.db_models import (
     KnowledgeCollectionDB,
     KnowledgeDocumentDB,
     KnowledgeChunkDB,
+    CustomerDB,
 )
 from app.api.knowledge.ingestion import knowledge_ingestion_service
 from app.core.config import get_settings
@@ -138,6 +141,107 @@ async def list_knowledge_bases(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@router.put(
+    "/bases/{kb_id}",
+    response_model=KnowledgeBaseResponse,
+)
+async def update_knowledge_base(
+    kb_id: int,
+    payload: KnowledgeBaseUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a knowledge base's name, description, status, or settings."""
+    customer_id = _require_tenant(current_user)
+
+    stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id == kb_id,
+        KnowledgeBaseDB.customer_id == customer_id,
+    )
+    result = await db.execute(stmt)
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found.",
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(kb, field, value)
+
+    try:
+        await db.commit()
+        await db.refresh(kb)
+        return kb
+    except Exception as exc:
+        logger.exception("update_knowledge_base_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update knowledge base: {exc}",
+        )
+
+
+# =============================================================================
+# Custom Document Types Settings
+# =============================================================================
+
+
+@router.get(
+    "/document-types",
+    response_model=List[str],
+)
+async def get_document_types(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve custom document types for the current tenant."""
+    customer_id = _require_tenant(current_user)
+    stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+    res = await db.execute(stmt)
+    customer = res.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer tenant not found.",
+        )
+    
+    types = customer.document_types
+    if not types:
+        types = ["General", "Policy", "FAQ", "Technical", "Contract"]
+    return types
+
+
+@router.put(
+    "/document-types",
+    response_model=List[str],
+)
+async def update_document_types(
+    payload: List[str],
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update custom document types for the current tenant (Admin only)."""
+    customer_id = _require_tenant(current_user)
+    stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+    res = await db.execute(stmt)
+    customer = res.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer tenant not found.",
+        )
+    
+    cleaned_types = [t.strip() for t in payload if t.strip()]
+    customer.document_types = cleaned_types
+    db.add(customer)
+    await db.commit()
+    await db.refresh(customer)
+    
+    return customer.document_types or ["General", "Policy", "FAQ", "Technical", "Contract"]
 
 
 # =============================================================================
@@ -288,6 +392,53 @@ async def list_documents(
     )
     doc_res = await db.execute(doc_stmt)
     return doc_res.scalars().all()
+
+
+@router.put(
+    "/bases/{kb_id}/documents/{doc_id}",
+    response_model=KnowledgeDocumentResponse,
+)
+async def update_document(
+    kb_id: int,
+    doc_id: int,
+    payload: KnowledgeDocumentUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a document's name or metadata."""
+    customer_id = _require_tenant(current_user)
+
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        KnowledgeDocumentDB.customer_id == customer_id,
+    )
+    doc_res = await db.execute(doc_stmt)
+    doc = doc_res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+    # Map 'metadata' field to the DB column 'metadata_json'
+    if "metadata" in update_data:
+        doc.metadata_json = update_data.pop("metadata")
+    for field, value in update_data.items():
+        setattr(doc, field, value)
+
+    try:
+        await db.commit()
+        await db.refresh(doc)
+        return doc
+    except Exception as exc:
+        logger.exception("update_document_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update document: {exc}",
+        )
 
 
 @router.get(

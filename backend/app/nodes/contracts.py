@@ -141,13 +141,13 @@ def validate_input_contract(
     inp: NodeInput,
     node_name: str = "node",
 ) -> List[str]:
-    logger.info("starting validate_input_contract", contract=contract.get("rules"), name=node_name,trace_id=inp.trace_id)
+    logger.info("starting_validate_input_contract", contract=contract.get("rules"), name=node_name,trace_id=inp.trace_id)
     schema = normalize_contract(contract)
     if not schema:
         return []
 
     body, errors = parse_input_data(inp)
-    logger.info("end validate_input_contract", errors=errors, trace_id=inp.trace_id)
+    logger.info("end_alidate_input_contract", errors=errors, trace_id=inp.trace_id)
     if errors:
         return errors
 

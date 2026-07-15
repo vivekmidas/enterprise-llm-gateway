@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 async def save_workflow(definition: WorkflowDefinition, customer_id: Optional[int] = None) -> dict:
     """Public service method"""
-    logger.info("workflow_save_initiated", workflow_id=definition.id, user_id=definition.user_id, customer_id=customer_id)
+    logger.info("workflow_save_initiated", workflow_id=definition.id, user_id=definition.user_id, tenant_id=customer_id)
     definition.updated_at = datetime.utcnow()  # Update the timestamp
 
     result = await save_workflow_to_store(definition, customer_id=customer_id)
@@ -83,7 +83,7 @@ async def workflow_auto_discover():
                 
                 # Pre-compile and cache graph at startup
                 try:
-                    await get_compiled_workflow(workflow.id, workflow.version)
+                    await get_compiled_workflow(workflow.id, workflow.version,workflow.customer_id)
                     logger.info("workflow_graph_cached_at_startup", workflow_id=workflow.id)
                 except Exception as ce:
                     logger.error("failed_to_cache_workflow_at_startup", workflow_id=workflow.id, error=str(ce))
@@ -160,7 +160,7 @@ async def sync_workflows_runnability(db: AsyncSession) -> None:
 
 async def delete_workflow(workflow_id: str, version: Optional[str] = None, client_id: Optional[str] = None) -> bool:
     """Public service method to delete workflow"""
-    logger.info("delete_workflow_request", workflow_id=workflow_id, version=version, client_id=client_id)
+    logger.info("delete_workflow_request", workflow_id=workflow_id, version=version, tenant_id=client_id)
     return await delete_workflow_from_store(workflow_id, version)
 
 
@@ -175,23 +175,9 @@ async def get_workflow_user_customer_id(workflow_id: str, version: Optional[str]
 
 async def get_compiled_workflow(workflow_id: str, version: Optional[str] = None, client_id: Optional[str] = None):
     """Internal service method to get compiled LangGraph with Redis cache"""
-    logger.info("get_compiled_workflow_request", workflow_id=workflow_id, version=version, client_id=client_id)
-    # 1. Try cache
-    cached = await workflow_cache.get_compiled_graph(workflow_id, version)
-    if cached is not None:
-        logger.info("compiled_workflow_cache_hit", workflow_id=workflow_id, version=version)
-        return cached
-
-    # 2. Cache miss: Load definition and compile
-    logger.info("compiled_workflow_cache_miss", workflow_id=workflow_id, version=version)
-    workflow_def = await load_workflow_from_store(workflow_id, version)
-    
-    agent_config = workflow_def.model_dump()
-    compiled_graph = compile_workflow_graph(agent_config)
-    
-    # 4. Store in the cache
-    await workflow_cache.set_compiled_graph(workflow_id, version or str(workflow_def.version), compiled_graph)
-    return compiled_graph
+    logger.info("get_compiled_workflow_request", workflow_id=workflow_id, version=version, tenant_id=client_id)
+    wf_data = await get_compiled_workflow_data(workflow_id, version, customer_id=client_id)
+    return wf_data["compiled_graph"]
 
 
 def evaluate_condition_expression(expression: str, state: Any) -> bool:
@@ -538,10 +524,12 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
     return agent_node
 
 
-def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
+def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
     """
-    Builds and compiles LangGraph from Workflow agent_config.
+    Builds StateGraph from Workflow agent_config (uncompiled).
+    Separates graph construction concern.
     """
+    logger.info("building_workflow_graph", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
     nodes_raw = agent_config.get("nodes_structure", [])
     edges_raw = agent_config.get("edges", [])
     edges_list = list(edges_raw.values()) if isinstance(edges_raw, dict) else list(edges_raw or [])
@@ -557,6 +545,7 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
     default_retry_policy = RetryPolicy(max_attempts=2, backoff_factor=2.0, retry_on=(Exception,))
 
     # Add Nodes to the graph
+    logger.info("building_workflow_graph_nodes_started", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
     for node in nodes_raw:
         agent_node_id = node["id"]
         node_data = node.get("data", {})
@@ -578,7 +567,7 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         agent = NodesRegistry.get_node(agent_name)
         if not agent:
             logger.error("agent_not_found in nodes_registry, passing thru as empty agent", agent_name=agent_name)
-            from app.nodes.base import BaseNode
+            from app.nodes.base import BaseNode, NodeOutput
             class PassthroughNode(BaseNode):
                 async def execute(self, inp): 
                     return NodeOutput(trace_id=inp.trace_id, data=inp.data)
@@ -587,6 +576,7 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
             agent = PassthroughNode(name=agent_name or "passthrough")
 
         node_config = node_props or {}
+        logger.info("building_workflow_graph", agent_node_id=agent_node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
         graph.add_node(
             agent_node_id, 
             create_node_execution_wrapper(agent, node_config, node_id=agent_node_id, agent_config=agent_config),
@@ -595,7 +585,10 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
 
     # Add Edges to the graph
     source_edges = {}
+    logger.info("building_workflow_graph_edges_started", edge_count=len(edges_list), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+
     for edge in edges_list:
+        logger.info("building_workflow_graph, adding edges", edge=edge)
         source = edge.get("source") or edge.get("from_node")
         target = edge.get("target") or edge.get("to_node")
         condition = edge.get("condition")
@@ -607,6 +600,8 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         if source and target:
             source_edges.setdefault(source, {}).setdefault(condition, {"targets": [], "expression": expression})
             source_edges[source][condition]["targets"].append(target)
+
+    logger.info("building_workflow_source_mappings", source_edges=len(source_edges), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
 
     for source, mapping in source_edges.items():
         path_map = {}
@@ -622,6 +617,7 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         )
 
     # Entry Point Detection
+    logger.info("finding_workflow_entry_point", nodes_raw=len(nodes_raw), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
     entry_node_id = None
     for node in nodes_raw:
         raw_type = str(node.get("data", {}).get("node_type") or node.get("type") or "").upper()
@@ -634,8 +630,129 @@ def compile_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         for node in nodes_raw:
             if node["id"] not in source_edges:
                 graph.add_edge(node["id"], END)
+    logger.info("building_workflow_graph_completed", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    return graph
 
-        compiled = graph.compile()
-        logger.info("workflow_graph_compiled", nodes_count=len(nodes_raw), edges_count=len(edges_list))
+
+def compile_workflow_graph(graph_or_config: Any) -> Any:
+    """
+    Compiles the built StateGraph into a CompiledStateGraph.
+    For backward compatibility, if a dictionary config is passed instead of StateGraph,
+    it builds it first.
+    """
+    from langgraph.graph.state import CompiledStateGraph
+    from langgraph.graph import StateGraph
+    
+    if isinstance(graph_or_config, StateGraph):
+        compiled = graph_or_config.compile()
+        logger.info("workflow_graph_compiled_directly")
         return compiled
+        
+    # Backward compatibility fallback
+    if isinstance(graph_or_config, dict):
+        graph = build_workflow_graph(graph_or_config)
+        compiled = graph.compile()
+        logger.info("workflow_graph_compiled_fallback")
+        return compiled
+        
+    raise ValueError(f"Invalid argument type for compile_workflow_graph: {type(graph_or_config)}")
+
+
+async def discover_and_compile_workflow(workflow_id: str, version: Optional[str] = None, customer_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Workflow discovery:
+    1. Read workflow from DB
+    2. Check if all nodes are executable (registered) and enabled
+    3. Build graph
+    4. Compile graph
+    5. Cache compiled workflow details
+    """
+    from app.models.db_models import CustomerNodeDB
+    from app.nodes.registry import NodesRegistry
+    
+    logger.info("discovering_and_compiling_workflow", workflow_id=workflow_id, version=version, tenant_id=customer_id)
+    workflow_def = await load_workflow_from_store(workflow_id, version, customer_id)
+    agent_config = workflow_def.model_dump()
+    #customer_id = agent_config.get("customer_id")
+    nodes_raw = agent_config.get("nodes_structure", [])
+
+    # Get registered node names
+    registered_node_names = set(NodesRegistry._nodes.keys())
+
+    # Get enabled nodes for this customer if customer_id exists
+    customer_nodes = {}
+    if customer_id is not None:
+        async with AsyncSessionLocal() as session:
+            stmt = select(CustomerNodeDB).where(CustomerNodeDB.customer_id == customer_id)
+            res = await session.execute(stmt)
+            for row in res.scalars():
+                customer_nodes[row.node_name] = row
+
+    for node in nodes_raw:
+        node_data = node.get("data", {})
+        agent_name = node_data.get("name") or node.get("name")
+        if not agent_name:
+            raw_type = str(node_data.get("node_type") or node.get("type") or "NODE").upper()
+            if raw_type == "LLM":
+                agent_name = "llm_node"
+
+        raw_type = str(node_data.get("node_type") or node.get("type") or "NODE").upper()
+        is_trigger_or_conditional = raw_type in {"START", "TRIGGER", "CONDITION", "CONDITIONAL"} or agent_name == "Start"
+
+        if agent_name and not is_trigger_or_conditional:
+            # 1. Executable check
+            if agent_name not in registered_node_names:
+                logger.error("node_not_executable", agent_name=agent_name, workflow_id=workflow_id)
+                raise ValueError(f"Workflow compilation failed: Node '{agent_name}' is not registered or executable.")
+
+            # 2. Enabled check
+            if customer_id is not None:
+                cust_node = customer_nodes.get(agent_name)
+                if not cust_node or not cust_node.is_enabled:
+                    logger.error("node_disabled_for_customer", agent_name=agent_name, tenant_id=customer_id, workflow_id=workflow_id)
+                    raise ValueError(f"Workflow compilation failed: Node '{agent_name}' is disabled or not assigned to the customer.")
+
+    # Build Graph
+    graph = build_workflow_graph(agent_config)
+
+    # Compile Graph
+    compiled_graph = compile_workflow_graph(graph)
+
+    # Find starting node
+    starting_node = None
+    for node in nodes_raw:
+        node_data = node.get("data", {})
+        raw_type = str(node_data.get("node_type") or node.get("type") or "").upper()
+        if raw_type in {"TRIGGER", "START"}:
+            starting_node = node["id"]
+            break
+    if not starting_node and nodes_raw:
+        starting_node = nodes_raw[0]["id"]
+
+    wf_data = {
+        "compiled_graph": compiled_graph,
+        "agent_config": agent_config,
+        "starting_node": starting_node
+    }
+
+    # Cache compiled workflow data
+    await workflow_cache.set_compiled_workflow_data(workflow_id, version or str(workflow_def.version), wf_data)
+    
+    # Also cache the legacy compiled graph alone for compatibility
+    await workflow_cache.set_compiled_graph(workflow_id, version or str(workflow_def.version), compiled_graph)
+
+    return wf_data
+
+
+async def get_compiled_workflow_data(workflow_id: str, version: Optional[str] = None, customer_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves workflow data bundle from cache, or triggers discovery and compilation on miss.
+    """
+    cached = await workflow_cache.get_compiled_workflow_data(workflow_id, version, customer_id)
+    if cached is not None:
+        logger.info("compiled_workflow_data_cache_hit", workflow_id=workflow_id, version=version,tenant_id=customer_id)
+        return cached
+
+    logger.info("compiled_workflow_data_cache_miss", workflow_id=workflow_id, version=version,tenant_id=customer_id)
+    return await discover_and_compile_workflow(workflow_id, version, customer_id)
 

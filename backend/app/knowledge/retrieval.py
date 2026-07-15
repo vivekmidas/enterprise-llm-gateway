@@ -64,7 +64,7 @@ async def retrieve(
         # =========================================================
         # Step 3: Resolve Knowledge Bases
         # =========================================================
-        logger.info("retrieval_step_3_resolve_kbs_started", customer_id=customer_id, knowledge_base_ids=knowledge_base_ids)
+        logger.info("retrieval_step_3_resolve_kbs_started", tenant_id=customer_id, knowledge_base_ids=knowledge_base_ids)
         kb_result = await db.execute(
             select(KnowledgeBaseDB).where(
                 KnowledgeBaseDB.id.in_(knowledge_base_ids),
@@ -87,7 +87,7 @@ async def retrieve(
         # =========================================================
         # Step 4: Resolve searchable collections
         # =========================================================
-        logger.info("retrieval_step_4_resolve_collections_started", customer_id=customer_id, validated_kb_ids=validated_kb_ids)
+        logger.info("retrieval_step_4_resolve_collections_started", tenant_id=customer_id, validated_kb_ids=validated_kb_ids)
         col_result = await db.execute(
             select(KnowledgeCollectionDB).where(
                 KnowledgeCollectionDB.knowledge_base_id.in_(validated_kb_ids),
@@ -152,7 +152,7 @@ async def retrieve(
 
             try:
                 # Step 6: Search Qdrant
-                logger.info("retrieval_step_6_search_qdrant_started", collection=coll.name, customer_id=customer_id)
+                logger.info("retrieval_step_6_search_qdrant_started", collection=coll.name, tenant_id=customer_id)
                 res_points = await vector_store.search(
                     vector=query_vector,
                     customer_id=customer_id,
@@ -193,7 +193,7 @@ async def retrieve(
 
         # Keyword Search (MySQL) - hybrid search part of Step 6
         try:
-            logger.info("retrieval_step_6_keyword_search_started", customer_id=customer_id, validated_kb_ids=validated_kb_ids)
+            logger.info("retrieval_step_6_keyword_search_started", tenant_id=customer_id, validated_kb_ids=validated_kb_ids)
             keyword_chunk_ids = await keyword_search(
                 db=db,
                 query=query,

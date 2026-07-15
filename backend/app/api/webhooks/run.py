@@ -53,7 +53,7 @@ async def execute_webhook_workflow(
                 break
 
         if not matched:
-            logger.warning("webhook_route_not_found", path=normalized_path, customer_id=tenant)
+            logger.warning("webhook_route_not_found", path=normalized_path, tenant_id=tenant)
             raise HTTPException(status_code=404, detail="Webhook endpoint not found or inactive")
 
         workflow_id, agent_name, agent_node_id, properties = matched
@@ -88,7 +88,7 @@ async def execute_webhook_workflow(
         try:
             is_valid = await node_instance.validate_request(request, raw_payload)
         except Exception as e:
-            logger.error("webhook_signature_validation_crashed", error=str(e))
+            logger.error("webhook_signature_validation_failed", error=str(e))
             is_valid = False
 
         if not is_valid:
@@ -113,17 +113,19 @@ async def execute_webhook_workflow(
         context = {"user_data": user_data}
 
         # THIS IS THE ENTRY POINT FOR THE WORKFLOW EXECUTION PROCESS
+        logger.info("Starting workflow execution", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, context=context)
         workflow_result = await execute_dynamic_agent(
             workflow_def,
             raw_payload,
             trace_id,
             context=context
         )
+        logger.info("workflow_execution_completed", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, result=workflow_result)
         return {
             "status": "completed",
             "agent_node_id": agent_node_id,
             "result": workflow_result,
         }
     except Exception as e:
-        logger.error("webhook_workflow_execution_failed", customer_id=user_data.get("customer_id"), workflow_def=workflow_def.get("name"),user_id=user_data.get("user_id"), error=str(e))
+        logger.error("webhook_workflow_execution_failed", tenant_id=user_data.get("customer_id"), workflow_def=workflow_def.get("name"),user_id=user_data.get("user_id"), error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

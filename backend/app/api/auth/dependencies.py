@@ -96,6 +96,7 @@ def require_resource(resource_type: str, resource_id: Any = None):
 async def _require_resource_access(
     resource_type: str = None,
     resource_id: str | Any = None,
+    current_user: User = None,
     request: Request = None
 ) -> Any:
     if not resource_type and request:
@@ -285,4 +286,6 @@ def require_admin_or_system_admin(request: Request):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
         )
+
+require_resource_access = _require_resource_access
 

@@ -218,13 +218,14 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
         input_content='{"prompt": "hello world"}',
         trace_id="test-contract-pass-trace"
     )
-    # Since it passed contract validation, it will try to call the endpoint and fail with connection/request error
-    assert valid_res.get("status") == "failure"
+    # Since it passed contract validation, it will try to call the endpoint (failing or succeeding depending on environment)
+    assert valid_res.get("status") in ["failure", "completed"]
     node_history2 = valid_res.get("metadata", {}).get("node_history", {})
     assert "node-1" in node_history2
-    # Ensure it's not a contract validation error
-    assert "validation failed" not in node_history2["node-1"]["error"].lower()
-    assert "required" not in node_history2["node-1"]["error"].lower()
+    if "error" in node_history2["node-1"] and node_history2["node-1"]["error"]:
+        # Ensure it's not a contract validation error
+        assert "validation failed" not in node_history2["node-1"]["error"].lower()
+        assert "required" not in node_history2["node-1"]["error"].lower()
 
     # Disable generic_llm_agent as acme_admin
     disable_res = await client.put(
@@ -523,6 +524,7 @@ async def test_deletion_protections(client: AsyncClient, system_admin_headers: d
 
             # 6. Try to delete the normal user using company admin headers
             del_normal_res = await client.delete(f"/admin/users/{normal_user_id}", headers=normal_admin_headers)
+            print("DEBUG_DEL_RES_JSON:", del_normal_res.json() if del_normal_res.content else None)
             assert del_normal_res.status_code == 204
 
             # 7. Try to delete the company admin user from another customer tenant

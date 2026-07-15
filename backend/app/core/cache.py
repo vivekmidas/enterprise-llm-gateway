@@ -56,30 +56,63 @@ class WorkflowCache:
             logger.error(f"Failed to get cached graph {key}: {e}")
             return None
 
+    async def set_compiled_workflow_data(self, agent_id: str, version: str, data: Dict[str, Any]) -> bool:
+        """Cache compiled workflow data bundle locally and store a validity token in Redis."""
+        key = f"compiled_workflow_data:{agent_id}:v{version or 'latest'}"
+        try:
+            self._local_compiled_cache[key] = data
+            await self.client.setex(key, self.ttl, "valid")
+            logger.info(f"Cached compiled workflow data locally + Redis token: {key}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to cache workflow data {key}: {e}")
+            return False
+
+    async def get_compiled_workflow_data(self, agent_id: str, version: str | None = None,customer_id: str | None = None) -> Optional[Dict[str, Any]]:
+        """Retrieve compiled workflow data bundle from local memory, checking Redis for validity."""
+        key = f"compiled_workflow_data:{agent_id}:v{version or 'latest'}"
+        try:
+            if key in self._local_compiled_cache:
+                if await self.client.exists(key):
+                    logger.info(f"Hybrid cache hit for {key}")
+                    return self._local_compiled_cache[key]
+                else:
+                    logger.info(f"Cache token expired or invalidated for {key}")
+                    del self._local_compiled_cache[key]
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get cached workflow data {key}: {e}")
+            return None
+
     async def invalidate_agent(self, agent_id: str) -> None:
         """Invalidate all versions across Redis and local cache."""
         try:
             # 1. Clear local cache entries for this workflow
-            prefix = f"compiled_graph:{agent_id}:"
-            local_keys = [k for k in self._local_compiled_cache if k.startswith(prefix)]
+            prefix_g = f"compiled_graph:{agent_id}:"
+            prefix_w = f"compiled_workflow_data:{agent_id}:"
+            local_keys = [k for k in self._local_compiled_cache if k.startswith(prefix_g) or k.startswith(prefix_w)]
             for k in local_keys:
                 self._local_compiled_cache.pop(k, None)
 
             # 2. Delete tokens from Redis to notify other workers
             async for key in self.client.scan_iter(match=f"compiled_graph:{agent_id}:*"):
                 await self.client.delete(key)
+            async for key in self.client.scan_iter(match=f"compiled_workflow_data:{agent_id}:*"):
+                await self.client.delete(key)
             logger.info(f"Invalidated cache for agent {agent_id}")
         except Exception as e:
             logger.warning(f"Cache invalidation failed for {agent_id}: {e}")
 
     async def clear_all(self) -> None:
-        """Clear all cached compiled graphs locally and in Redis."""
+        """Clear all cached compiled graphs/workflow data locally and in Redis."""
         try:
             # 1. Clear local cache
             self._local_compiled_cache.clear()
 
             # 2. Delete tokens from Redis
             async for key in self.client.scan_iter(match="compiled_graph:*"):
+                await self.client.delete(key)
+            async for key in self.client.scan_iter(match="compiled_workflow_data:*"):
                 await self.client.delete(key)
             logger.info("Cleared entire workflow cache")
         except Exception as e:

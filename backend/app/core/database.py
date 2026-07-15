@@ -60,6 +60,8 @@ def _refresh_customers_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN address VARCHAR")
     if "contact_person" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN contact_person VARCHAR")
+    if "document_types" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN document_types JSON")
 
 
 def _refresh_nodes_table(sync_conn):

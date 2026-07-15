@@ -776,14 +776,14 @@ async def get_workflow_user_customer_id(workflow_id: str) -> tuple[Optional[str]
             raise HTTPException(status_code=500, detail=f"Failed to get workflow user id: {str(e)}")
 
 
-async def load_workflow_from_store(agent_id: str, version: Optional[str] = None) -> WorkflowDefinition:
+async def load_workflow_from_store(agent_id: str, version: Optional[str] = None, customer_id: Optional[str] = None) -> WorkflowDefinition:
     """
     Load workflow definition from database and validate it.
     """
     with tracer.start_as_current_span("load_workflow_from_store") as span:
         span.set_attribute("agent_id", agent_id)
         span.set_attribute("version", version or "1.0")
-
+        span.set_attribute("customer_id", customer_id)
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB).where(WorkflowDB.id == agent_id)

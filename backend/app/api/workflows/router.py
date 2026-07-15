@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_user_customer_id
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, require_resource_access
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -28,7 +28,7 @@ def _mask_sensitive_properties(properties: dict) -> dict:
 
 @router.get("", response_model=List[WorkflowDefinition])
 async def get_workflows(current_user: User = Depends(get_current_user)):
-    logger.info("get_workflows_request", customer_id=current_user.customer_id)
+    logger.info("get_workflows_request", tenant_id=current_user.customer_id)
     if current_user.role == "system_admin":
         workflows = await list_workflows_from_store(customer_id=None)
     else:
@@ -43,7 +43,7 @@ async def get_workflow_by_id(
     version: Optional[str] = None,
     current_user: User = Depends(get_current_user)
 ):
-    logger.info("get_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
+    logger.info("get_workflow_request", workflow_id=workflow_id, version=version, tenant_id=current_user.customer_id)
     try:
         workflow = await get_workflow(workflow_id, version)
         if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
@@ -237,7 +237,7 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
     request.user_id = current_user.id
     request.customer_id = current_user.customer_id
     
-    logger.info("create_workflow_request", workflow_id=request.id, name=request.name, user_id=request.user_id, customer_id=request.customer_id)
+    logger.info("create_workflow_request", workflow_id=request.id, name=request.name, user_id=request.user_id, tenant_id=request.customer_id)
     
     request_data = request.model_dump()
     
@@ -263,7 +263,7 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
 async def remove_workflow(workflow_id: str, request: Request, current_user: User = Depends(get_current_user)):
     await require_resource_access("workflow", workflow_id, current_user=current_user)
     version = 1
-    logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, customer_id=current_user.customer_id)
+    logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, tenantr_id=current_user.customer_id)
     try:
         success = await delete_workflow(workflow_id, 1)
     except Exception as e:
