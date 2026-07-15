@@ -75,7 +75,7 @@ class WorkflowExecutor:
     # START EXECUTION FROM HERE, MAIN FUNCTION TO EXECUTE THE WORKFLOW
     async def execute_async(self, input_content: str, trace_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Core execution logic (asynchronous)"""
-        logger.info("starting_agent_execution", agent_id=self.agent_id, customer_id=self.customer_id, user_id=self.user_id, input_content=input_content, trace_id=trace_id, context=context)
+        logger.info("starting_agent_execution",name=__name__, agent_id=self.agent_id, customer_id=self.customer_id, user_id=self.user_id, input_content=input_content, trace_id=trace_id, context=context)
         start_time = time.time()
         log = logger.bind(trace_id=trace_id)
         # log.info("starting_agent_execution", agent_id=self.agent_id, customer_id=self.customer_id, user_id=self.user_id)

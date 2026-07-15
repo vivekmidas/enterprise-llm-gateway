@@ -382,6 +382,8 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
     tracer = trace.get_tracer(__name__)
     
     async def agent_node(state: Any) -> Dict[str, Any]:
+        logger.info("creating_node_wrapper", agent_node_id=agent_node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
+ 
         agent_name = getattr(agent, "name", "unknown")
         
         with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
@@ -390,7 +392,7 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
             span.set_attribute("trace_id", state.trace_id)
             
             try:
-                logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
+                #logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
                 
                 customer_id = None
                 if hasattr(agent_config, "customer_id"):
@@ -545,7 +547,7 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
     default_retry_policy = RetryPolicy(max_attempts=2, backoff_factor=2.0, retry_on=(Exception,))
 
     # Add Nodes to the graph
-    logger.info("building_workflow_graph_nodes_started", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    logger.info("starting_building_workflow_graph_nodes", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
     for node in nodes_raw:
         agent_node_id = node["id"]
         node_data = node.get("data", {})
@@ -566,7 +568,7 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         from app.nodes.registry import NodesRegistry
         agent = NodesRegistry.get_node(agent_name)
         if not agent:
-            logger.error("agent_not_found in nodes_registry, passing thru as empty agent", agent_name=agent_name)
+            logger.error("building_workflow_graph:agent_not_found in nodes_registry, passing thru as empty agent", agent_name=agent_name)
             from app.nodes.base import BaseNode, NodeOutput
             class PassthroughNode(BaseNode):
                 async def execute(self, inp): 
@@ -576,19 +578,22 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
             agent = PassthroughNode(name=agent_name or "passthrough")
 
         node_config = node_props or {}
-        logger.info("building_workflow_graph", agent_node_id=agent_node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
+
+        node_wrapper = create_node_execution_wrapper(agent, node_config, node_id=agent_node_id, agent_config=agent_config)
+        logger.info("building_workflow_graph:adding_node_to_graph", agent_node_id=agent_node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
+    
         graph.add_node(
             agent_node_id, 
-            create_node_execution_wrapper(agent, node_config, node_id=agent_node_id, agent_config=agent_config),
+            node_wrapper,
             retry=default_retry_policy
         )
 
     # Add Edges to the graph
     source_edges = {}
-    logger.info("building_workflow_graph_edges_started", edge_count=len(edges_list), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    logger.info("building_workflow_graph:adding_edges_graph", edge_count=len(edges_list), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
 
     for edge in edges_list:
-        logger.info("building_workflow_graph, adding edges", edge=edge)
+        logger.info("building_workflow_graph:building_workflow_graph, adding edges", edge=edge)
         source = edge.get("source") or edge.get("from_node")
         target = edge.get("target") or edge.get("to_node")
         condition = edge.get("condition")
@@ -601,7 +606,7 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
             source_edges.setdefault(source, {}).setdefault(condition, {"targets": [], "expression": expression})
             source_edges[source][condition]["targets"].append(target)
 
-    logger.info("building_workflow_source_mappings", source_edges=len(source_edges), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    logger.info("building_workflow_graph:building_workflow_source_mappings", source_edges=len(source_edges), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
 
     for source, mapping in source_edges.items():
         path_map = {}
@@ -617,7 +622,7 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         )
 
     # Entry Point Detection
-    logger.info("finding_workflow_entry_point", nodes_raw=len(nodes_raw), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    logger.info("building_workflow_graph:finding_workflow_entry_point", nodes_raw=len(nodes_raw), workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
     entry_node_id = None
     for node in nodes_raw:
         raw_type = str(node.get("data", {}).get("node_type") or node.get("type") or "").upper()
