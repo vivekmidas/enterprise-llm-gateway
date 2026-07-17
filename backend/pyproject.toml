@@ -47,7 +47,8 @@ dependencies = [
     "pypdf>=5.0.0",
     "python-multipart>=0.0.20",
     "qdrant-client>=1.15.0",
-    "openai>=1.0.0"
+    "openai>=1.0.0",
+    "fastjsonschema"
 ]
 dev = [
   { include-group = "prod" },

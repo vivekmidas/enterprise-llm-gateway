@@ -33,6 +33,8 @@ async def retrieve(
     metadata: dict[str, Any] | None = None,
     score_threshold: float | None = None,
     enable_reranking: bool | None = None,
+    rerank_model: str | None = None,
+    rerank_limit: int | None = None,
 ) -> list[RetrievedChunk]:
     """
     Perform hybrid knowledge retrieval with multi-collection parallel search and optional reranking.
@@ -61,6 +63,14 @@ async def retrieve(
         raise ValueError("top_k must be greater than zero")
 
     try:
+        # Fetch customer settings
+        from app.models.db_models import CustomerDB
+        cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+        cust_res = await db.execute(cust_stmt)
+        customer = cust_res.scalar_one_or_none()
+        tenant_settings = (customer.settings or {}) if customer else {}
+        approach = tenant_settings.get("approach", "hybrid").lower()
+
         # =========================================================
         # Step 3: Resolve Knowledge Bases
         # =========================================================
@@ -118,8 +128,8 @@ async def retrieve(
         embedding_cache = {}
 
         async def search_single_collection(coll: KnowledgeCollectionDB) -> list:
-            provider_name = settings.EMBEDDING_PROVIDER
-            model_name = coll.embedding_model or settings.EMBEDDING_MODEL
+            provider_name = tenant_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
+            model_name = coll.embedding_model or tenant_settings.get("embedding_model") or settings.EMBEDDING_MODEL
             
             # Map embedding model to openai provider if relevant
             if model_name.startswith("text-embedding") or provider_name == "openai":
@@ -134,7 +144,7 @@ async def retrieve(
                     provider = get_embedding_provider_for_model(
                         provider_name=provider_name,
                         model_name=model_name,
-                        dimension=coll.vector_dimension,
+                        dimension=coll.vector_dimension or tenant_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION,
                     )
                     embedding_cache[cache_key] = await provider.embed_query(query)
                     logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name)
@@ -153,6 +163,11 @@ async def retrieve(
             try:
                 # Step 6: Search Qdrant
                 logger.info("retrieval_step_6_search_qdrant_started", collection=coll.name, tenant_id=customer_id)
+                active_threshold = (
+                    score_threshold
+                    if score_threshold is not None
+                    else tenant_settings.get("min_score", 0.65)
+                )
                 res_points = await vector_store.search(
                     vector=query_vector,
                     customer_id=customer_id,
@@ -161,7 +176,7 @@ async def retrieve(
                     collection_name=coll.name,
                     document_ids=document_ids,
                     metadata=metadata,
-                    score_threshold=score_threshold,
+                    score_threshold=active_threshold,
                 )
                 logger.info("retrieval_step_6_search_qdrant_success", collection=coll.name, points_count=len(res_points))
                 return res_points
@@ -173,52 +188,55 @@ async def retrieve(
                 )
                 return []
 
-        # Execute parallel searches
-        search_tasks = [search_single_collection(c) for c in collections]
-        search_results = await asyncio.gather(*search_tasks)
-
         # Preserve vector scores and extract chunk ids
         vector_score_map = {}
         ranked_lists = []
 
-        for coll_points in search_results:
-            coll_chunk_ids = []
-            for point in coll_points:
-                if point.payload and "chunk_id" in point.payload:
-                    chunk_id = int(point.payload["chunk_id"])
-                    coll_chunk_ids.append(chunk_id)
-                    vector_score_map[chunk_id] = float(point.score)
-            if coll_chunk_ids:
-                ranked_lists.append(coll_chunk_ids)
+        # Execute parallel searches if vector is enabled
+        if approach in ("hybrid", "vector"):
+            search_tasks = [search_single_collection(c) for c in collections]
+            search_results = await asyncio.gather(*search_tasks)
+
+            for coll_points in search_results:
+                coll_chunk_ids = []
+                for point in coll_points:
+                    if point.payload and "chunk_id" in point.payload:
+                        chunk_id = int(point.payload["chunk_id"])
+                        coll_chunk_ids.append(chunk_id)
+                        vector_score_map[chunk_id] = float(point.score)
+                if coll_chunk_ids:
+                    ranked_lists.append(coll_chunk_ids)
 
         # Keyword Search (MySQL) - hybrid search part of Step 6
-        try:
-            logger.info("retrieval_step_6_keyword_search_started", tenant_id=customer_id, validated_kb_ids=validated_kb_ids)
-            keyword_chunk_ids = await keyword_search(
-                db=db,
-                query=query,
-                customer_id=customer_id,
-                knowledge_base_ids=validated_kb_ids,
-                limit=candidate_limit,
-            )
-            logger.info("retrieval_step_6_keyword_search_success", count=len(keyword_chunk_ids))
-        except Exception as e:
-            logger.error("retrieval_step_6_keyword_search_failed", error=str(e))
-            keyword_chunk_ids = []
-
-        if document_ids and keyword_chunk_ids:
-            filtered_result = await db.execute(
-                select(KnowledgeChunkDB.id).where(
-                    KnowledgeChunkDB.id.in_(keyword_chunk_ids),
-                    KnowledgeChunkDB.customer_id == customer_id,
-                    KnowledgeChunkDB.document_id.in_(document_ids),
+        keyword_chunk_ids = []
+        if approach in ("hybrid", "keyword"):
+            try:
+                logger.info("retrieval_step_6_keyword_search_started", tenant_id=customer_id, validated_kb_ids=validated_kb_ids)
+                keyword_chunk_ids = await keyword_search(
+                    db=db,
+                    query=query,
+                    customer_id=customer_id,
+                    knowledge_base_ids=validated_kb_ids,
+                    limit=candidate_limit,
                 )
-            )
-            allowed_ids = set(filtered_result.scalars().all())
-            keyword_chunk_ids = [cid for cid in keyword_chunk_ids if cid in allowed_ids]
+                logger.info("retrieval_step_6_keyword_search_success", count=len(keyword_chunk_ids))
+            except Exception as e:
+                logger.error("retrieval_step_6_keyword_search_failed", error=str(e))
+                keyword_chunk_ids = []
 
-        if keyword_chunk_ids:
-            ranked_lists.append(keyword_chunk_ids)
+            if document_ids and keyword_chunk_ids:
+                filtered_result = await db.execute(
+                    select(KnowledgeChunkDB.id).where(
+                        KnowledgeChunkDB.id.in_(keyword_chunk_ids),
+                        KnowledgeChunkDB.customer_id == customer_id,
+                        KnowledgeChunkDB.document_id.in_(document_ids),
+                    )
+                )
+                allowed_ids = set(filtered_result.scalars().all())
+                keyword_chunk_ids = [cid for cid in keyword_chunk_ids if cid in allowed_ids]
+
+            if keyword_chunk_ids:
+                ranked_lists.append(keyword_chunk_ids)
 
         # =========================================================
         # Step 7: Merge results
@@ -236,10 +254,12 @@ async def retrieve(
             return []
 
         # Keep more candidates when reranking is enabled
-        if settings.RERANK_ENABLED:
+        should_rerank = enable_reranking if enable_reranking is not None else tenant_settings.get("enable_reranking", settings.RERANK_ENABLED)
+        if should_rerank:
+            cand_limit = rerank_limit or tenant_settings.get("rerank_limit") or tenant_settings.get("rerank_candidate_limit") or settings.RERANK_CANDIDATE_LIMIT
             selection_limit = min(
                 len(fused_results),
-                settings.RERANK_CANDIDATE_LIMIT,
+                cand_limit,
             )
         else:
             selection_limit = min(
@@ -326,9 +346,10 @@ async def retrieve(
         # =========================================================
         # 7. Optional Reranking
         # =========================================================
-        # Per-request override: False disables, True/None uses global setting
-        should_rerank = enable_reranking if enable_reranking is not None else True
-        reranker = get_reranker() if should_rerank else None
+        # Per-request override: False disables, True/None uses global/tenant setting
+        should_rerank = enable_reranking if enable_reranking is not None else tenant_settings.get("enable_reranking", settings.RERANK_ENABLED)
+        active_rerank_model = rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL
+        reranker = get_reranker(model_name=active_rerank_model) if should_rerank else None
 
         if reranker and candidates:
             candidates = await reranker.rerank(

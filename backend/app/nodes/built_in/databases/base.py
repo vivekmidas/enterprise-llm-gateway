@@ -33,8 +33,19 @@ class DBExecutor(BaseNode, abc.ABC):
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """Additional DB-specific validation beyond contract."""
         props = inp.config or self.properties
-        required = ["connection", "query"]
-        missing = [f for f in required if not props.get(f)]
+
+        # Check connection
+        has_connection = False
+        if props.get("connection"):
+            has_connection = True
+        elif any(k in props for k in ["host", "database", "path", "user"]):
+            has_connection = True
+        elif self.db_type == "sqlite":
+            has_connection = True
+
+        missing = []
+        if not has_connection:
+            missing.append("connection")
 
         if missing:
             error = {

@@ -1,13 +1,16 @@
 import functools
 import json
 import re
+import threading
 from typing import Any, Dict, List, Optional
 
+import fastjsonschema
 from app.core.types.common import NodeInput
 import structlog
 
 logger = structlog.get_logger(__name__)
 logger.bind(file="contract")
+
 
 
 def debug_log(func):
@@ -383,81 +386,230 @@ def _required_fields(schema: Dict[str, Any], properties: Optional[Dict[str, Dict
     return required
 
 
-@debug_log
-def _validate_value(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
-    """Validate one value against a single field schema and return any violations."""
+_validator_cache = {}
+_cache_lock = threading.Lock()
 
-    errors: List[str] = []
+# Define the custom format checkers for fastjsonschema
+def _is_email(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", val))
 
-    if value is None:
-        if _as_bool(schema.get("nullable", False)) or schema.get("type") == "null":
-            return errors
-        return [f"{path} must not be null"]
+def _is_phone(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^\+?[0-9][0-9 .()-]{6,20}$", val))
 
-    expected_type = _normalize_type(schema.get("type", "json"))
-    if not _matches_type(value, expected_type):
-        return [f"{path} expected {expected_type}, got {type(value).__name__}"]
+def _is_credit_card(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^[0-9][0-9 -]{11,22}[0-9]$", val))
 
-    if "enum" in schema and value not in schema["enum"]:
-        errors.append(f"{path} must be one of {schema['enum']}")
+def _is_url(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^https?://[^\s/$.?#].[^\s]*$", val))
 
-    if expected_type in {"number", "integer"}:
-        minimum = schema.get("minimum")
-        maximum = schema.get("maximum")
-        if minimum is not None and value < minimum:
-            errors.append(f"{path} must be greater than or equal to {minimum}")
-        if maximum is not None and value > maximum:
-            errors.append(f"{path} must be less than or equal to {maximum}")
+def _is_uuid(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$", val))
 
-    if expected_type == "string":
-        errors.extend(_validate_string_constraints(value, schema, path))
-    elif expected_type == "array":
-        errors.extend(_validate_array_constraints(value, schema, path))
-    elif expected_type == "object":
-        errors.extend(_validate_object_constraints(value, schema, path))
-    elif expected_type == "json" and isinstance(value, str):
-        try:
-            json.loads(value)
-        except json.JSONDecodeError:
-            errors.append(f"{path} expected valid JSON string")
+def _is_date(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", val))
 
-    field_format = schema.get("format")
-    if expected_type == "file" or field_format in {"pdf", "doc", "docx", "image", "file"}:
-        errors.extend(_validate_file_constraints(value, schema, path))
+def _is_datetime(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", val))
 
-    return errors
+def _is_ip_address(val):
+    if not isinstance(val, str):
+        return True
+    return bool(re.match(r"^((25[0-5]|2[0-4]\d|1?\d?\d)(\.|$)){4}$", val))
 
+# File formats: pdf, doc, docx, image, file
+def _is_pdf(val):
+    errors = _validate_file_constraints(val, {"format": "pdf"}, "")
+    return len(errors) == 0
 
-@debug_log
-def _validate_string_constraints(value: str, schema: Dict[str, Any], path: str) -> List[str]:
-    errors = []
-    if schema.get("minLength") is not None and len(value) < schema["minLength"]:
-        errors.append(f"{path} length must be at least {schema['minLength']}")
-    if schema.get("maxLength") is not None and len(value) > schema["maxLength"]:
-        errors.append(f"{path} length must be at most {schema['maxLength']}")
-    if schema.get("pattern") and not re.search(schema["pattern"], value):
-        errors.append(f"{path} must match pattern {schema['pattern']}")
-    field_format = schema.get("format")
-    if field_format:
-        errors.extend(_validate_format(value, str(field_format), schema, path))
-    return errors
+def _is_doc(val):
+    errors = _validate_file_constraints(val, {"format": "doc"}, "")
+    return len(errors) == 0
 
+def _is_docx(val):
+    errors = _validate_file_constraints(val, {"format": "docx"}, "")
+    return len(errors) == 0
 
-@debug_log
-def _validate_format(value: str, field_format: str, schema: Dict[str, Any], path: str) -> List[str]:
-    normalized_format = field_format.lower()
-    if normalized_format in {"phone_number", "creditcard"}:
-        normalized_format = "phone" if normalized_format == "phone_number" else "credit_card"
+def _is_image(val):
+    errors = _validate_file_constraints(val, {"format": "image"}, "")
+    return len(errors) == 0
 
-    pattern = FORMAT_PATTERNS.get(normalized_format)
-    if pattern and not re.search(pattern, value):
-        return [f"{path} must be a valid {normalized_format}"]
+def _is_file(val):
+    errors = _validate_file_constraints(val, {"format": "file"}, "")
+    return len(errors) == 0
 
-    if normalized_format == "password":
-        return _validate_password(value, schema, path)
+CUSTOM_FORMATS = {
+    "email": _is_email,
+    "phone": _is_phone,
+    "credit_card": _is_credit_card,
+    "url": _is_url,
+    "uuid": _is_uuid,
+    "date": _is_date,
+    "datetime": _is_datetime,
+    "ip_address": _is_ip_address,
+    "pdf": _is_pdf,
+    "doc": _is_doc,
+    "docx": _is_docx,
+    "image": _is_image,
+    "file": _is_file,
+}
 
-    return []
+def clean_json_schema(schema: Any) -> Any:
+    if isinstance(schema, list):
+        return [clean_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
 
+    cleaned = {}
+    for k, v in schema.items():
+        if k == "required":
+            if isinstance(v, list):
+                cleaned[k] = [str(x) for x in v]
+            continue
+        elif k == "type":
+            if v == "file":
+                cleaned[k] = ["string", "object"]
+            elif v == "json":
+                cleaned[k] = ["string", "number", "integer", "boolean", "array", "object", "null"]
+            else:
+                cleaned[k] = clean_json_schema(v)
+        elif k in {"properties", "items"}:
+            cleaned[k] = clean_json_schema(v)
+        elif k in {"nullable"}:
+            pass
+        elif k in {"mandatory", "stateable", "state_required", "redact"}:
+            pass
+        else:
+            cleaned[k] = clean_json_schema(v)
+
+    if schema.get("nullable") is True and "type" in cleaned:
+        t = cleaned["type"]
+        if isinstance(t, str):
+            if t != "null":
+                cleaned["type"] = [t, "null"]
+        elif isinstance(t, list):
+            if "null" not in t:
+                cleaned["type"] = t + ["null"]
+
+    return cleaned
+
+def get_validator(schema: dict):
+    # Serialize schema to a stable key
+    cleaned_schema = clean_json_schema(schema)
+    schema_key = json.dumps(cleaned_schema, sort_keys=True)
+    with _cache_lock:
+        if schema_key not in _validator_cache:
+            try:
+                _validator_cache[schema_key] = fastjsonschema.compile(cleaned_schema, formats=CUSTOM_FORMATS)
+            except Exception as e:
+                logger.error("fastjsonschema_compile_failed", schema=schema, cleaned_schema=cleaned_schema, error=str(e))
+                _validator_cache[schema_key] = fastjsonschema.compile(cleaned_schema)
+        return _validator_cache[schema_key]
+
+def translate_error(e: fastjsonschema.JsonSchemaValueException, path: str) -> List[str]:
+    rule = e.rule
+    msg = e.message
+    
+    # Path extraction: e.name is the variable name inside the compiled code, e.g. 'data.user_id' or 'data' or 'data[0]'
+    clean_path = e.name
+    if clean_path.startswith("data."):
+        clean_path = "$." + clean_path[5:]
+    elif clean_path == "data":
+        clean_path = "$"
+    elif clean_path.startswith("data["):
+        clean_path = "$" + clean_path[4:]
+    else:
+        clean_path = path
+
+    # If the clean_path is relative to the sub-validator's root ($), resolve to absolute path using parent path
+    if clean_path.startswith("$") and path != "$":
+        if clean_path == "$":
+            clean_path = path
+        elif clean_path.startswith("$."):
+            clean_path = path + clean_path[1:]
+        elif clean_path.startswith("$["):
+            clean_path = path + clean_path[1:]
+
+    # If the clean_path does not start with $, but we have a custom path, use the custom path
+    if not clean_path.startswith("$"):
+        if path.startswith("$"):
+            clean_path = path
+        else:
+            clean_path = f"$.{clean_path}" if clean_path else "$"
+
+    if rule == 'required':
+        # E.g. "data.customer must contain ['id'] properties"
+        import re
+        match = re.search(r"must contain \['(.*)'\] properties", msg)
+        if match:
+            missing_field = match.group(1)
+            if clean_path == "$":
+                return [f"$.{missing_field} is mandatory"]
+            else:
+                return [f"{clean_path}.{missing_field} is mandatory"]
+        return [f"{clean_path} is mandatory"]
+
+    if rule == 'type':
+        # E.g. "data.message must be string" -> "$.message expected string, got int"
+        expected = e.rule_definition
+        if isinstance(expected, list):
+            expected_str = " or ".join(expected)
+        else:
+            expected_str = str(expected)
+        
+        got_type = type(e.value).__name__
+        if got_type == "dict":
+            got_type = "object"
+        elif got_type == "list":
+            got_type = "array"
+        elif got_type == "bool":
+            got_type = "bool"
+        return [f"{clean_path} expected {expected_str}, got {got_type}"]
+
+    if rule == 'minLength':
+        return [f"{clean_path} length must be at least {e.rule_definition}"]
+
+    if rule == 'maxLength':
+        return [f"{clean_path} length must be at most {e.rule_definition}"]
+
+    if rule == 'minimum':
+        return [f"{clean_path} must be greater than or equal to {e.rule_definition}"]
+
+    if rule == 'maximum':
+        return [f"{clean_path} must be less than or equal to {e.rule_definition}"]
+
+    if rule == 'format':
+        fmt = e.rule_definition
+        if fmt == "phone":
+            return [f"{clean_path} must be a valid phone"]
+        elif fmt == "credit_card":
+            return [f"{clean_path} must be a valid credit_card"]
+        elif fmt == "email":
+            return [f"{clean_path} must be a valid email"]
+        return [f"{clean_path} must be a valid {fmt}"]
+
+    if rule == 'pattern':
+        return [f"{clean_path} must match pattern {e.rule_definition}"]
+
+    friendly_msg = msg
+    if friendly_msg.startswith("data."):
+        friendly_msg = "$." + friendly_msg[5:]
+    elif friendly_msg.startswith("data "):
+        friendly_msg = "$ " + friendly_msg[5:]
+    return [friendly_msg]
 
 @debug_log
 def _validate_password(value: str, schema: Dict[str, Any], path: str) -> List[str]:
@@ -472,71 +624,102 @@ def _validate_password(value: str, schema: Dict[str, Any], path: str) -> List[st
         errors.append(f"{path} must contain a special character")
     return errors
 
+def _has_custom_constraints(schema: Dict[str, Any]) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    fmt = schema.get("format")
+    if schema.get("type") == "file" or (isinstance(fmt, str) and fmt.lower() in {"pdf", "doc", "docx", "image", "file", "password"}):
+        return True
+    if schema.get("type") == "object" and "properties" in schema:
+        return any(_has_custom_constraints(p) for p in schema["properties"].values())
+    if schema.get("type") == "array" and "items" in schema:
+        return _has_custom_constraints(schema["items"])
+    return False
 
 @debug_log
-def _validate_array_constraints(value: List[Any], schema: Dict[str, Any], path: str) -> List[str]:
+def _validate_value(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
+    if not isinstance(schema, dict) or not schema:
+        return []
+
+    # File constraints check must run first as fastjsonschema skips format check on objects
+    field_format = schema.get("format")
+    is_file_type = schema.get("type") == "file" or (isinstance(field_format, str) and field_format.lower() in {"pdf", "doc", "docx", "image", "file"})
+    if is_file_type:
+        file_errors = _validate_file_constraints(value, schema, path)
+        if file_errors:
+            return file_errors
+
+    # Run top-level compiled validator
+    validator_failed = False
+    validation_exc = None
+    try:
+        validator = get_validator(schema)
+        validator(value)
+    except fastjsonschema.JsonSchemaValueException as ex:
+        validator_failed = True
+        validation_exc = ex
+
+    if not validator_failed and not _has_custom_constraints(schema):
+        return []
+
     errors = []
-    if schema.get("minItems") is not None and len(value) < schema["minItems"]:
-        errors.append(f"{path} must contain at least {schema['minItems']} item(s)")
-    if schema.get("maxItems") is not None and len(value) > schema["maxItems"]:
-        errors.append(f"{path} must contain at most {schema['maxItems']} item(s)")
-    item_schema = schema.get("items")
-    if isinstance(item_schema, dict):
-        for index, item in enumerate(value):
-            errors.extend(_validate_value(item, item_schema, f"{path}[{index}]"))
+    
+    # 1. Custom password validation check if applicable
+    if isinstance(value, str) and schema.get("type") == "string" and schema.get("format") == "password":
+        errors.extend(_validate_password(value, schema, path))
+        if errors:
+            return errors
+
+    # 3. Recurse properties if it is an object
+    if schema.get("type") == "object" and isinstance(value, dict):
+        # Check required
+        required = schema.get("required", [])
+        for field in required:
+            if field not in value:
+                errors.append(f"{path}.{field} is mandatory")
+        
+        # Check properties
+        properties = schema.get("properties", {})
+        for field, field_schema in properties.items():
+            if field in value:
+                errors.extend(_validate_value(value[field], field_schema, f"{path}.{field}"))
+        
+        # Check additionalProperties
+        if schema.get("additionalProperties") is False:
+            unknown = sorted(set(value) - set(properties))
+            if unknown:
+                errors.append(f"{path} contains unsupported field(s): {', '.join(unknown)}")
+
+    # 4. Recurse array items if it is an array
+    elif schema.get("type") == "array" and isinstance(value, list):
+        # Check minItems/maxItems
+        if schema.get("minItems") is not None and len(value) < schema["minItems"]:
+            errors.append(f"{path} must contain at least {schema['minItems']} item(s)")
+        if schema.get("maxItems") is not None and len(value) > schema["maxItems"]:
+            errors.append(f"{path} must contain at most {schema['maxItems']} item(s)")
+        
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(_validate_value(item, item_schema, f"{path}[{index}]"))
+
+    # If it is a leaf failure or we didn't collect any nested errors, translate the error at this path
+    if not errors and validator_failed and validation_exc:
+        errors.extend(translate_error(validation_exc, path))
+        
     return errors
 
-
 @debug_log
-def _validate_object_constraints(value: Dict[str, Any], schema: Dict[str, Any], path: str) -> List[str]:
-    errors = []
-    properties = schema.get("properties", {})
-    required = _required_fields(schema)
-
-    for field in required:
-        if field not in value:
-            errors.append(f"{path}.{field} is mandatory")
-
-    for field, field_schema in properties.items():
-        if field in value:
-            errors.extend(_validate_value(value[field], field_schema, f"{path}.{field}"))
-
-    if schema.get("additionalProperties") is False:
-        unknown = sorted(set(value) - set(properties))
-        if unknown:
-            errors.append(f"{path} contains unsupported field(s): {', '.join(unknown)}")
-    return errors
-
-
-@debug_log
-def _normalize_type(value: Any) -> str:
+def _normalize_type(value: Any) -> Any:
     if isinstance(value, list):
-        return _normalize_type(value[0]) if value else "json"
+        return _normalize_type(value[0]) if value else ["string", "number", "integer", "boolean", "array", "object", "null"]
     normalized = str(value or "json").lower()
-    return TYPE_ALIASES.get(normalized, normalized)
-
-
-@debug_log
-def _matches_type(value: Any, expected_type: str) -> bool:
-    if expected_type == "json":
-        return isinstance(value, (dict, list, str, int, float, bool)) or value is None
-    if expected_type == "object":
-        return isinstance(value, dict)
-    if expected_type == "array":
-        return isinstance(value, list)
-    if expected_type == "string":
-        return isinstance(value, str)
-    if expected_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if expected_type == "boolean":
-        return isinstance(value, bool)
-    if expected_type == "null":
-        return value is None
-    if expected_type == "file":
-        return isinstance(value, (str, dict))
-    return True
+    resolved = TYPE_ALIASES.get(normalized, normalized)
+    if resolved == "file":
+        return ["string", "object"]
+    if resolved == "json":
+        return ["string", "number", "integer", "boolean", "array", "object", "null"]
+    return resolved
 
 
 @debug_log

@@ -654,6 +654,12 @@ class BaseNode(BaseModel, abc.ABC):
                 except Exception:
                     input_data = inp.data
 
+            # Extract the actual input values inside "data" key if present
+            if isinstance(input_data, dict):
+                input_data_data = input_data.get("data") if "data" in input_data else input_data
+            else:
+                input_data_data = input_data
+
             # 0.06 Get mappings from config
             mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
             if mapping_config:
@@ -666,61 +672,36 @@ class BaseNode(BaseModel, abc.ABC):
             if isinstance(mapping_config, dict):
                 mapping_config = {k: v for k, v in mapping_config.items() if not k.startswith('_')}
 
-            # Determine mapped_data (before template resolution)
-            mapped_data = mapping_config if mapping_config else input_data
-
-            # 0.07 Check for mandatory fields defined in contract
-            schema = inp.input_schema if getattr(inp, "input_schema", None) is not None else self.input_contract
-            from app.nodes.contracts import normalize_contract, _required_fields
-            normalized_schema = normalize_contract(schema) if schema else {}
-            required_fields = _required_fields(normalized_schema) if normalized_schema else []
-
-            if required_fields:
-                if not isinstance(mapped_data, dict):
-                    missing = required_fields
+            # 0.08 Build render context and resolve templates
+            try:
+                render_context = {
+                    "data": input_data_data,
+                    "input_data": input_data_data,
+                    **(input_data_data if isinstance(input_data_data, dict) else {}),
+                    "nodes": inp.context.get("nodes", {}) if inp.context else {},
+                    "user_data": inp.context.get("user_data", {}) if inp.context else {},
+                }
+                self.logger.debug("running_node:resolve_jinja_template", render_context=render_context, trace_id=inp.trace_id)
+                
+                # Resolve mapping_config if present, otherwise resolve templates in input_data_data directly
+                if mapping_config:
+                    resolved_data = self._resolve_jinja_templates(mapping_config, render_context)
                 else:
-                    check_data = mapped_data
-                    if "data" in mapped_data and isinstance(mapped_data["data"], dict) and "data" not in normalized_schema.get("properties", {}):
-                        check_data = mapped_data["data"]
-                    elif "input_data" in mapped_data and isinstance(mapped_data["input_data"], dict) and "input_data" not in normalized_schema.get("properties", {}):
-                        check_data = mapped_data["input_data"]
-                    
-                    missing = [f for f in required_fields if f not in check_data]
+                    resolved_data = self._resolve_jinja_templates(input_data_data, render_context)
 
-                if missing:
-                    errors = [f"$.{f} is mandatory" for f in missing]
-                    return NodeOutput(
-                        trace_id=inp.trace_id,
-                        data=inp.data,
-                        status="failure",
-                        error_message="; ".join(errors),
-                        error_code=400,
-                        violations=["contract_violation"]
-                    )
+                # Save resolved data back to inp.data
+                if isinstance(resolved_data, (dict, list)):
+                    inp.data = json.dumps(resolved_data)
+                elif resolved_data is not None:
+                    inp.data = str(resolved_data)
+                else:
+                    inp.data = ""
 
-            # 0.08 If mappings exist or config has templates, build render context and resolve templates
-            if mapping_config or self._has_template(inp.config):
-                try:
-                    inner_data = self.get_input_data(inp)
-                    render_context = {
-                        "data": inner_data,
-                        "input_data": inner_data,
-                        **(input_data if isinstance(input_data, dict) else {}),
-                        **(inner_data if isinstance(inner_data, dict) else {}),
-                        "nodes": inp.context.get("nodes", {}),
-                        "user_data": inp.context.get("user_data", {}),
-                    }
-
-                    # find and replace all templates in mapping_config
-                    if mapping_config:
-                        resolved_mapped_data = self._resolve_jinja_templates(mapping_config, render_context)
-                        inp.data = json.dumps(resolved_mapped_data)
-
-                    # find and replace all templates in properties / config
-                    resolved_config = self._resolve_jinja_templates(inp.config, render_context)
-                    inp.config = resolved_config
-                except Exception as e:
-                    self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id,error=str(e))
+                # find and replace all templates in properties / config
+                resolved_config = self._resolve_jinja_templates(inp.config, render_context)
+                inp.config = resolved_config
+            except Exception as e:
+                self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id, error=str(e))
 
             # 0.1 Input Contract Validation
             contract_output = await self.validate_input_contract(inp)

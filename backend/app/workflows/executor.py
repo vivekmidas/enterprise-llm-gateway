@@ -279,9 +279,10 @@ class WorkflowExecutor:
         await trace_store.save_trace(trace_id, initial_trace)
         # NOW RUN THE COMPILED GRAPH
         try:
+            logger.debug("invoking_complied_graph", compiled_graph=self.compiled_graph, trace_id=trace_id, agent_id=self.agent_id  )
             result = await self.compiled_graph.ainvoke(state)
         except asyncio.CancelledError as ce:
-            log.warn("graph_execution_cancelled", error=str(ce))
+            log.warn("graph_execution_cancelled", error=str(ce),trace_id=trace_id, agent_id=self.agent_id)
             result_dict = state.model_dump()
             result_dict.update({
                 "status": "stopped",
@@ -298,7 +299,7 @@ class WorkflowExecutor:
             await trace_store.save_trace(trace_id, result_dict)
             raise ce
         except Exception as e:
-            log.error("graph_execution_failed", error=str(e))
+            log.error("graph_execution_failed", error=str(e),trace_id=trace_id, agent_id=self.agent_id)
             result_dict = state.model_dump()
             result_dict.update({
                 "status": "failure",
@@ -320,7 +321,7 @@ class WorkflowExecutor:
                 from app.workflows.service import clear_execution_cache
                 clear_execution_cache(trace_id)
             except Exception as e:
-                logger.warning("failed_to_clear_execution_cache", error=str(e))
+                logger.warning("failed_to_clear_execution_cache", error=str(e),trace_id=trace_id, agent_id=self.agent_id)
 
         if isinstance(result, AgentState):
             result_dict = result.model_dump()

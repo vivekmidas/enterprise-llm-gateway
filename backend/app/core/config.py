@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     RERANK_CANDIDATE_LIMIT: int = 5
     SYSTEM_PROMPT: str = (
         "You are a helpful enterprise assistant. Answer the user's query using only the provided context. "
-        "If the context does not contain enough information to answer the query, you must respond with 'no answer' and nothing else. "
-        "Do not try to make up or extrapolate any answers."
+        "If the context does not contain enough information to answer the query, you must respond with 'I dont have response to the question' and nothing else. "
+        "Do not try to make up or extrapolate any answers. Be polite"
     )
 
     class Config:

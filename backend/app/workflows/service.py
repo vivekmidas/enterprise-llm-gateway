@@ -381,11 +381,10 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
     
     tracer = trace.get_tracer(__name__)
     
+    agent_name = getattr(agent, "name", "unknown")
+    logger.info("creating_node_wrapper", agent_node_id=node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
+
     async def agent_node(state: Any) -> Dict[str, Any]:
-        logger.info("creating_node_wrapper", agent_node_id=agent_node_id, agent_name=agent_name, tenant_id=agent_config.get("customer_id"),version=agent_config.get("version"),workflow_id=agent_config.get("id"))
- 
-        agent_name = getattr(agent, "name", "unknown")
-        
         with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
             span.set_attribute("agent.name", agent_name)
             span.set_attribute("node.id", node_id)
@@ -440,10 +439,14 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     if node_data:
                         parsed_data = json.loads(node_data)
                         if isinstance(parsed_data, dict):
-                            parsed_data["context"] = ctx
-                            if "user_data" in ctx:
-                                parsed_data["user_data"] = ctx["user_data"]
-                            node_data = json.dumps(parsed_data)
+                            actual_val = parsed_data.get("data") if "data" in parsed_data else parsed_data
+                            if isinstance(actual_val, dict):
+                                actual_val["context"] = ctx
+                                if "user_data" in ctx:
+                                    actual_val["user_data"] = ctx["user_data"]
+                                node_data = json.dumps(actual_val)
+                            else:
+                                node_data = json.dumps({"data": actual_val, "context": ctx, "user_data": ctx.get("user_data")})
                         else:
                             node_data = json.dumps({"data": parsed_data, "context": ctx, "user_data": ctx.get("user_data")})
                     else:
@@ -463,6 +466,15 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
 
                 # Call run() to leverage the standardized wrapper (logging, validation, timing)
                 result = await agent.run(agent_input)
+                
+                logger.info(
+                    "node_execution_completed",
+                    function_name="agent_node",
+                    workflow_id=workflow_id,
+                    trace_id=state.trace_id,
+                    node_id=node_id,
+                    description=f"Executed node {agent_name} successfully" if result.status == "success" else f"Node {agent_name} execution failed"
+                )
                 
                 # Node Timings and Observability
                 node_trace = {
@@ -509,6 +521,14 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
 
                 return updates
             except Exception as e:
+                logger.error(
+                    "node_execution_failed",
+                    function_name="agent_node",
+                    workflow_id=workflow_id,
+                    trace_id=state.trace_id,
+                    node_id=node_id,
+                    description=f"Node execution raised exception: {str(e)}"
+                )
                 logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
                 
                 node_trace = {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}

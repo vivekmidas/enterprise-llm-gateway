@@ -15,6 +15,7 @@ from app.api.webhooks import email as email_webhooks
 from app.api.webhooks import run as run_webhooks
 from app.nodes.registry import NodesRegistry
 from app.api.jobs import router as jobs_router
+from app.api.admin.companies.router import router as company_router
 
 from app.api.admin.users import router as users
 
@@ -83,6 +84,7 @@ app.include_router(run_webhooks.router)
 app.include_router(users.router)
 app.include_router(knowledge_router)
 app.include_router(jobs_router)
+app.include_router(company_router)
 
 
 if __name__ == "__main__":

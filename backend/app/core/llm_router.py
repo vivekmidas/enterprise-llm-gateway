@@ -6,25 +6,56 @@ class LLMRouter:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "vllm").lower()
 
-    async def get_llm(self, temperature=0.7, max_tokens=1024):
-        if self.provider == "vllm":
+    async def get_llm(self, temperature=0.7, max_tokens=1024, customer_id: int | None = None, db = None):
+        tenant_config = {}
+        if customer_id is not None and db is not None:
+            try:
+                from app.models.db_models import CustomerDB
+                from sqlalchemy import select
+                cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+                cust_res = await db.execute(cust_stmt)
+                customer = cust_res.scalar_one_or_none()
+                if customer and customer.settings:
+                    tenant_config = customer.settings
+            except Exception:
+                pass
+
+        provider = tenant_config.get("llm_provider") or os.getenv("LLM_PROVIDER", "vllm").lower()
+        provider = provider.lower()
+
+        if provider == "vllm":
+            model = tenant_config.get("llm_model") or os.getenv("VLLM_MODEL")
+            base_url = tenant_config.get("llm_base_url") or os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1")
+            api_key = tenant_config.get("llm_api_key") or os.getenv("VLLM_API_KEY", "EMPTY")
             return ChatOpenAI(
-                model=os.getenv("VLLM_MODEL"),
-                openai_api_base=os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1"),
-                openai_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
+                model=model,
+                openai_api_base=base_url,
+                openai_api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 streaming=True,
             )
-        elif self.provider == "ollama":
-            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        elif provider == "ollama":
+            model = tenant_config.get("llm_model") or os.getenv("OLLAMA_MODEL", "qwen:0.5b")
+            base_url = tenant_config.get("llm_base_url") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
             return ChatOpenAI(
-                model=os.getenv("OLLAMA_MODEL", "qwen:0.5b"),
-                openai_api_base=f"{ollama_base}/v1",
+                model=model,
+                openai_api_base=f"{base_url}/v1",
                 openai_api_key="ollama",
                 temperature=temperature,
                 max_tokens=max_tokens,
                 streaming=True,
             )
-        # Add more providers later
-        raise ValueError(f"Provider {self.provider} not supported yet")
+        elif provider == "openai":
+            model = tenant_config.get("llm_model") or "gpt-4o-mini"
+            api_key = tenant_config.get("llm_api_key") or os.getenv("OPENAI_API_KEY")
+            base_url = tenant_config.get("llm_base_url") or "https://api.openai.com/v1"
+            return ChatOpenAI(
+                model=model,
+                openai_api_base=base_url,
+                openai_api_key=api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                streaming=True,
+            )
+        raise ValueError(f"Provider {provider} not supported yet")

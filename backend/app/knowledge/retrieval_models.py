@@ -52,6 +52,8 @@ class RetrievalRequest(BaseModel):
     max_context_tokens: int = Field(default=6000, ge=500)
 
     enable_reranking: bool | None = None
+    rerank_model: str | None = None
+    rerank_limit: int | None = None
 
     @field_validator("query")
     @classmethod
@@ -133,6 +135,10 @@ class RetrievalResponse(BaseModel):
     documents: list[int]
 
     knowledge_bases: list[int]
+
+    statistics: RetrievalStatistics | None = None
+    rerank_info: dict | None = None
+    document_details: list[Any] | None = None
 
 
 # -------------------------------------------------------------------------
@@ -269,6 +275,7 @@ class ResponseGenerationRequest(BaseModel):
     context: RetrievalContext
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    customer_id: int | None = None
 
 
 class ResponseGenerationResult(BaseModel):

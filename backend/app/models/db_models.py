@@ -29,6 +29,7 @@ class CustomerDB(Base):
     dateadded = Column(String, default=lambda: datetime.utcnow().isoformat())
     dateupdated = Column(String, default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
     document_types = Column(JSON, nullable=True, default=list)
+    settings = Column(JSON, nullable=True, default=dict)
 
 
 class UserDB(Base):

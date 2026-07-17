@@ -333,6 +333,7 @@ class NodesRegistry:
                     try:
                         instance = obj()
                         await cls.register(instance)
+                        await cls.add_node_to_db(instance)
                     except Exception as e:
                         cls.logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
         except Exception as e:
@@ -381,6 +382,7 @@ class NodesRegistry:
             system_props_code = node.system_properties or []
 
         # Map node category to the corresponding Category ID
+        # todo : this need to change
         node_category = str(getattr(node, "category", "") or "Node")
         category_id = "1"
         if node_category.lower() in ["guardrails", "safety guardrails"]:
@@ -427,7 +429,7 @@ class NodesRegistry:
                     )
                     session.add(new_db_node)
                 else:
-                    if db_node.version == node.version:
+                    if db_node.version != node.version:
                         cls.logger.info("overwriting_existing_node_in_db", name=node.name, version=node.version)
                         db_node.label = node.label
                         db_node.node_type = node.node_type.upper() if node.node_type else "NODE"
@@ -446,7 +448,7 @@ class NodesRegistry:
                         session.add(db_node)
                     else:
                         cls.logger.info(
-                            "skipping_db_overwrite_version_mismatch",
+                            "skipping_db_overwrite_same_version",
                             name=node.name,
                             db_version=db_node.version,
                             node_version=node.version
@@ -478,14 +480,14 @@ class NodesRegistry:
         from importlib.machinery import SourceFileLoader
         import sys
 
-        cls.logger.info("loading_plugins_from_directory_started", path=directory_path, customer_id=customer_id)
+        cls.logger.info("loading_plugins_from_directory_started", path=directory_path, tenant_id=customer_id)
         
         abs_path = os.path.abspath(directory_path)
         if not os.path.exists(abs_path):
-            cls.logger.debug("plugin_storage_path_not_found", customer_id=customer_id, path=abs_path)
+            cls.logger.debug("plugin_storage_path_not_found", tenant_id=customer_id, path=abs_path)
             return
 
-        cls.logger.info("scanning_plugins", customer_id=customer_id, path=abs_path)
+        cls.logger.info("scanning_plugins", tenant_id=customer_id, path=abs_path)
         
         # Scan sub-directories in storage_path
         for item in os.listdir(abs_path):

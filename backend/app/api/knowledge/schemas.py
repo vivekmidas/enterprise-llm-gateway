@@ -73,6 +73,8 @@ class RetrievalRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     enable_reranking: Optional[bool] = None
+    rerank_model: Optional[str] = Field(default=None)
+    rerank_limit: Optional[int] = Field(default=None, ge=1, le=100)
 
 class Citation(BaseModel):
     document_id: int
@@ -100,6 +102,7 @@ class ResponseGenerationRequest(BaseModel):
     context: Any  # Should map to RetrievalContext
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    customer_id: Optional[int] = None
 
 
 class RAGRequest(BaseModel):

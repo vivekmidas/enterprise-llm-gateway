@@ -12,6 +12,8 @@ from app.knowledge.retrieval_models import (
     RetrievalStatistics,
 )
 from app.models.db_models import KnowledgeCollectionDB, CustomerDB
+from app.core.config import get_settings
+settings = get_settings()
 
 logger = structlog.get_logger(__name__)
 
@@ -50,7 +52,7 @@ class RetrievalService:
         # =========================================================
         # Step 2: Authenticate tenant (check CustomerDB)
         # =========================================================
-        logger.info("retrieval_step_2_authenticate_tenant_started", customer_id=request.customer_id)
+        logger.info("retrieval_step_2_authenticate_tenant_started", tenant_id=request.customer_id)
         cust_stmt = select(CustomerDB).where(
             CustomerDB.id == request.customer_id,
             CustomerDB.status == "active"
@@ -58,9 +60,10 @@ class RetrievalService:
         cust_res = await self.db.execute(cust_stmt)
         customer = cust_res.scalar_one_or_none()
         if not customer:
-            logger.error("retrieval_step_2_tenant_auth_failed", customer_id=request.customer_id)
+            logger.error("retrieval_step_2_tenant_auth_failed", tenant_id=request.customer_id)
             raise ValueError(f"Tenant {request.customer_id} not found or is inactive")
         logger.info("retrieval_step_2_authenticate_tenant_success", customer_name=customer.name)
+        tenant_settings = (customer.settings or {}) if customer else {}
 
         # =========================================================
         # Steps 3 to 8: Executed inside core_retrieve
@@ -117,12 +120,47 @@ class RetrievalService:
 
         # Extract unique document and knowledge base IDs used in the final context
         docs_used = list({chunk.document_id for chunk in context_obj.chunks})
+        docs_list = []
+        if docs_used:
+            try:
+                from app.models.db_models import KnowledgeDocumentDB
+                doc_stmt = select(KnowledgeDocumentDB).where(
+                    KnowledgeDocumentDB.id.in_(docs_used)
+                )
+                doc_res = await self.db.execute(doc_stmt)
+                db_docs = doc_res.scalars().all()
+                for doc in db_docs:
+                    docs_list.append({
+                        "id": doc.id,
+                        "name": doc.name,
+                        "status": doc.status,
+                        "metadata_json": doc.metadata_json or {},
+                        "created_at": doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at),
+                    })
+            except Exception as e:
+                logger.error("failed_to_resolve_document_details", error=str(e))
+                for doc_id in docs_used:
+                    docs_list.append({"id": doc_id, "name": f"Document #{doc_id}"})
+        
         kbs_used = list({chunk.knowledge_base_id for chunk in context_obj.chunks})
+
+        # Resolve rerank details
+        should_rerank = request.enable_reranking if request.enable_reranking is not None else tenant_settings.get("enable_reranking", settings.RERANK_ENABLED)
+        rerank_info = None
+        if should_rerank:
+            rerank_info = {
+                "technique": "Ollama Cross-Encoder (LLM Relevance Judge)" if settings.RERANK_PROVIDER == "ollama" else settings.RERANK_PROVIDER,
+                "model": request.rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL,
+                "candidate_limit": request.rerank_limit or tenant_settings.get("rerank_limit") or tenant_settings.get("rerank_candidate_limit") or settings.RERANK_CANDIDATE_LIMIT,
+            }
 
         response = RetrievalResponse(
             context=context_obj,
             documents=docs_used,
             knowledge_bases=kbs_used,
+            statistics=stats,
+            rerank_info=rerank_info,
+            document_details=docs_list,
         )
 
         # Write to audit log database table

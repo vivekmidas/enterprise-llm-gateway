@@ -88,12 +88,16 @@ async def create_knowledge_base(
         await db.flush()  # Generate db_kb.id
 
         # Create mapped collection config
+        kb_settings = payload.settings or {}
+        embedding_model = kb_settings.get("embedding_model") or settings.EMBEDDING_MODEL
+        vector_dimension = kb_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
+
         db_coll = KnowledgeCollectionDB(
             name=f"kb_collection_{db_kb.id}",
             knowledge_base_id=db_kb.id,
             customer_id=customer_id,
-            embedding_model=settings.EMBEDDING_MODEL,
-            vector_dimension=settings.EMBEDDING_DIMENSION,
+            embedding_model=embedding_model,
+            vector_dimension=int(vector_dimension),
             distance_metric="COSINE",
             status="active",
         )
@@ -105,7 +109,7 @@ async def create_knowledge_base(
         try:
             from app.knowledge.vector_store import vector_store
             await vector_store.ensure_collection(
-                dimension=settings.EMBEDDING_DIMENSION,
+                dimension=db_coll.vector_dimension or settings.EMBEDDING_DIMENSION,
                 collection_name=db_coll.name,
             )
         except Exception as e:
@@ -495,6 +499,8 @@ async def retrieve_knowledge(
         top_k=payload.top_k,
         **({"min_score": payload.min_score} if payload.min_score is not None else {}),
         **({"enable_reranking": payload.enable_reranking} if payload.enable_reranking is not None else {}),
+        rerank_model=payload.rerank_model,
+        rerank_limit=payload.rerank_limit,
     )
 
     result = await retrieval_service.retrieve(request)
@@ -510,18 +516,20 @@ async def generate_response(
     payload: ResponseGenerationRequest,
     current_user: User = Depends(get_current_user),
     generation_service: ResponseGenerationService = Depends(get_response_generation_service),
+    db: AsyncSession = Depends(get_db),
 ):
     """Query LLM to generate response from provided context."""
-    _require_tenant(current_user)
+    customer_id = _require_tenant(current_user)
 
     request = ResponseGenerationServiceRequest(
         query=payload.query,
         context=payload.context,
         temperature=payload.temperature,
         max_generation_tokens=payload.max_generation_tokens,
+        customer_id=customer_id,
     )
 
-    return await generation_service.generate_response(request)
+    return await generation_service.generate_response(request, db=db)
 
 
 @router.post(

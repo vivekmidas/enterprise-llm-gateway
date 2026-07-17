@@ -853,3 +853,81 @@ async def delete_node(
     return {"message": f"Custom node '{node_name}' has been successfully removed."}
 
 
+@router.post("/test-node")
+async def test_node_directly(
+    payload: dict,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Executes a specific node directly for testing/playground purposes.
+    Only accessible by Admin and System Admin.
+    """
+    import json
+    import time
+    from fastapi import HTTPException
+    from app.core.types.common import NodeInput
+    from app.nodes.registry import NodesRegistry
+    
+    node_name = payload.get("node_name")
+    if not node_name:
+        raise HTTPException(status_code=400, detail="Missing required field 'node_name'")
+        
+    node = NodesRegistry.get_node(node_name)
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
+        
+    config = payload.get("config") or {}
+    data_val = payload.get("data")
+    context = payload.get("context") or {}
+    
+    # Secure customer isolation: override or inject user's customer_id
+    user_data = {
+        "user_id": current_user.id,
+        "customer_id": current_user.customer_id,
+        "role": current_user.role
+    }
+    context["user_data"] = user_data
+    context["customer_id"] = current_user.customer_id
+    context["tenant_id"] = current_user.customer_id
+    
+    # Serialize data payload if dict/list
+    if isinstance(data_val, (dict, list)):
+        data_str = json.dumps(data_val)
+    elif data_val is not None:
+        data_str = str(data_val)
+    else:
+        data_str = ""
+        
+    node_input = NodeInput(
+        trace_id=f"test-direct-{node_name}-{int(time.time())}",
+        data=data_str,
+        config=config,
+        context=context
+    )
+    
+    try:
+        node_output = await node.run(node_input)
+        
+        # Attempt to deserialize output data for UI/API client convenience
+        output_data = node_output.data
+        try:
+            output_data = json.loads(node_output.data)
+        except Exception:
+            pass
+            
+        return {
+            "status": node_output.status,
+            "data": output_data,
+            "error_message": node_output.error_message,
+            "error_code": node_output.error_code,
+            "violations": node_output.violations,
+            "metadata": node_output.metadata,
+            "latency_ms": node_output.latency_ms
+        }
+    except Exception as e:
+        logger.exception("direct_node_execution_failed", node_name=node_name)
+        raise HTTPException(status_code=500, detail=f"Direct node execution failed: {str(e)}")
+
+
+

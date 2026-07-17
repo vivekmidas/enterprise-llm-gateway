@@ -15,7 +15,7 @@ class ResponseGenerationService:
     def __init__(self) -> None:
         self.llm_router = LLMRouter()
 
-    async def generate_response(self, request: ResponseGenerationRequest) -> ResponseGenerationResult:
+    async def generate_response(self, request: ResponseGenerationRequest, db = None) -> ResponseGenerationResult:
         """
         Takes retrieved chunks/context, builds prompt, calls the LLM, and validates the response.
         """
@@ -52,6 +52,8 @@ class ResponseGenerationService:
         llm = await self.llm_router.get_llm(
             temperature=request.temperature,
             max_tokens=request.max_generation_tokens,
+            customer_id=request.customer_id,
+            db=db,
         )
 
         messages = [

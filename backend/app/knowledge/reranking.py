@@ -28,9 +28,9 @@ class RerankerProvider(ABC):
 class OllamaReranker(RerankerProvider):
     """Use an Ollama LLM as a relevance judge."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         self.base_url = settings.OLLAMA_BASE_URL.rstrip("/")
-        self.model = settings.RERANK_MODEL
+        self.model = model_name or settings.RERANK_MODEL
 
     async def rerank(
         self,
@@ -182,14 +182,14 @@ Required JSON:
         return results
 
 
-def get_reranker() -> RerankerProvider | None:
+def get_reranker(model_name: str | None = None) -> RerankerProvider | None:
     """Create the configured reranking provider."""
 
-    if not settings.RERANK_ENABLED:
+    if not settings.RERANK_ENABLED and not model_name:
         return None
 
     if settings.RERANK_PROVIDER == "ollama":
-        return OllamaReranker()
+        return OllamaReranker(model_name=model_name)
 
     raise ValueError(
         f"Unsupported reranking provider: {settings.RERANK_PROVIDER}"

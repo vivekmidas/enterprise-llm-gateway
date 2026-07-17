@@ -333,3 +333,83 @@ async def test_admin_audit_logs(client: AsyncClient):
     # Test as normal user - should get 403 Forbidden
     res_user = await client.get("/admin/audit-logs", headers={"Authorization": f"Bearer {user_token}"})
     assert res_user.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_test_llm_connection(client: AsyncClient, system_admin_headers: dict):
+    from app.models.db_models import CustomerDB
+    from app.core.database import AsyncSessionLocal
+    from unittest.mock import patch, AsyncMock, MagicMock
+
+    # Setup database record
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import delete
+        await session.execute(delete(CustomerDB).where(CustomerDB.id == 99))
+        customer = CustomerDB(
+            id=99,
+            name="Test Customer 99",
+            settings={
+                "llm_provider": "mock-provider",
+                "llm_base_url": "https://mock-llm-host.com/v1",
+                "llm_api_key": "testkey-12345",
+                "llm_model": "mock-model"
+            }
+        )
+        session.add(customer)
+        await session.commit()
+
+    # Mock socket and httpx
+    with patch("socket.socket") as mock_socket_class:
+        mock_socket = MagicMock()
+        mock_socket_class.return_value = mock_socket
+        
+        # Mock httpx responses
+        mock_get_res = MagicMock()
+        mock_get_res.status_code = 200
+        mock_get_res.json.return_value = {"data": [{"id": "mock-model"}]}
+        
+        mock_post_res = MagicMock()
+        mock_post_res.status_code = 200
+        mock_post_res.json.return_value = {
+            "choices": [{
+                "message": {"content": "Hello from mock LLM!"}
+            }]
+        }
+        
+        # Patch the AsyncClient methods selectively using side effects
+        from httpx import AsyncClient as OriginalClient
+        orig_post = OriginalClient.post
+        orig_get = OriginalClient.get
+
+        async def side_effect_get(self, url, *args, **kwargs):
+            if "mock-llm-host.com" in str(url):
+                return mock_get_res
+            return await orig_get(self, url, *args, **kwargs)
+
+        async def side_effect_post(self, url, *args, **kwargs):
+            if "mock-llm-host.com" in str(url):
+                return mock_post_res
+            return await orig_post(self, url, *args, **kwargs)
+
+        with patch("httpx.AsyncClient.get", new=side_effect_get), \
+             patch("httpx.AsyncClient.post", new=side_effect_post):
+             
+            payload = {
+                "customer_id": 99,
+                "tenant_id": 99
+            }
+            
+            response = await client.post(
+                "/api/admin/company/settings/test-connection",
+                json=payload,
+                headers=system_admin_headers
+            )
+            
+            print("RESPONSE:", response.status_code, response.json())
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "success"
+            assert len(data["steps"]) == 11
+            # Verify all steps succeeded
+            for step in data["steps"]:
+                assert step["status"] == "success"

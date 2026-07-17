@@ -49,13 +49,13 @@ curl -X PUT "http://localhost:6333/collections/enterprise_knowledge" \
 
 ## Test embedding ,1 is the id fron mysql
 curl -X POST "http://localhost:8000/api/knowledge/bases/1/upload" \
-  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Authorization: Bearer ${JWT_TOKEN}" \
   -H "Accept: application/json" \
   -F "file=@./sample.txt"
 
 ## Retrieval Testing
 curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "How are different customers prevented from accessing each others data?",
@@ -88,3 +88,8 @@ curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
     "knowledge_base_ids": ['$KB_ID'],
     "top_k": 5
   }'
+
+# Ollama Test
+curl -X POST http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3","messages":[{"role":"user","content":"Hello"}],"stream":false}'
