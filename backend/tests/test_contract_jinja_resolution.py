@@ -56,13 +56,14 @@ async def register_contract_dummy_nodes():
     await NodesRegistry.register(PassthroughTriggerNode())
 
 
-def test_validate_input_contract_jinja_resolution():
+@pytest.mark.asyncio
+async def test_validate_input_contract_jinja_resolution():
     """
     Validates that {{ fieldname }} Jinja2 templates in inp.data are resolved
-    directly from the same payload (which is the predecessor's mapped output).
-    No separate predecessor_output / workflow_input context needed.
+    directly from the same payload (which is the predecessor's mapped output) via node.run.
     """
-    contract = {
+    node = ContractDummyTargetNode()
+    node.input_contract = {
         "type": "object",
         "properties": {
             "message": {"type": "string"},
@@ -71,14 +72,11 @@ def test_validate_input_contract_jinja_resolution():
         "required": ["message", "date_list"]
     }
 
-    # inp.data already contains the predecessor's output after mapping.
-    # Templates like {{ msg }} reference top-level keys in this payload.
     inp = NodeInput(
         trace_id="trace-contract-test",
         data=json.dumps({
             "message": "{{ msg }}",
             "date_list": "{{ root[].date }}",
-            # These extra keys are the "source" data from the predecessor
             "msg": "Hello World",
             "root": [
                 {"date": "2026-07-01", "close": 150},
@@ -88,14 +86,14 @@ def test_validate_input_contract_jinja_resolution():
         context={"nodes": {}}
     )
 
-    errors = validate_input_contract(contract, inp, node_name="test_node")
-
-    assert errors == []
+    output = await node.run(inp)
+    assert output.status == "success"
 
     # Verify that the input data was updated with resolved values
     resolved_data = json.loads(inp.data)
     assert resolved_data["message"] == "Hello World"
     assert resolved_data["date_list"] == ["2026-07-01", "2026-07-02"]
+
 
 
 def test_validate_output_contract_jinja_resolution():

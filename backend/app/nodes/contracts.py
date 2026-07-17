@@ -7,6 +7,7 @@ from app.core.types.common import NodeInput
 import structlog
 
 logger = structlog.get_logger(__name__)
+logger.bind(file="contract")
 
 
 def debug_log(func):
@@ -175,42 +176,8 @@ def validate_input_contract(
         and "data" not in schema.get("properties", {})
     ):
         body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
-    elif (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and "input_data" in body
-        and isinstance(body["input_data"], dict)
-        and "input_data" not in schema.get("properties", {})
-    ):
-        body = {**body["input_data"], **{k: v for k, v in body.items() if k != "input_data"}}
-
-    # Verify mandatory fields are present before template resolution
-    mandatory_errors = _check_mandatory_fields(body, schema, "$")
-    if mandatory_errors:
-        return _validate_value(body, schema, "$")
-
-    # Build render context directly from the input body.
-    # At this point inp.data IS the predecessor node's mapped output — no extra pointer needed.
-    nodes_ctx = inp.context.get("nodes", {}) if (inp and getattr(inp, "context", None)) else {}
-    render_context = {
-        "data": body,
-        "input_data": body,
-        **(body if isinstance(body, dict) else {}),
-        "nodes": nodes_ctx,
-    }
-
-    # Resolve templates in the body
-    resolved_body = resolve_jinja_templates_in_data(body, render_context)
-    body = resolved_body
-
-    # Update inp.data to propagate resolved values
-    if isinstance(resolved_body, (dict, list)):
-        inp.data = json.dumps(resolved_body)
-    else:
-        inp.data = str(resolved_body)
 
     return _validate_value(body, schema, "$")
-
 
 #@debug_log
 def _normalize_field_rule(rule: Any) -> Dict[str, Any]:

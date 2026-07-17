@@ -456,8 +456,10 @@ class BaseNode(BaseModel, abc.ABC):
         if isinstance(template, dict):
             return {k: self._resolve_jinja_templates(v, render_context) for k, v in template.items()}
         elif isinstance(template, list):
-            values = self._render_template_sets(template, render_context)
-            return values
+            if isinstance(render_context, list):
+                values = self._render_template_sets(template, render_context)
+                return values
+            return [self._resolve_jinja_templates(i, render_context) for i in template]
         elif isinstance(template, str) and "{{" in template and "}}" in template:
             import re
             match = re.match(r"^\{\{\s*(.*?)\s*\}\}$", template.strip())

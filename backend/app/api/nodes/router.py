@@ -19,7 +19,6 @@ router = APIRouter(prefix="/nodes", tags=["nodes"])
 def _defaults_from_payload(node_data: dict) -> dict:
     return property_entries_to_dict(node_data.get("user_properties"))
 
-
 def _nodes_with_categories_query():
     node_columns = [
         column
@@ -37,11 +36,9 @@ def _nodes_with_categories_query():
         .outerjoin(CategoryDB, cast(CategoryDB.id, String) == NodeDB.category)
     )
 
-
 async def _fetch_nodes(db: AsyncSession, statement):
     result = await db.execute(statement)
     return [dict(row) for row in result.mappings().all()]
-
 
 async def _fetch_node(db: AsyncSession, statement):
     result = await db.execute(statement)
