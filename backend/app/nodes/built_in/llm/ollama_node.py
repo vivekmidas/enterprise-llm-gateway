@@ -11,6 +11,16 @@ class OllamaNode(BaseLLMNode):
     color: str = "#FF8C00"  # DarkOrange
     badge: str = "Ollama"
     sub_label: str = "Local Completion"
+    # {
+    #   "prompt": "Hi",
+    #   "system_prompt_override": "you are a good assistant",
+    #   "history": [
+    #     {
+    #       "role": "user",
+    #       "content": "temp"
+    #     }
+    #   ]
+    # }
 
     # Standard System Properties with Ollama-specific defaults
     system_properties: List[Dict[str, Any]] = [

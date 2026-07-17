@@ -110,3 +110,150 @@ async def test_direct_node_execution_success(client: AsyncClient, system_admin_h
         assert res_data["status"] == "success"
         assert res_data["data"]["data"]["text"] == "Mock node execution output"
         assert res_data["latency_ms"] >= 0
+
+@pytest.mark.asyncio
+async def test_get_json_samples_success(client: AsyncClient, regular_user_headers: dict):
+    payload = {
+        "schema": {
+            "version": "1.0",
+            "rules": [
+                {"field_name": "user.first_name", "field_type": "string"},
+                {"field_name": "credit", "field_type": "string", "x-type": "credit-card"}
+            ]
+        }
+    }
+    response = await client.post(
+        "/nodes/json-samples",
+        json=payload,
+        headers=regular_user_headers
+    )
+    assert response.status_code == 200
+    res_data = response.json()
+    assert "user" in res_data
+    assert "first_name" in res_data["user"]
+    assert res_data["user"]["first_name"] == "<string>"
+    assert res_data["credit"] == "4111111111111111"
+
+@pytest.mark.asyncio
+async def test_get_json_samples_unauthorized(client: AsyncClient):
+    payload = {
+        "schema": {
+            "version": "1.0",
+            "rules": []
+        }
+    }
+    response = await client.post(
+        "/nodes/json-samples",
+        json=payload
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_json_samples_with_nested_arrays_and_redaction(client: AsyncClient, regular_user_headers: dict):
+    payload = {
+        "schema": {
+            "version": "1.0",
+            "rules": [
+                {
+                    "field_name": "data",
+                    "field_type": "object",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "data.table_name",
+                    "field_type": "string",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "columns",
+                    "field_type": "array",
+                    "required": False,
+                    "stateable": False,
+                    "items": {
+                        "field_type": "string"
+                    }
+                },
+                {
+                    "field_name": "values",
+                    "field_type": "array",
+                    "required": False,
+                    "stateable": False,
+                    "items": {
+                        "field_type": "object"
+                    }
+                },
+                {
+                    "field_name": "values[].date",
+                    "field_type": "phone",
+                    "required": False,
+                    "stateable": False,
+                    "redact": True
+                },
+                {
+                    "field_name": "values[].open",
+                    "field_type": "number",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "values[].high",
+                    "field_type": "number",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "values[].low",
+                    "field_type": "number",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "values[].close",
+                    "field_type": "number",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "values[].adjusted_close",
+                    "field_type": "number",
+                    "required": False,
+                    "stateable": False
+                },
+                {
+                    "field_name": "values[].volume",
+                    "field_type": "integer",
+                    "required": False,
+                    "stateable": False
+                }
+            ],
+            "additional_fields": True
+        }
+    }
+    response = await client.post(
+        "/nodes/json-samples",
+        json=payload,
+        headers=regular_user_headers
+    )
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data == {
+        "data": {
+            "table_name": "<string>"
+        },
+        "columns": [
+            "<string>"
+        ],
+        "values": [{
+            "date": None,
+            "open": 0,
+            "high": 0,
+            "low": 0,
+            "close": 0,
+            "adjusted_close": 0,
+            "volume": 0
+        }]
+    }
+

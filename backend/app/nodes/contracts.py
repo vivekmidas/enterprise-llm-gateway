@@ -151,11 +151,27 @@ def validate_input_contract(
         return []
 
     body, errors = parse_input_data(inp)
-    logger.info("end_alidate_input_contract", errors=errors, trace_id=inp.trace_id)
+    logger.info("end_validate_input_contract", errors=errors, trace_id=inp.trace_id)
     if errors:
         return errors
 
     # Normalize body based on schema properties (wrapping or unwrapping as needed)
+    if schema.get("type") == "object" and body is not None and not isinstance(body, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        target_key = None
+        if len(required) == 1:
+            target_key = required[0]
+        elif not required and len(properties) == 1:
+            target_key = list(properties.keys())[0]
+        elif "data" in properties:
+            target_key = "data"
+        elif "input_data" in properties:
+            target_key = "input_data"
+            
+        if target_key and target_key in properties:
+            body = {target_key: body}
+
     if (
         schema.get("type") == "object"
         and isinstance(body, dict)

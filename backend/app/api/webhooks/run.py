@@ -113,14 +113,14 @@ async def execute_webhook_workflow(
         context = {"user_data": user_data}
 
         # THIS IS THE ENTRY POINT FOR THE WORKFLOW EXECUTION PROCESS
-        logger.info("Starting workflow execution", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, context=context)
+        logger.info("starting_workflow execution", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, context=context)
         workflow_result = await execute_dynamic_agent(
             workflow_def,
             raw_payload,
             trace_id,
             context=context
         )
-        logger.info("workflow_execution_completed", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, result=workflow_result)
+        logger.info("workflow_execution_completed", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,trace_id=trace_id, result=workflow_result)
         return {
             "status": "completed",
             "agent_node_id": agent_node_id,

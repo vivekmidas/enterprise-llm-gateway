@@ -109,7 +109,7 @@ class SQLiteDBExecutor(DBExecutor):
             if not field_names or not field_values or len(field_names) != len(field_values):
                 raise ValueError("For UPDATE, field_names and field_values must be provided and match in length.")
             if not condition:
-                raise ValueError("For UPDATE, a WHERE condition is required.")
+                raise ValueError("condition (WHERE clause) is required for UPDATE.")
             
             set_clauses = [f"{self._quote_identifier(name)} = ?" for name in field_names]
             sql = f"UPDATE {quoted_table_name} SET {', '.join(set_clauses)} WHERE {condition}"
@@ -121,7 +121,7 @@ class SQLiteDBExecutor(DBExecutor):
 
         elif query_type == "delete":
             if not condition:
-                raise ValueError("For DELETE, a WHERE condition is required.")
+                raise ValueError("condition (WHERE clause) is required for DELETE.")
             sql = f"DELETE FROM {quoted_table_name} WHERE {condition}"
             sql_params = condition_params if condition_params else []
             return sql, sql_params

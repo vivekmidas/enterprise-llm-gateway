@@ -91,27 +91,28 @@ class GenericMySQLDBExecutor(DBExecutor):
             self.logger.error("mysql_connection_failed", database=connection_config.get("database"), error=str(e))
             raise RuntimeError(f"MySQL connection failed: {e.msg}") from e
 
-    async def execute_query(self, connection, query: str, query_type: str, params: Optional[Any] = None) -> Any:
+    
+    async def execute_query(self, connection, query: str, query_type: str, columns: Optional[str]= None, params: Optional[Any] = None) -> Any:
         """
         Execute query with proper parameterization (prevents SQL injection).
         Supports SELECT (returning list of dicts) and other statements (returning rowcount/lastrowid).
         """
         self.logger.debug("mysql_query_executing", query_type=query_type, query=query)
         try:
+
             # Using dictionary=True to natively get dictionary records on SELECT
             cursor = connection.cursor(dictionary=True)
-
+            values = self._get_values_from_params(columns,params)
             if params is not None:
-                cursor.execute(query, params)
+                for row in values:
+                    cursor.execute(query, row)
+                connection.commit()
+                self.logger.info("mysql_query_executed", query_type=query_type, rowcount=cursor.rowcount, lastrowid=cursor.lastrowid)
             else:
                 cursor.execute(query)
 
-            query_type_upper = query_type.strip().upper()
-            is_select = (query_type_upper == "SELECT") or (
-                query_type_upper in {"RAW", "CUSTOM"} and query.strip().upper().startswith("SELECT")
-            )
 
-            if is_select:
+            if query_type.lower().strip() == "select":
                 result = cursor.fetchall()
                 self.logger.info("mysql_query_executed", query_type=query_type, row_count=len(result))
             else:
@@ -128,8 +129,8 @@ class GenericMySQLDBExecutor(DBExecutor):
 
     async def _generate_sql_query(
         self,
-        field_names: List[str],
-        field_values: List[Any],
+        columns: List[str],
+        values: List[Any],
         table_name: str,
         query_type: str,
         condition: Optional[str] = None,
@@ -143,17 +144,18 @@ class GenericMySQLDBExecutor(DBExecutor):
         sql_params: List[Any] = []
 
         if query_type.lower() == "insert":
-            if not field_names or not field_values or len(field_names) != len(field_values):
-                raise ValueError("For INSERT, field_names and field_values must be provided and match in length.")
+            if not columns or not values :
+                raise ValueError("For INSERT, columns and values must be provided and match in length.")
             
-            quoted_field_names = [self._quote_identifier(name) for name in field_names]
-            placeholders = ", ".join(["%s"] * len(field_values))
-            sql = f"INSERT INTO {quoted_table_name} ({', '.join(quoted_field_names)}) VALUES ({placeholders})"
-            sql_params = field_values
-            return sql, sql_params
+            quoted_columns = [self._quote_identifier(name) for name in columns]
+            if isinstance (values,list) and values and isinstance(values[0],dict):
+                placeholders = ", ".join(["%s"] * len(values[0]))
+                sql = f"INSERT INTO {quoted_table_name} ({', '.join(quoted_columns)}) VALUES ({placeholders})"
+                sql_params = values
+                return sql, sql_params
         
         elif query_type == "select":
-            select_fields = ", ".join([self._quote_identifier(name) for name in field_names]) if field_names else "*"
+            select_fields = ", ".join([self._quote_identifier(name) for name in columns]) if columns else "*"
             sql = f"SELECT {select_fields} FROM {quoted_table_name}"
             if condition:
                 sql += f" WHERE {condition}"
@@ -161,22 +163,22 @@ class GenericMySQLDBExecutor(DBExecutor):
             return sql, sql_params
 
         elif query_type == "update":
-            if not field_names or not field_values or len(field_names) != len(field_values):
-                raise ValueError("For UPDATE, field_names and field_values must be provided and match in length.")
+            if not columns or not values or len(columns) != len(values):
+                raise ValueError("For UPDATE, columns and values must be provided and match in length.")
             if not condition:
-                raise ValueError("For UPDATE, a WHERE condition is required.")
+                raise ValueError("condition (WHERE clause) is required for UPDATE.")
             
-            set_clauses = [f"{self._quote_identifier(name)} = %s" for name in field_names]
+            set_clauses = [f"{self._quote_identifier(name)} = %s" for name in columns]
             sql = f"UPDATE {quoted_table_name} SET {', '.join(set_clauses)} WHERE {condition}"
             
-            sql_params = list(field_values)
+            sql_params = list(values)
             if condition_params:
                 sql_params.extend(condition_params)
             return sql, sql_params
 
         elif query_type == "delete":
             if not condition:
-                raise ValueError("For DELETE, a WHERE condition is required.")
+                raise ValueError("condition (WHERE clause) is required for DELETE.")
             sql = f"DELETE FROM {quoted_table_name} WHERE {condition}"
             sql_params = condition_params if condition_params else []
             return sql, sql_params

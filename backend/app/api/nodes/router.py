@@ -11,6 +11,7 @@ from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
 from app.api.auth.dependencies import get_current_user, get_current_admin, require_system_admin
 from app.core.types.users import User
+from app.utils.json_sample_generator import generate_sample_json
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/nodes", tags=["nodes"])
@@ -852,6 +853,17 @@ async def delete_node(
 
     return {"message": f"Custom node '{node_name}' has been successfully removed."}
 
+@router.post("/json-samples")
+async def get_json_samples(
+    payload:dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+   
+):
+    """
+    Returns a sample JSON based on the schema
+    """
+    return generate_sample_json(payload["schema"])
 
 @router.post("/test-node")
 async def test_node_directly(

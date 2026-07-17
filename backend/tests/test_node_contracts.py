@@ -476,3 +476,72 @@ def test_ip_address_and_file_contracts():
     assert any("word_doc" in e for e in errors)
 
 
+def test_flat_rules_contract_validates_string_input_for_object_schema():
+    contract = {
+      "version": "1.0",
+      "rules": [
+        {
+          "field_name": "table_name",
+          "field_type": "string",
+          "required": True,
+          "stateable": False
+        },
+        {
+          "field_name": "columns",
+          "field_type": "array",
+          "required": False,
+          "stateable": False,
+          "items": {
+            "field_type": "string"
+          }
+        },
+        {
+          "field_name": "values",
+          "field_type": "array",
+          "required": False,
+          "stateable": False,
+          "items": {
+            "field_type": "string"
+          }
+        },
+        {
+          "field_name": "condition",
+          "field_type": "string",
+          "required": False,
+          "stateable": False
+        },
+        {
+          "field_name": "condition_params",
+          "field_type": "array",
+          "required": False,
+          "stateable": False,
+          "items": {
+            "field_type": "string"
+          }
+        },
+        {
+          "field_name": "params",
+          "field_type": "object",
+          "required": False,
+          "stateable": False
+        }
+      ],
+      "additional_fields": True
+    }
+
+    # 1. String input, should wrap into table_name
+    errors = validate_input_contract(
+        contract,
+        make_input("employees")
+    )
+    assert errors == []
+
+    # 2. Normal object input, should work as is
+    errors = validate_input_contract(
+        contract,
+        make_input({"table_name": "employees", "columns": ["id", "name"]})
+    )
+    assert errors == []
+
+
+
