@@ -12,7 +12,7 @@ except ImportError:
 import structlog
 from app.nodes.properties import property_entries_to_dict
 from app.core.types.common import NodeInput,NodeOutput
-from app.nodes.contracts import validate_input_contract as validate_contract
+from app.nodes.contracts import validate_contract
 
 class JinjaFallbackDict(dict):
     def __init__(self, fallback_value, *args, **kwargs):
@@ -527,9 +527,9 @@ class BaseNode(BaseModel, abc.ABC):
             self.logger.debug("No output schema found",  trace_id=inp.trace_id,name=self.name, schema=schema)
             return None
 
-        from app.nodes.contracts import validate_output_contract
+        from app.nodes.contracts import validate_contract
 
-        errors = validate_output_contract(
+        errors = validate_contract(
             schema,
             output,
             self.name,

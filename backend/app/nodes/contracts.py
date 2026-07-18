@@ -140,63 +140,129 @@ def _check_mandatory_fields(value: Any, schema: Dict[str, Any], path: str) -> Li
 
 
 # @debug_log
-def validate_input_contract(
+def validate_contract(
     contract: Dict[str, Any],
-    inp: NodeInput,
+    data: Any,  # NodeInput, NodeOutput, dict, or str
     node_name: str = "node",
+    context_nodes: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
-    logger.info("starting_validate_input_contract", contract=contract.get("rules"), name=node_name,trace_id=inp.trace_id)
+    from app.core.types.common import NodeInput, NodeOutput
+
     schema = normalize_contract(contract)
     if not schema:
         return []
 
-    body, errors = parse_input_data(inp)
-    logger.info("end_validate_input_contract", errors=errors, trace_id=inp.trace_id)
-    if errors:
-        return errors
+    is_input = isinstance(data, NodeInput)
 
-    # Normalize body based on schema properties (wrapping or unwrapping as needed)
-    if schema.get("type") == "object" and body is not None and not isinstance(body, dict):
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
-        target_key = None
-        if len(required) == 1:
-            target_key = required[0]
-        elif not required and len(properties) == 1:
-            target_key = list(properties.keys())[0]
-        elif "data" in properties:
-            target_key = "data"
-        elif "input_data" in properties:
-            target_key = "input_data"
-            
-        if target_key and target_key in properties:
-            body = {target_key: body}
+    if is_input:
+        logger.info("starting_validate_input_contract", contract=contract.get("rules"), name=node_name, trace_id=data.trace_id)
+        body, errors = parse_input_data(data)
+        logger.info("end_validate_input_contract", errors=errors, trace_id=data.trace_id)
+        if errors:
+            return errors
 
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and set(schema.get("properties", {}).keys()) == {"data"}
-        and "data" not in body
-    ):
-        body = {"data": body}
-    elif (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and set(schema.get("properties", {}).keys()) == {"input_data"}
-        and "input_data" not in body
-    ):
-        body = {"input_data": body}
+        # Normalize body based on schema properties (wrapping or unwrapping as needed)
+        if schema.get("type") == "object" and body is not None and not isinstance(body, dict):
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            target_key = None
+            if len(required) == 1:
+                target_key = required[0]
+            elif not required and len(properties) == 1:
+                target_key = list(properties.keys())[0]
+            elif "data" in properties:
+                target_key = "data"
+            elif "input_data" in properties:
+                target_key = "input_data"
+                
+            if target_key and target_key in properties:
+                body = {target_key: body}
 
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and "data" in body
-        and isinstance(body["data"], dict)
-        and "data" not in schema.get("properties", {})
-    ):
-        body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+        if (
+            schema.get("type") == "object"
+            and isinstance(body, dict)
+            and set(schema.get("properties", {}).keys()) == {"data"}
+            and "data" not in body
+        ):
+            body = {"data": body}
+        elif (
+            schema.get("type") == "object"
+            and isinstance(body, dict)
+            and set(schema.get("properties", {}).keys()) == {"input_data"}
+            and "input_data" not in body
+        ):
+            body = {"input_data": body}
+
+        if (
+            schema.get("type") == "object"
+            and isinstance(body, dict)
+            and "data" in body
+            and isinstance(body["data"], dict)
+            and "data" not in schema.get("properties", {})
+        ):
+            body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+    else:
+        logger.info("starting validate_output_contract", contract=contract, name=node_name)
+        if isinstance(data, NodeOutput):
+            body_str = data.data
+        else:
+            body_str = data
+
+        body = body_str
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Build render context from the actual output body.
+        render_context = {
+            "data": body,
+            **(body if isinstance(body, dict) else {}),
+            "nodes": context_nodes or {},
+        }
+
+        resolved_body = resolve_jinja_templates_in_data(body, render_context)
+        body = resolved_body
+
+        # Update output data representation
+        if isinstance(data, NodeOutput):
+            if isinstance(resolved_body, (dict, list)):
+                data.data = json.dumps(resolved_body)
+            else:
+                data.data = str(resolved_body)
+        elif isinstance(data, dict):
+            data.clear()
+            if isinstance(resolved_body, dict):
+                data.update(resolved_body)
+
+        if (
+            schema.get("type") == "object"
+            and isinstance(body, dict)
+            and set(schema.get("properties", {}).keys()) == {"data"}
+            and "data" not in body
+        ):
+            body = {"data": body}
+
+        if (
+            schema.get("type") == "object"
+            and isinstance(body, dict)
+            and "data" in body
+            and isinstance(body["data"], dict)
+            and "data" not in schema.get("properties", {})
+        ):
+            body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
 
     return _validate_value(body, schema, "$")
+
+
+# @debug_log
+def validate_input_contract(
+    contract: Dict[str, Any],
+    inp: Any,
+    node_name: str = "node",
+) -> List[str]:
+    return validate_contract(contract, inp, node_name)
 
 #@debug_log
 def _normalize_field_rule(rule: Any) -> Dict[str, Any]:
@@ -803,70 +869,14 @@ def _validate_file_constraints(value: Any, schema: Dict[str, Any], path: str) ->
     return errors
 
 
-@debug_log
+# @debug_log
 def validate_output_contract(
     contract: Dict[str, Any],
     output: Any,  # NodeOutput or dict or str
     node_name: str = "node",
     context_nodes: Optional[Dict[str, Any]] = None
 ) -> List[str]:
-    logger.info("starting validate_output_contract", contract=contract, name=node_name)
-    schema = normalize_contract(contract)
-    if not schema:
-        return []
-
-    from app.core.types.common import NodeOutput
-    if isinstance(output, NodeOutput):
-        body_str = output.data
-    else:
-        body_str = output
-
-    body = body_str
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Build render context from the actual output body.
-    render_context = {
-        "data": body,
-        **(body if isinstance(body, dict) else {}),
-        "nodes": context_nodes or {},
-    }
-
-    resolved_body = resolve_jinja_templates_in_data(body, render_context)
-    body = resolved_body
-
-    # Update output data representation
-    if isinstance(output, NodeOutput):
-        if isinstance(resolved_body, (dict, list)):
-            output.data = json.dumps(resolved_body)
-        else:
-            output.data = str(resolved_body)
-    elif isinstance(output, dict):
-        output.clear()
-        if isinstance(resolved_body, dict):
-            output.update(resolved_body)
-
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and set(schema.get("properties", {}).keys()) == {"data"}
-        and "data" not in body
-    ):
-        body = {"data": body}
-
-    if (
-        schema.get("type") == "object"
-        and isinstance(body, dict)
-        and "data" in body
-        and isinstance(body["data"], dict)
-        and "data" not in schema.get("properties", {})
-    ):
-        body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
-
-    return _validate_value(body, schema, "$")
+    return validate_contract(contract, output, node_name, context_nodes)
 
 
 def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:

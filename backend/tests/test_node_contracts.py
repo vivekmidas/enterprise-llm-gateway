@@ -3,7 +3,7 @@ import asyncio
 
 from app.core.types.common import NodeInput, NodeOutput
 from app.nodes.base import BaseNode
-from app.nodes.contracts import normalize_contract, validate_input_contract
+from app.nodes.contracts import normalize_contract, validate_contract
 
 
 class ContractTestNode(BaseNode):
@@ -39,7 +39,7 @@ def test_new_contract_validates_nested_json_body():
         },
     }
 
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input(
             {
@@ -73,7 +73,7 @@ def test_flat_rules_contract_validates_user_details_payload():
         ],
     }
 
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input(
             {
@@ -106,7 +106,7 @@ def test_flat_rules_contract_validates_direct_payload_without_data_wrapper():
         ],
     }
 
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input(
             {
@@ -132,7 +132,7 @@ def test_flat_rules_contract_validates_root_fields_with_data_wrapper():
         ],
     }
 
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input(
             {
@@ -163,7 +163,7 @@ def test_flat_rules_contract_reports_format_and_constraint_errors():
         ],
     }
 
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input({"data": {"user_id": "u", "email": "not-email", "card": "123", "amount": -1}}),
     )
@@ -189,7 +189,7 @@ def test_new_contract_reports_required_and_type_errors():
         },
     }
 
-    errors = validate_input_contract(contract, make_input({"message": 42, "customer": {}}))
+    errors = validate_contract(contract, make_input({"message": 42, "customer": {}}))
 
     assert "$.message expected string, got int" in errors
     assert "$.customer.id is mandatory" in errors
@@ -202,7 +202,7 @@ def test_legacy_flat_contract_is_supported():
         "auth_token": {"type": "string", "required": "False"},
     }
 
-    assert validate_input_contract(contract, make_input({"data": {"message": "hi"}})) == [
+    assert validate_contract(contract, make_input({"data": {"message": "hi"}})) == [
         "$.source_system is mandatory"
     ]
 
@@ -224,7 +224,7 @@ def test_legacy_nested_mandatory_contract_is_normalized():
         "field_values",
         "query_type",
     ]
-    assert validate_input_contract(contract, make_input({"data": {"field_names": []}})) == [
+    assert validate_contract(contract, make_input({"data": {"field_names": []}})) == [
         "$.data.field_values is mandatory",
         "$.data.query_type is mandatory",
     ]
@@ -427,7 +427,7 @@ def test_ip_address_and_file_contracts():
     }
 
     # 1. Valid payload
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input(
             {
@@ -445,7 +445,7 @@ def test_ip_address_and_file_contracts():
     assert errors == []
 
     # 2. Invalid IP payload
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input({"server_ip": "invalid-ip", "pdf_report": "report.pdf"})
     )
@@ -453,7 +453,7 @@ def test_ip_address_and_file_contracts():
     assert any("server_ip" in e for e in errors)
 
     # 3. Invalid PDF payload (extension mismatch)
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input({"server_ip": "10.0.0.1", "pdf_report": "report.docx"})
     )
@@ -461,7 +461,7 @@ def test_ip_address_and_file_contracts():
     assert any("pdf_report" in e for e in errors)
 
     # 4. Invalid Doc payload (mime-type mismatch)
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input({
             "server_ip": "10.0.0.1",
@@ -530,14 +530,14 @@ def test_flat_rules_contract_validates_string_input_for_object_schema():
     }
 
     # 1. String input, should wrap into table_name
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input("employees")
     )
     assert errors == []
 
     # 2. Normal object input, should work as is
-    errors = validate_input_contract(
+    errors = validate_contract(
         contract,
         make_input({"table_name": "employees", "columns": ["id", "name"]})
     )

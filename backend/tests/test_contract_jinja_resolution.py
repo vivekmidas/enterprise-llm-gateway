@@ -3,7 +3,7 @@ import json
 import uuid
 import asyncio
 from app.core.types.common import NodeInput, NodeOutput
-from app.nodes.contracts import validate_input_contract, validate_output_contract
+from app.nodes.contracts import validate_contract
 from app.nodes.base import BaseNode
 from app.workflows.executor import WorkflowExecutor
 from app.nodes.registry import NodesRegistry
@@ -122,7 +122,7 @@ def test_validate_output_contract_jinja_resolution():
         })
     )
 
-    errors = validate_output_contract(contract, output, node_name="test_node")
+    errors = validate_contract(contract, output, node_name="test_node")
 
     assert errors == []
 
