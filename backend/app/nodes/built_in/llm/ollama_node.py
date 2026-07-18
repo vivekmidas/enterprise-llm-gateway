@@ -51,14 +51,15 @@ class OllamaNode(BaseLLMNode):
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "top_p": top_p
+            "top_p": top_p,
+            "stream": False
         }
 
     def get_completions_endpoint(self, base_url: str, model: str = "", api_key: str = "") -> str:
         url = base_url.rstrip("/")
         if "chat/completions" in url:
             return url
-        return f"{url}/v1/chat/completions"
+        return f"{url}/api/chat"
 
     def get_models_endpoint(self, base_url: str) -> Optional[str]:
         url = base_url.rstrip("/")
@@ -67,10 +68,9 @@ class OllamaNode(BaseLLMNode):
         return f"{url}/v1/models"
 
     def parse_response(self, response_json: Dict[str, Any]) -> str:
-        choices = response_json.get("choices", [])
-        if not choices:
-            raise ValueError("Ollama completions response has no choices.")
-        message = choices[0].get("message", {})
+        message = response_json.get("message", {})
+        if not message:
+            raise ValueError("Ollama completions response has no message.")
         content = message.get("content")
         if content is None:
             return ""

@@ -78,7 +78,7 @@ class DBExecutor(BaseNode, abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def execute_query(self, connection, query: str, query_type: str, params: Optional[Any] = None) -> Any:
+    async def execute_query(self, connection, query: str, query_type: str,columns: Optional[str]= None, params: Optional[Any] = None) -> Any:
         """DB-specific execution with parameterization (prevents SQL injection)."""
         pass
 
@@ -121,7 +121,7 @@ class DBExecutor(BaseNode, abc.ABC):
         start_time = time.time()
         trace_id = inp.trace_id
 
-        self.logger.info("db_node_execution_started", trace_id=trace_id)
+        self.logger.info("db_node_execution_started", trace_id=trace_id, node_name=self.name, db_type=self.db_type)
 
         # 1. Parse payload if present in inp.data
         try:
@@ -156,8 +156,8 @@ class DBExecutor(BaseNode, abc.ABC):
                 query_type=config.get("query_type"),
                 columns=field_names,
                 values=field_values,
-                condition=data.get("condition"),
-                condition_params=data.get("condition_params")
+                condition=data.get("condition") or None,
+                condition_params=data.get("condition_params") or None
             )
             if query:
                 # Single query mode
