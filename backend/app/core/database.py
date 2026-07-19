@@ -4,6 +4,23 @@ from sqlalchemy import inspect
 from app.core.config import get_settings
 
 settings = get_settings()
+from pathlib import Path
+import os
+
+db_path = Path("enterprise_gateway.db").resolve()
+print(f"Working Directory : {os.getcwd()}")
+print(f"Database Path     : {db_path}")
+print(f"Writable          : {os.access(db_path.parent, os.W_OK)}")
+
+from sqlalchemy.engine import make_url
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.info("DATABASE_URL = %s", settings.DATABASE_URL)
+
+url = make_url(settings.DATABASE_URL)
+logger.info("Resolved database = %s", url.database)
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

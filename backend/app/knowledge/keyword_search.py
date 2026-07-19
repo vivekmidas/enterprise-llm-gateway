@@ -15,6 +15,7 @@ async def keyword_search(
     customer_id: int,
     knowledge_base_ids: list[int],
     limit: int = 20,
+    metadata: dict | None = None,
 ) -> list[int]:
     """Return chunk IDs matching significant query terms."""
 
@@ -33,17 +34,20 @@ async def keyword_search(
             for term in terms
         ]
 
-        result = await db.execute(
-            select(KnowledgeChunkDB.id)
-            .where(
-                KnowledgeChunkDB.customer_id == customer_id,
-                KnowledgeChunkDB.knowledge_base_id.in_(
-                    knowledge_base_ids
-                ),
-                or_(*conditions),
-            )
-            .limit(limit)
+        stmt = select(KnowledgeChunkDB.id).where(
+            KnowledgeChunkDB.customer_id == customer_id,
+            KnowledgeChunkDB.knowledge_base_id.in_(
+                knowledge_base_ids
+            ),
+            or_(*conditions),
         )
+
+        if metadata:
+            for key, val in metadata.items():
+                if val:
+                    stmt = stmt.where(KnowledgeChunkDB.metadata_json[key].as_string() == str(val))
+
+        result = await db.execute(stmt.limit(limit))
 
         chunk_ids = list(result.scalars().all())
 

@@ -320,7 +320,7 @@ class KnowledgeRetrievalNode(BaseNode):
     ) -> list[RetrievedChunk]:
         """Isolated retrieval call for easier testing and extension."""
 
-        return await retrieve(
+        res = await retrieve(
             db=db,
             query=query,
             customer_id=customer_id,
@@ -330,6 +330,7 @@ class KnowledgeRetrievalNode(BaseNode):
             metadata=metadata,
             score_threshold=score_threshold,
         )
+        return res["chunks"]
 
     def _resolve_customer_id(self, inp: NodeInput) -> Optional[int]:
         """

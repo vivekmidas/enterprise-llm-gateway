@@ -82,8 +82,13 @@ async def test_custom_node_deletion_runnability_lifecycle(client: AsyncClient, s
         db_wf = wf_res.scalar_one()
         assert db_wf.is_runnable is True
         
-    # 3. Call DELETE /nodes/{node_name} to delete the custom node
+    # 3. Call DELETE /nodes/{node_name} to delete the custom node (should fail with 400 because it's in use)
     delete_res = await client.delete(f"/nodes/{custom_node_name}", headers=system_admin_headers)
+    assert delete_res.status_code == 400
+    assert delete_res.json()["detail"]["error_code"] == "NODE_IN_USE"
+    
+    # 3b. Call DELETE /nodes/{node_name}?force=true to delete it successfully
+    delete_res = await client.delete(f"/nodes/{custom_node_name}?force=true", headers=system_admin_headers)
     assert delete_res.status_code == 200
     
     # 4. Verify node is removed from registry and DB

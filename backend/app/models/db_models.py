@@ -334,3 +334,28 @@ class KnowledgeChunkDB(Base):
         String,
         default=lambda: datetime.utcnow().isoformat(),
     )
+
+
+class RetrievalConfigDB(Base):
+    __tablename__ = "retrieval_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(String(1000), nullable=True)
+    customer_id = Column(
+        Integer, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    settings = Column(JSON, nullable=False)
+
+    created_at = Column(
+        String, default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+

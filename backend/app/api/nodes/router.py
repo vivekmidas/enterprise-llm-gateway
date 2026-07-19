@@ -792,12 +792,14 @@ from pathlib import Path
 @router.delete("/{node_name}")
 async def delete_node(
     node_name: str,
+    force: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Deletes a custom node.
-    Only System Admins or Tenant Admins (for their customer-scoped nodes) can delete.
+    Only System Admins (for global/system nodes) or Tenant Admins (for their customer-scoped nodes) can delete.
+    If the node is used in workflows, it flags them unless force=True is passed.
     """
     if current_user.role not in ["admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin permissions required to delete nodes")
@@ -810,11 +812,57 @@ async def delete_node(
     if not node:
         raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
 
-    # Only custom (customer-specific) nodes or system nodes in plugins can be deleted.
     # Check authorization:
     if current_user.role == "admin":
         if node.customer_id is None or node.customer_id != current_user.customer_id:
             raise HTTPException(status_code=403, detail="You do not have permission to delete this node")
+
+    # Scan workflows to check if node is in use
+    from app.models.db_models import WorkflowDB
+    import json
+    
+    workflow_stmt = select(WorkflowDB)
+    workflow_res = await db.execute(workflow_stmt)
+    workflows = workflow_res.scalars().all()
+    
+    used_in_workflows = []
+    for workflow in workflows:
+        nodes = []
+        nodes_structure_str = workflow.nodes_structure
+        if nodes_structure_str:
+            try:
+                nodes = json.loads(nodes_structure_str)
+            except Exception:
+                pass
+        elif workflow.definition:
+            definition = workflow.definition
+            if isinstance(definition, str):
+                try:
+                    definition = json.loads(definition)
+                except Exception:
+                    pass
+            if isinstance(definition, dict):
+                nodes = definition.get("nodes") or definition.get("nodes_structure") or []
+                
+        for n in nodes:
+            node_data = n.get("data", {})
+            n_name = node_data.get("name") or n.get("name")
+            if n_name == node_name:
+                used_in_workflows.append({
+                    "id": workflow.id,
+                    "name": workflow.name
+                })
+                break
+                
+    if used_in_workflows and not force:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "NODE_IN_USE",
+                "message": f"Node '{node_name}' is currently used in active workflows. Deleting it will mark these workflows as unrunnable.",
+                "workflows": used_in_workflows
+            }
+        )
 
     # Delete database records from NodeDB and CustomerNodeDB
     await db.execute(delete(CustomerNodeDB).where(CustomerNodeDB.node_name == node_name))
@@ -851,7 +899,7 @@ async def delete_node(
     from app.workflows.service import sync_workflows_runnability
     await sync_workflows_runnability(db)
 
-    return {"message": f"Custom node '{node_name}' has been successfully removed."}
+    return {"message": f"Node '{node_name}' has been successfully removed."}
 
 @router.post("/json-samples")
 async def get_json_samples(

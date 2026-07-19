@@ -55,6 +55,10 @@ class RetrievalRequest(BaseModel):
     rerank_model: str | None = None
     rerank_limit: int | None = None
 
+    approach: str | None = None
+    enable_rrf: bool | None = None
+    metadata: dict[str, Any] | None = None
+
     @field_validator("query")
     @classmethod
     def validate_query(cls, value: str) -> str:
@@ -139,6 +143,10 @@ class RetrievalResponse(BaseModel):
     statistics: RetrievalStatistics | None = None
     rerank_info: dict | None = None
     document_details: list[Any] | None = None
+    raw_candidates: list[Any] | None = None
+    discarded_duplicates: list[Any] | None = None
+    discarded_reranked: list[Any] | None = None
+
 
 
 # -------------------------------------------------------------------------

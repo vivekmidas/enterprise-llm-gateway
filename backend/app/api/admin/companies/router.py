@@ -40,8 +40,28 @@ async def get_company_settings(
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-        
-    return customer.settings or {}
+
+    settings = customer.settings or {}
+    active_config_id = settings.get("active_config_id")
+    if active_config_id:
+        from app.models.db_models import RetrievalConfigDB
+        cfg_res = await db.execute(
+            select(RetrievalConfigDB).where(
+                RetrievalConfigDB.id == int(active_config_id),
+                RetrievalConfigDB.customer_id == target_customer_id
+            )
+        )
+        config = cfg_res.scalar_one_or_none()
+        if config:
+            return {
+                **settings,
+                **config.settings,
+                "active_config_id": config.id,
+                "active_config_name": config.name,
+                "active_config_description": config.description,
+            }
+
+    return settings
 
 
 @router.put("/settings", response_model=dict)

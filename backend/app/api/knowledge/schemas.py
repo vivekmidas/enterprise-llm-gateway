@@ -75,6 +75,9 @@ class RetrievalRequest(BaseModel):
     enable_reranking: Optional[bool] = None
     rerank_model: Optional[str] = Field(default=None)
     rerank_limit: Optional[int] = Field(default=None, ge=1, le=100)
+    approach: Optional[str] = None
+    enable_rrf: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class Citation(BaseModel):
     document_id: int
@@ -114,3 +117,27 @@ class RAGRequest(BaseModel):
     enable_reranking: Optional[bool] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+
+
+class RetrievalConfigCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
+    settings: Dict[str, Any]
+
+
+class RetrievalConfigUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+
+class RetrievalConfigResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    customer_id: int
+    created_by: int
+    settings: Dict[str, Any]
+    created_at: str
+    updated_at: str
+    model_config = {"from_attributes": True}

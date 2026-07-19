@@ -4,7 +4,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 class LLMRouter:
     def __init__(self):
-        self.provider = os.getenv("LLM_PROVIDER", "vllm").lower()
+        self.provider = os.getenv("LLM_PROVIDER", "ollama").lower()
 
     async def get_llm(self, temperature=0.7, max_tokens=1024, customer_id: int | None = None, db = None):
         tenant_config = {}
@@ -20,7 +20,7 @@ class LLMRouter:
             except Exception:
                 pass
 
-        provider = tenant_config.get("llm_provider") or os.getenv("LLM_PROVIDER", "vllm").lower()
+        provider = tenant_config.get("llm_provider") or os.getenv("LLM_PROVIDER", "ollama").lower()
         provider = provider.lower()
 
         if provider == "vllm":
@@ -44,7 +44,7 @@ class LLMRouter:
                 openai_api_key="ollama",
                 temperature=temperature,
                 max_tokens=max_tokens,
-                streaming=True,
+                streaming=False,
             )
         elif provider == "openai":
             model = tenant_config.get("llm_model") or "gpt-4o-mini"

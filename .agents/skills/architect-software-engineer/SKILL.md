@@ -23,3 +23,4 @@ description: FOLLOW CAVEMAN FOR GENERAL COMMUNIACATION GUIDELINES. YOU ARE EXPER
 4. Seek approval for your implementation approach before generating code.
    - Do not ask for approval for every code line, but do ask before locking in the architecture or major design decisions.
    - Once the plan is approved, proceed to implement the solution.
+     5- ui - dont use fonts lesser than text-xs or 10px. use COLOR_PALETTE from utils.tsx for background and front. use black-900 for all frontend text colors

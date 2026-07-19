@@ -68,7 +68,7 @@ class RetrievalService:
         # =========================================================
         # Steps 3 to 8: Executed inside core_retrieve
         # =========================================================
-        chunks = await core_retrieve(
+        retrieval_data = await core_retrieve(
             db=self.db,
             query=request.query,
             customer_id=request.customer_id,
@@ -76,7 +76,11 @@ class RetrievalService:
             top_k=request.top_k,
             score_threshold=request.min_score,
             enable_reranking=request.enable_reranking,
+            approach=request.approach,
+            enable_rrf=request.enable_rrf,
+            metadata=request.metadata,
         )
+        chunks = retrieval_data["chunks"]
 
         # =========================================================
         # Step 9: Apply token budget & Step 10: Generate context
@@ -161,6 +165,9 @@ class RetrievalService:
             statistics=stats,
             rerank_info=rerank_info,
             document_details=docs_list,
+            raw_candidates=retrieval_data["raw_candidates"],
+            discarded_duplicates=retrieval_data["discarded_duplicates"],
+            discarded_reranked=retrieval_data["discarded_reranked"],
         )
 
         # Write to audit log database table

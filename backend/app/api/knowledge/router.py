@@ -30,6 +30,9 @@ from app.api.knowledge.schemas import (
     RetrievalRequest,
     ResponseGenerationRequest,
     RAGRequest,
+    RetrievalConfigCreate,
+    RetrievalConfigUpdate,
+    RetrievalConfigResponse,
 )
 from app.models.db_models import (
     KnowledgeBaseDB,
@@ -37,6 +40,7 @@ from app.models.db_models import (
     KnowledgeDocumentDB,
     KnowledgeChunkDB,
     CustomerDB,
+    RetrievalConfigDB,
 )
 from app.api.knowledge.ingestion import knowledge_ingestion_service
 from app.core.config import get_settings
@@ -501,6 +505,9 @@ async def retrieve_knowledge(
         **({"enable_reranking": payload.enable_reranking} if payload.enable_reranking is not None else {}),
         rerank_model=payload.rerank_model,
         rerank_limit=payload.rerank_limit,
+        approach=payload.approach,
+        enable_rrf=payload.enable_rrf,
+        metadata=payload.metadata,
     )
 
     result = await retrieval_service.retrieve(request)
@@ -694,4 +701,147 @@ async def delete_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete document: {exc}",
+        )
+
+
+# =============================================================================
+# Retrieval Configurations (Presets)
+# =============================================================================
+
+
+@router.post(
+    "/retrieval-configs",
+    response_model=RetrievalConfigResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_retrieval_config(
+    payload: RetrievalConfigCreate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new retrieval configuration preset for the customer."""
+    customer_id = _require_tenant(current_user)
+
+    config = RetrievalConfigDB(
+        name=payload.name,
+        description=payload.description,
+        customer_id=customer_id,
+        created_by=int(current_user.id),
+        settings=payload.settings,
+    )
+
+    try:
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+        return config
+    except Exception as exc:
+        logger.exception("create_retrieval_config_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create retrieval configuration: {exc}",
+        )
+
+
+@router.get(
+    "/retrieval-configs",
+    response_model=List[RetrievalConfigResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def list_retrieval_configs(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all retrieval configurations saved for the tenant."""
+    customer_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(RetrievalConfigDB).where(
+            RetrievalConfigDB.customer_id == customer_id
+        )
+    )
+    return result.scalars().all()
+
+
+@router.put(
+    "/retrieval-configs/{config_id}",
+    response_model=RetrievalConfigResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_retrieval_config(
+    config_id: int,
+    payload: RetrievalConfigUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing retrieval configuration preset."""
+    customer_id = _require_tenant(current_user)
+
+    stmt = select(RetrievalConfigDB).where(
+        RetrievalConfigDB.id == config_id,
+        RetrievalConfigDB.customer_id == customer_id,
+    )
+    res = await db.execute(stmt)
+    config = res.scalar_one_or_none()
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Retrieval configuration not found.",
+        )
+
+    if payload.name is not None:
+        config.name = payload.name
+    if payload.description is not None:
+        config.description = payload.description
+    if payload.settings is not None:
+        config.settings = payload.settings
+
+    try:
+        await db.commit()
+        await db.refresh(config)
+        return config
+    except Exception as exc:
+        logger.exception("update_retrieval_config_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update retrieval configuration: {exc}",
+        )
+
+
+@router.delete(
+    "/retrieval-configs/{config_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_retrieval_config(
+    config_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a specific retrieval configuration preset."""
+    customer_id = _require_tenant(current_user)
+
+    stmt = select(RetrievalConfigDB).where(
+        RetrievalConfigDB.id == config_id,
+        RetrievalConfigDB.customer_id == customer_id,
+    )
+    res = await db.execute(stmt)
+    config = res.scalar_one_or_none()
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Retrieval configuration not found.",
+        )
+
+    try:
+        await db.delete(config)
+        await db.commit()
+        return {"message": "Retrieval configuration successfully deleted."}
+    except Exception as exc:
+        logger.exception("delete_retrieval_config_failed")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete retrieval configuration: {exc}",
         )

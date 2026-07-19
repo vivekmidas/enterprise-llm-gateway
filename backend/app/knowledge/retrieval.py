@@ -35,7 +35,9 @@ async def retrieve(
     enable_reranking: bool | None = None,
     rerank_model: str | None = None,
     rerank_limit: int | None = None,
-) -> list[RetrievedChunk]:
+    approach: str | None = None,
+    enable_rrf: bool | None = None,
+) -> dict[str, Any]:
     """
     Perform hybrid knowledge retrieval with multi-collection parallel search and optional reranking.
 
@@ -69,7 +71,8 @@ async def retrieve(
         cust_res = await db.execute(cust_stmt)
         customer = cust_res.scalar_one_or_none()
         tenant_settings = (customer.settings or {}) if customer else {}
-        approach = tenant_settings.get("approach", "hybrid").lower()
+        active_approach = approach if approach is not None else tenant_settings.get("approach", "hybrid").lower()
+        active_enable_rrf = enable_rrf if enable_rrf is not None else tenant_settings.get("enable_rrf", True)
 
         # =========================================================
         # Step 3: Resolve Knowledge Bases
@@ -90,7 +93,12 @@ async def retrieve(
                 requested_kbs=knowledge_base_ids,
                 customer_id=customer_id,
             )
-            return []
+            return {
+                "chunks": [],
+                "raw_candidates": [],
+                "discarded_duplicates": [],
+                "discarded_reranked": [],
+            }
         
         logger.info("retrieval_step_3_resolve_kbs_success", validated_kb_ids=validated_kb_ids)
 
@@ -193,7 +201,7 @@ async def retrieve(
         ranked_lists = []
 
         # Execute parallel searches if vector is enabled
-        if approach in ("hybrid", "vector"):
+        if active_approach in ("hybrid", "vector"):
             search_tasks = [search_single_collection(c) for c in collections]
             search_results = await asyncio.gather(*search_tasks)
 
@@ -209,7 +217,7 @@ async def retrieve(
 
         # Keyword Search (MySQL) - hybrid search part of Step 6
         keyword_chunk_ids = []
-        if approach in ("hybrid", "keyword"):
+        if active_approach in ("hybrid", "keyword"):
             try:
                 logger.info("retrieval_step_6_keyword_search_started", tenant_id=customer_id, validated_kb_ids=validated_kb_ids)
                 keyword_chunk_ids = await keyword_search(
@@ -218,6 +226,7 @@ async def retrieve(
                     customer_id=customer_id,
                     knowledge_base_ids=validated_kb_ids,
                     limit=candidate_limit,
+                    metadata=metadata,
                 )
                 logger.info("retrieval_step_6_keyword_search_success", count=len(keyword_chunk_ids))
             except Exception as e:
@@ -242,7 +251,33 @@ async def retrieve(
         # Step 7: Merge results
         # =========================================================
         logger.info("retrieval_step_7_merge_results_started", lists_count=len(ranked_lists))
-        fused_results = reciprocal_rank_fusion(ranked_lists)
+        if active_enable_rrf:
+            fused_results = reciprocal_rank_fusion(ranked_lists)
+        else:
+            # Bypass RRF. Merge results prioritizing vector, then keyword
+            fused_results = []
+            seen = set()
+            vector_list = []
+            keyword_list = []
+            if active_approach in ("hybrid", "vector"):
+                vector_lists_count = len(ranked_lists)
+                if active_approach == "hybrid" and len(keyword_chunk_ids) > 0:
+                    vector_lists_count -= 1
+                for i in range(vector_lists_count):
+                    for cid in ranked_lists[i]:
+                        if cid not in seen:
+                            seen.add(cid)
+                            vector_list.append(cid)
+            if active_approach in ("hybrid", "keyword"):
+                keyword_list = keyword_chunk_ids
+
+            for cid in vector_list:
+                fused_results.append((cid, vector_score_map.get(cid, 0.0)))
+            for cid in keyword_list:
+                if cid not in seen:
+                    seen.add(cid)
+                    fused_results.append((cid, 0.0))
+
         logger.info("retrieval_step_7_merge_results_success", merged_count=len(fused_results))
 
         if not fused_results:
@@ -251,7 +286,12 @@ async def retrieve(
                 customer_id=customer_id,
                 knowledge_base_ids=validated_kb_ids,
             )
-            return []
+            return {
+                "chunks": [],
+                "raw_candidates": [],
+                "discarded_duplicates": [],
+                "discarded_reranked": [],
+            }
 
         # Keep more candidates when reranking is enabled
         should_rerank = enable_reranking if enable_reranking is not None else tenant_settings.get("enable_reranking", settings.RERANK_ENABLED)
@@ -267,7 +307,9 @@ async def retrieve(
                 top_k,
             )
 
-        selected = fused_results[:selection_limit]
+        # Resolve more candidates (e.g. up to 50) for raw candidates list in diagnostics
+        resolved_limit = min(len(fused_results), max(selection_limit, 50))
+        selected = fused_results[:resolved_limit]
         selected_chunk_ids = [chunk_id for chunk_id, _ in selected]
         fusion_score_map = dict(fused_results)
 
@@ -302,23 +344,38 @@ async def retrieve(
         # Step 8: Remove duplicate chunks (Content-based deduplication)
         # =========================================================
         logger.info("retrieval_step_8_remove_duplicates_started", candidates_count=len(selected_chunk_ids))
+        raw_candidates_list = []
         candidates = []
+        discarded_duplicates_list = []
         seen_contents = set()
         for rank, chunk_id in enumerate(selected_chunk_ids, start=1):
             record = records.get(chunk_id)
             if not record:
-                logger.warning(
-                    "knowledge_chunk_missing_from_database",
-                    chunk_id=chunk_id,
-                    customer_id=customer_id,
-                )
                 continue
 
             chunk, document = record
+            metadata = dict(chunk.metadata_json or {})
+            metadata["document_name"] = document.name
+
+            item = {
+                "rank": rank,
+                "chunk_id": chunk.id,
+                "document_id": document.id,
+                "document_name": document.name,
+                "knowledge_base_id": chunk.knowledge_base_id,
+                "content": chunk.content,
+                "score": float(fusion_score_map[chunk_id]),
+                "vector_score": vector_score_map.get(chunk.id),
+                "metadata": metadata,
+                "chunk_index": chunk.chunk_index,
+            }
+
+            raw_candidates_list.append(item)
 
             # Normalize content to identify duplicate texts
             normalized_content = " ".join(chunk.content.split()).strip().lower()
             if normalized_content in seen_contents:
+                discarded_duplicates_list.append(item)
                 logger.info(
                     "retrieval_step_8_duplicate_chunk_removed",
                     chunk_id=chunk.id,
@@ -327,44 +384,40 @@ async def retrieve(
                 continue
             seen_contents.add(normalized_content)
 
-            candidates.append(
-                {
-                    "rank": rank,
-                    "chunk_id": chunk.id,
-                    "document_id": document.id,
-                    "document_name": document.name,
-                    "knowledge_base_id": chunk.knowledge_base_id,
-                    "content": chunk.content,
-                    "score": float(fusion_score_map[chunk_id]),
-                    "vector_score": vector_score_map.get(chunk.id),
-                    "metadata": chunk.metadata_json or {},
-                    "chunk_index": chunk.chunk_index,
-                }
-            )
+            candidates.append(item)
         logger.info("retrieval_step_8_remove_duplicates_success", final_count=len(candidates))
 
         # =========================================================
         # 7. Optional Reranking
         # =========================================================
         # Per-request override: False disables, True/None uses global/tenant setting
-        should_rerank = enable_reranking if enable_reranking is not None else tenant_settings.get("enable_reranking", settings.RERANK_ENABLED)
         active_rerank_model = rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL
         reranker = get_reranker(model_name=active_rerank_model) if should_rerank else None
 
+        discarded_reranked_list = []
         if reranker and candidates:
-            candidates = await reranker.rerank(
+            candidates_to_rerank = candidates[:selection_limit]
+            candidates_reranked = await reranker.rerank(
                 query=query,
-                candidates=candidates,
+                candidates=candidates_to_rerank,
                 top_k=top_k,
             )
+            final_candidates = candidates_reranked
+            
+            final_ids = {item["chunk_id"] for item in final_candidates}
+            discarded_reranked_list = [
+                item for item in candidates_to_rerank if item["chunk_id"] not in final_ids
+            ]
+            discarded_reranked_list.extend(candidates[selection_limit:])
         else:
-            candidates = candidates[:top_k]
+            final_candidates = candidates[:top_k]
+            discarded_reranked_list = candidates[top_k:]
 
         # =========================================================
         # Build Final RetrievedChunk Objects
         # =========================================================
         retrieved_chunks = []
-        for index, item in enumerate(candidates, start=1):
+        for index, item in enumerate(final_candidates, start=1):
             metadata = dict(item.get("metadata") or {})
             metadata["document_name"] = item.get("document_name") or f"Doc {item['document_id']}"
             retrieved_chunks.append(
@@ -379,7 +432,12 @@ async def retrieve(
                 )
             )
 
-        return retrieved_chunks
+        return {
+            "chunks": retrieved_chunks,
+            "raw_candidates": raw_candidates_list,
+            "discarded_duplicates": discarded_duplicates_list,
+            "discarded_reranked": discarded_reranked_list,
+        }
 
     except Exception as exc:
         logger.exception(
