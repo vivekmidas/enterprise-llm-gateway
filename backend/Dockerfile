@@ -1,43 +1,40 @@
-# ========================================
-# Enterprise LLM Gateway - Backend Dockerfile
-# ========================================
-
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uvicorn globally
-RUN pip3 install uvicorn[standard]
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.8.7 /uv /uvx /usr/local/bin/
 
-# Install uv (fast Python package manager)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-
-# Copy project files
-COPY pyproject.toml ./
-
-COPY app/ ./app/ --exclude=/.git
+# Copy dependency manifests
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies
-# RUN uv sync --frozen --no-dev
-RUN uv sync 
+RUN uv sync --frozen --no-dev
 
-# Download spaCy model (required for Presidio), changed from en_core_web_lg to en_core_web_sm for faster download, need to change back to lg if we want better NER performance
-RUN /app/.venv/bin/python -m pip install --upgrade pip && /app/.venv/bin/python -m spacy download en_core_web_sm
+# Copy application
+COPY app ./app
 
-# Expose port
+# Install spaCy model
+RUN /app/.venv/bin/python -m spacy download en_core_web_sm
+
+# Create non-root user
+RUN useradd --create-home appuser
+USER appuser
+
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Run the application
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#CMD ["/app/.venv/bin/uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+CMD ["/app/.venv/bin/python","-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
