@@ -6,27 +6,48 @@ class LLMRouter:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "ollama").lower()
 
-    async def get_llm(self, temperature=0.7, max_tokens=1024, customer_id: int | None = None, db = None):
+    async def get_llm(
+        self,
+        temperature=0.7,
+        max_tokens=1024,
+        customer_id: int | None = None,
+        db=None,
+        llm_config: dict | None = None,
+    ):
         tenant_config = {}
         if customer_id is not None and db is not None:
             try:
-                from app.models.db_models import CustomerDB
+                from app.models.db_models import CustomerDB, RetrievalConfigDB
                 from sqlalchemy import select
                 cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
                 cust_res = await db.execute(cust_stmt)
                 customer = cust_res.scalar_one_or_none()
                 if customer and customer.settings:
-                    tenant_config = customer.settings
+                    tenant_config = dict(customer.settings)
+                    active_config_id = customer.settings.get("active_config_id")
+                    if active_config_id:
+                        cfg_stmt = select(RetrievalConfigDB).where(
+                            RetrievalConfigDB.id == int(active_config_id),
+                            RetrievalConfigDB.customer_id == customer_id
+                        )
+                        cfg_res = await db.execute(cfg_stmt)
+                        cfg = cfg_res.scalar_one_or_none()
+                        if cfg and cfg.settings:
+                            tenant_config = {**tenant_config, **cfg.settings}
             except Exception:
                 pass
 
+        if llm_config and isinstance(llm_config, dict):
+            tenant_config = {**tenant_config, **llm_config}
+
         provider = tenant_config.get("llm_provider") or os.getenv("LLM_PROVIDER", "ollama").lower()
         provider = provider.lower()
+        self.provider = provider
 
         if provider == "vllm":
             model = tenant_config.get("llm_model") or os.getenv("VLLM_MODEL")
             base_url = tenant_config.get("llm_base_url") or os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1")
-            api_key = tenant_config.get("llm_api_key") or os.getenv("VLLM_API_KEY", "EMPTY")
+            api_key = tenant_config.get("llm_api_key") or os.getenv("VLLM_API_KEY", "")
             return ChatOpenAI(
                 model=model,
                 openai_api_base=base_url,

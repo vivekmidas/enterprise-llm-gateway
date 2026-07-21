@@ -33,6 +33,7 @@ async def retrieve(
     metadata: dict[str, Any] | None = None,
     score_threshold: float | None = None,
     enable_reranking: bool | None = None,
+    rerank_url: str | None = None,
     rerank_model: str | None = None,
     rerank_limit: int | None = None,
     approach: str | None = None,
@@ -391,8 +392,9 @@ async def retrieve(
         # 7. Optional Reranking
         # =========================================================
         # Per-request override: False disables, True/None uses global/tenant setting
-        active_rerank_model = rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL
-        reranker = get_reranker(model_name=active_rerank_model) if should_rerank else None
+        active_rerank_url = rerank_url or tenant_settings.get("rerank_url")
+        active_rerank_model = rerank_model or tenant_settings.get("rerank_model")
+        reranker = get_reranker(url=active_rerank_url, model=active_rerank_model) if should_rerank else None
 
         discarded_reranked_list = []
         if reranker and candidates:

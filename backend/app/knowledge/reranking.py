@@ -25,12 +25,12 @@ class RerankerProvider(ABC):
         raise NotImplementedError
 
 
-class OllamaReranker(RerankerProvider):
-    """Use an Ollama LLM as a relevance judge."""
+class LLMReranker(RerankerProvider):
+    """LLM-based relevance reranker using a generic chat-completion endpoint."""
 
-    def __init__(self, model_name: str | None = None) -> None:
-        self.base_url = settings.OLLAMA_BASE_URL.rstrip("/")
-        self.model = model_name or settings.RERANK_MODEL
+    def __init__(self, url: str, model: str) -> None:
+        self.url = url
+        self.model = model
 
     async def rerank(
         self,
@@ -59,10 +59,10 @@ class OllamaReranker(RerankerProvider):
         )
 
         try:
-            logger.info("Calling Ollama reranker", extra={"model": self.model, "url": f"{self.base_url}/api/chat", "candidate_count": len(candidates)})
+            logger.info("Calling LLM reranker", extra={"model": self.model, "url": self.url, "candidate_count": len(candidates)})
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.base_url}/api/chat",
+                    self.url,
                     json={
                         "model": self.model,
                         "stream": False,
@@ -84,17 +84,17 @@ class OllamaReranker(RerankerProvider):
 
             payload = response.json()
             if "message" not in payload or "content" not in payload["message"]:
-                logger.error("ollama_reranking_invalid_response", response=payload)
-                raise ValueError("Malformed response from Ollama API: missing message or content")
-            
+                logger.error("llm_reranking_invalid_response", response=payload)
+                raise ValueError("Malformed response from reranker API: missing message or content")
+
             content = payload["message"]["content"]
             if not content:
-                logger.error("ollama_reranking_empty_content")
-                raise ValueError("Empty content returned from Ollama API")
+                logger.error("llm_reranking_empty_content")
+                raise ValueError("Empty content returned from reranker API")
 
             parsed = json.loads(content)
             ranked_ids = parsed.get("ranked_candidate_ids", [])
-            logger.info("Ollama reranker succeeded", extra={"ranked_ids": ranked_ids})
+            logger.info("LLM reranker succeeded", extra={"ranked_ids": ranked_ids})
 
             return self._resolve_results(
                 candidates=candidates,
@@ -105,7 +105,7 @@ class OllamaReranker(RerankerProvider):
         except Exception:
             # Retrieval must remain available if reranking fails.
             logger.exception(
-                "ollama_reranking_failed",
+                "llm_reranking_failed",
                 extra={
                     "model": self.model,
                     "candidate_count": len(candidates),
@@ -182,15 +182,26 @@ Required JSON:
         return results
 
 
-def get_reranker(model_name: str | None = None) -> RerankerProvider | None:
-    """Create the configured reranking provider."""
+# Keep backward-compatible alias.
+OllamaReranker = LLMReranker
 
-    if not settings.RERANK_ENABLED and not model_name:
+
+def get_reranker(
+    url: str | None = None,
+    model: str | None = None,
+) -> RerankerProvider | None:
+    """Create a reranker from explicit settings or global config fallback.
+
+    Args:
+        url:   Full chat-completion endpoint URL (e.g. http://host/api/chat).
+               Falls back to ``settings.OLLAMA_BASE_URL/api/chat``.
+        model: Model name to use for reranking.
+               Falls back to ``settings.RERANK_MODEL``.
+    """
+    if not settings.RERANK_ENABLED and not url and not model:
         return None
 
-    if settings.RERANK_PROVIDER == "ollama":
-        return OllamaReranker(model_name=model_name)
+    resolved_url = url or f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+    resolved_model = model or settings.RERANK_MODEL
 
-    raise ValueError(
-        f"Unsupported reranking provider: {settings.RERANK_PROVIDER}"
-    )
+    return LLMReranker(url=resolved_url, model=resolved_model)

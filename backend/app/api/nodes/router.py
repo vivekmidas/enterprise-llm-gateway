@@ -372,41 +372,42 @@ async def configure_customer_node(
                 actual_key = k[7:] if k.startswith("system-") else k
                 incoming_keys.add(actual_key)
 
-            if current_user.role == "system_admin" and not is_customer_config:
-                if "user_properties" in config_data or "system_properties" in config_data:
-                    def sync_properties(db_list, payload_list):
-                        if not isinstance(payload_list, list):
-                            return db_list
-                        if not db_list:
-                            db_list = []
-                        elif isinstance(db_list, dict):
-                            db_list = [{"key": k, **v} if isinstance(v, dict) else {"key": k} for k, v in db_list.items()]
+            if "user_properties" in config_data or "system_properties" in config_data:
+                def sync_properties(db_list, payload_list):
+                    if not isinstance(payload_list, list):
+                        return db_list
+                    if not db_list:
+                        db_list = []
+                    elif isinstance(db_list, dict):
+                        db_list = [{"key": k, **v} if isinstance(v, dict) else {"key": k} for k, v in db_list.items()]
+                    else:
+                        db_list = [dict(item) if isinstance(item, dict) else item for item in db_list]
+                    payload_keys = {item.get("key") for item in payload_list if isinstance(item, dict) and "key" in item}
+                    # Delete properties not in payload
+                    updated_list = [
+                        item for item in db_list 
+                        if isinstance(item, dict) and item.get("key") in payload_keys
+                    ]
+                    db_keys = {item.get("key") for item in updated_list if isinstance(item, dict) and "key" in item}
+                    for item in payload_list:
+                        if not isinstance(item, dict) or "key" not in item:
+                            continue
+                        key = item["key"]
+                        if key in db_keys:
+                            for db_item in updated_list:
+                                if isinstance(db_item, dict) and db_item.get("key") == key:
+                                    db_item.update(item)
                         else:
-                            db_list = [dict(item) if isinstance(item, dict) else item for item in db_list]
-                        payload_keys = {item.get("key") for item in payload_list if isinstance(item, dict) and "key" in item}
-                        # Delete properties not in payload
-                        updated_list = [
-                            item for item in db_list 
-                            if isinstance(item, dict) and item.get("key") in payload_keys
-                        ]
-                        db_keys = {item.get("key") for item in updated_list if isinstance(item, dict) and "key" in item}
-                        for item in payload_list:
-                            if not isinstance(item, dict) or "key" not in item:
-                                continue
-                            key = item["key"]
-                            if key in db_keys:
-                                for db_item in updated_list:
-                                    if isinstance(db_item, dict) and db_item.get("key") == key:
-                                        db_item.update(item)
-                            else:
-                                updated_list.append(item)
-                        return updated_list
+                            updated_list.append(item)
+                    return updated_list
 
+                target_node_for_props = customer_node if not is_customer_config else base_node
+                if target_node_for_props:
                     if "user_properties" in config_data:
-                        customer_node.user_properties = sync_properties(customer_node.user_properties, config_data["user_properties"])
+                        target_node_for_props.user_properties = sync_properties(target_node_for_props.user_properties, config_data["user_properties"])
                     if "system_properties" in config_data:
-                        customer_node.system_properties = sync_properties(customer_node.system_properties, config_data["system_properties"])
-                else:
+                        target_node_for_props.system_properties = sync_properties(target_node_for_props.system_properties, config_data["system_properties"])
+            elif not is_customer_config:
                     # Update NodeDB columns: system_properties and user_properties
                     sys_props = customer_node.system_properties
                     if isinstance(sys_props, dict):

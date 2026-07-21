@@ -42,13 +42,13 @@ async def get_company_settings(
         raise HTTPException(status_code=404, detail="Customer not found")
 
     settings = customer.settings or {}
-    active_config_id = settings.get("active_config_id")
+    active_config_id = settings.get("active_profile_id") or settings.get("active_config_id")
     if active_config_id:
-        from app.models.db_models import RetrievalConfigDB
+        from app.models.db_models import LLMProfileDB
         cfg_res = await db.execute(
-            select(RetrievalConfigDB).where(
-                RetrievalConfigDB.id == int(active_config_id),
-                RetrievalConfigDB.customer_id == target_customer_id
+            select(LLMProfileDB).where(
+                LLMProfileDB.id == int(active_config_id),
+                LLMProfileDB.customer_id == target_customer_id
             )
         )
         config = cfg_res.scalar_one_or_none()
@@ -121,6 +121,263 @@ async def update_company_settings(
     return customer.settings
 
 
+@router.get("/llm-profiles", response_model=List[dict])
+async def get_llm_profiles(
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all saved LLM profiles for tenant."""
+    target_customer_id = customer_id or tenant_id
+    if current_user.role != "system_admin" or target_customer_id is None:
+        target_customer_id = current_user.customer_id
+        
+    if target_customer_id is None:
+        raise HTTPException(status_code=400, detail="No customer specified")
+
+    result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = customer.settings or {}
+    profiles = settings.get("llm_profiles") or []
+
+    # If legacy settings exist but no profiles, auto-migrate legacy setting to profile 1
+    if not profiles and settings.get("llm_provider") and settings.get("llm_model"):
+        default_profile = {
+            "id": 1,
+            "name": f"Default ({settings.get('llm_provider')})",
+            "llm_provider": settings.get("llm_provider"),
+            "llm_model": settings.get("llm_model"),
+            "llm_base_url": settings.get("llm_base_url"),
+            "llm_api_key": settings.get("llm_api_key"),
+            "temperature": settings.get("temperature", 0.7),
+            "max_tokens": settings.get("max_tokens", 1024),
+            "is_active": True,
+        }
+        profiles = [default_profile]
+        settings["llm_profiles"] = profiles
+        customer.settings = settings
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(customer, "settings")
+        await db.commit()
+
+    return profiles
+
+
+@router.post("/llm-profiles", response_model=dict)
+async def create_llm_profile(
+    payload: dict,
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new LLM profile for tenant."""
+    target_customer_id = customer_id or tenant_id or payload.get("customer_id") or payload.get("tenant_id")
+    if current_user.role != "system_admin" or target_customer_id is None:
+        target_customer_id = current_user.customer_id
+        
+    result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = dict(customer.settings or {})
+    profiles = list(settings.get("llm_profiles") or [])
+
+    new_id = max([int(p.get("id", 0)) for p in profiles], default=0) + 1
+    is_first = len(profiles) == 0
+    should_activate = payload.get("is_active", False) or is_first
+
+    new_profile = {
+        "id": new_id,
+        "name": payload.get("name") or f"Profile #{new_id}",
+        "llm_provider": payload.get("llm_provider", "openai"),
+        "llm_model": payload.get("llm_model", "gpt-4o-mini"),
+        "llm_base_url": payload.get("llm_base_url", "https://api.openai.com/v1"),
+        "llm_api_key": payload.get("llm_api_key", ""),
+        "temperature": payload.get("temperature", 0.7),
+        "max_tokens": payload.get("max_tokens", 1024),
+        "embedding_provider": payload.get("embedding_provider"),
+        "embedding_model": payload.get("embedding_model"),
+        "vector_dimension": payload.get("vector_dimension"),
+        "is_active": should_activate,
+    }
+
+    if should_activate:
+        for p in profiles:
+            p["is_active"] = False
+        settings["llm_provider"] = new_profile["llm_provider"]
+        settings["llm_model"] = new_profile["llm_model"]
+        settings["llm_base_url"] = new_profile["llm_base_url"]
+        settings["llm_api_key"] = new_profile["llm_api_key"]
+        if new_profile.get("embedding_provider"):
+            settings["embedding_provider"] = new_profile["embedding_provider"]
+        if new_profile.get("embedding_model"):
+            settings["embedding_model"] = new_profile["embedding_model"]
+        if new_profile.get("vector_dimension"):
+            settings["vector_dimension"] = new_profile["vector_dimension"]
+
+    profiles.append(new_profile)
+    settings["llm_profiles"] = profiles
+
+    customer.settings = settings
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(customer, "settings")
+    await db.commit()
+    return new_profile
+
+
+@router.put("/llm-profiles/{profile_id}", response_model=dict)
+async def update_llm_profile(
+    profile_id: int,
+    payload: dict,
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update an existing LLM profile."""
+    target_customer_id = customer_id or tenant_id or payload.get("customer_id") or payload.get("tenant_id")
+    if current_user.role != "system_admin" or target_customer_id is None:
+        target_customer_id = current_user.customer_id
+
+    result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = dict(customer.settings or {})
+    profiles = list(settings.get("llm_profiles") or [])
+    idx = next((i for i, p in enumerate(profiles) if int(p.get("id")) == profile_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="LLM profile not found")
+
+    profile = dict(profiles[idx])
+    for k in ["name", "llm_provider", "llm_model", "llm_base_url", "llm_api_key", "temperature", "max_tokens", "embedding_provider", "embedding_model", "vector_dimension"]:
+        if k in payload:
+            profile[k] = payload[k]
+
+    if payload.get("is_active"):
+        for p in profiles:
+            p["is_active"] = False
+        profile["is_active"] = True
+        settings["llm_provider"] = profile["llm_provider"]
+        settings["llm_model"] = profile["llm_model"]
+        settings["llm_base_url"] = profile["llm_base_url"]
+        settings["llm_api_key"] = profile["llm_api_key"]
+        if profile.get("embedding_provider"):
+            settings["embedding_provider"] = profile["embedding_provider"]
+        if profile.get("embedding_model"):
+            settings["embedding_model"] = profile["embedding_model"]
+        if profile.get("vector_dimension"):
+            settings["vector_dimension"] = profile["vector_dimension"]
+
+    profiles[idx] = profile
+    settings["llm_profiles"] = profiles
+    customer.settings = settings
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(customer, "settings")
+    await db.commit()
+    return profile
+
+
+@router.delete("/llm-profiles/{profile_id}")
+async def delete_llm_profile(
+    profile_id: int,
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete an LLM profile."""
+    target_customer_id = customer_id or tenant_id
+    if current_user.role != "system_admin" or target_customer_id is None:
+        target_customer_id = current_user.customer_id
+
+    result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = dict(customer.settings or {})
+    profiles = list(settings.get("llm_profiles") or [])
+    new_profiles = [p for p in profiles if int(p.get("id")) != profile_id]
+
+    # If active profile was deleted and remaining profiles exist, set first as active
+    if len(new_profiles) > 0 and not any(p.get("is_active") for p in new_profiles):
+        new_profiles[0]["is_active"] = True
+        settings["llm_provider"] = new_profiles[0]["llm_provider"]
+        settings["llm_model"] = new_profiles[0]["llm_model"]
+        settings["llm_base_url"] = new_profiles[0]["llm_base_url"]
+        settings["llm_api_key"] = new_profiles[0]["llm_api_key"]
+
+    settings["llm_profiles"] = new_profiles
+    customer.settings = settings
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(customer, "settings")
+    await db.commit()
+    return {"message": "Profile deleted", "profiles": new_profiles}
+
+
+@router.post("/llm-profiles/{profile_id}/activate")
+async def activate_llm_profile(
+    profile_id: int,
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Set an LLM profile as active default for tenant."""
+    target_customer_id = customer_id or tenant_id
+    if current_user.role != "system_admin" or target_customer_id is None:
+        target_customer_id = current_user.customer_id
+
+    result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = dict(customer.settings or {})
+    profiles = list(settings.get("llm_profiles") or [])
+    active_prof = None
+    for p in profiles:
+        if int(p.get("id")) == profile_id:
+            p["is_active"] = True
+            active_prof = p
+        else:
+            p["is_active"] = False
+
+    if not active_prof:
+        raise HTTPException(status_code=404, detail="LLM profile not found")
+
+    settings["llm_provider"] = active_prof.get("llm_provider")
+    settings["llm_model"] = active_prof.get("llm_model")
+    settings["llm_base_url"] = active_prof.get("llm_base_url")
+    settings["llm_api_key"] = active_prof.get("llm_api_key")
+    if active_prof.get("embedding_provider"):
+        settings["embedding_provider"] = active_prof.get("embedding_provider")
+    if active_prof.get("embedding_model"):
+        settings["embedding_model"] = active_prof.get("embedding_model")
+    if active_prof.get("vector_dimension"):
+        settings["vector_dimension"] = active_prof.get("vector_dimension")
+    settings["llm_profiles"] = profiles
+
+    customer.settings = settings
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(customer, "settings")
+    await db.commit()
+    return active_prof
+
+
 @router.post("/settings/test-connection")
 async def test_llm_connection(
     payload: dict,
@@ -168,12 +425,25 @@ async def test_llm_connection(
         if not customer:
             raise ValueError(f"Customer with ID {target_customer_id} not found in database")
 
-        settings = customer.settings or {}
-        
-        provider = (settings.get("llm_provider") or "").lower()
-        base_url = settings.get("llm_base_url")
-        api_key = settings.get("llm_api_key", "EMPTY")
-        model = settings.get("llm_model")
+        settings = dict(customer.settings or {})
+        config_id = payload.get("llm_profile_id") or payload.get("retrieval_config_id") or payload.get("config_id") or settings.get("active_profile_id") or settings.get("active_config_id")
+        if config_id:
+            from app.models.db_models import LLMProfileDB
+            cfg_res = await db.execute(
+                select(LLMProfileDB).where(
+                    LLMProfileDB.id == int(config_id),
+                    LLMProfileDB.customer_id == target_customer_id
+                )
+            )
+            cfg = cfg_res.scalar_one_or_none()
+            if cfg and cfg.settings:
+                llm_cfg = cfg.settings.get("llm_config") or cfg.settings
+                settings.update(llm_cfg)
+
+        provider = (payload.get("llm_provider") or settings.get("llm_provider") or "").lower()
+        base_url = payload.get("llm_base_url") or settings.get("llm_base_url")
+        api_key = payload.get("llm_api_key") or settings.get("llm_api_key", "EMPTY")
+        model = payload.get("llm_model") or settings.get("llm_model")
 
         if not provider:
             raise ValueError("LLM Provider is not configured in company settings")

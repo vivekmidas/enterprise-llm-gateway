@@ -73,6 +73,7 @@ class RetrievalRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     enable_reranking: Optional[bool] = None
+    rerank_url: Optional[str] = Field(default=None)
     rerank_model: Optional[str] = Field(default=None)
     rerank_limit: Optional[int] = Field(default=None, ge=1, le=100)
     approach: Optional[str] = None
@@ -106,6 +107,8 @@ class ResponseGenerationRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
     customer_id: Optional[int] = None
+    llm_config: Optional[Dict[str, Any]] = None
+    llm_config_id: Optional[int] = None
 
 
 class RAGRequest(BaseModel):
@@ -117,27 +120,6 @@ class RAGRequest(BaseModel):
     enable_reranking: Optional[bool] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    llm_config: Optional[Dict[str, Any]] = None
+    llm_config_id: Optional[int] = None
 
-
-class RetrievalConfigCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    description: Optional[str] = None
-    settings: Dict[str, Any]
-
-
-class RetrievalConfigUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    settings: Optional[Dict[str, Any]] = None
-
-
-class RetrievalConfigResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str]
-    customer_id: int
-    created_by: int
-    settings: Dict[str, Any]
-    created_at: str
-    updated_at: str
-    model_config = {"from_attributes": True}

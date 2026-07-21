@@ -48,12 +48,31 @@ class ResponseGenerationService:
             query=request.query,
         )
 
+        effective_llm_config = getattr(request, "llm_config", None)
+        llm_config_id = getattr(request, "llm_config_id", None)
+
+        if not effective_llm_config and request.customer_id and db:
+            try:
+                from app.core.profile_resolver import ProfileResolver
+                resolver = ProfileResolver(db=db)
+                profile = await resolver.resolve(
+                    profile_id=int(llm_config_id) if llm_config_id else None,
+                    customer_id=request.customer_id,
+                )
+                effective_llm_config = profile.generation.model_dump()
+                # Use system_prompt from profile if available
+                if profile.generation.system_prompt:
+                    system_prompt = profile.generation.system_prompt
+            except Exception as ex:
+                logger.warning("failed_to_resolve_profile_for_generation", error=str(ex))
+
         # Get LLM provider model
         llm = await self.llm_router.get_llm(
             temperature=request.temperature,
             max_tokens=request.max_generation_tokens,
             customer_id=request.customer_id,
             db=db,
+            llm_config=effective_llm_config,
         )
 
         messages = [

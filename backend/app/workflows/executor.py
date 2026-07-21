@@ -125,11 +125,14 @@ class WorkflowExecutor:
         
         workflow_customer_id = self.customer_id or self.user_id
         user_customer_id = user_data.get("customer_id") if user_data else None
+        user_id_val = user_data.get("user_id") if user_data else None
         customer_mismatch = bool(
             workflow_customer_id is not None
             and user_data
-            and user_customer_id != workflow_customer_id
-            and str(user_customer_id) != str(workflow_customer_id)
+            and (
+                (self.customer_id is not None and str(user_customer_id) != str(self.customer_id))
+                or (self.customer_id is None and self.user_id is not None and str(user_customer_id) != str(self.user_id) and str(user_id_val) != str(self.user_id))
+            )
         )
 
         if is_unrunnable or is_user_invalid or is_user_inactive or customer_mismatch:

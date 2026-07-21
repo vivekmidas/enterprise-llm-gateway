@@ -34,7 +34,7 @@ class OllamaNode(BaseLLMNode):
     def build_auth_headers(self, api_key: str) -> Dict[str, str]:
         # Ollama usually does not require auth headers, but we support them if configured
         headers = {}
-        if api_key and api_key.strip() and api_key != "ollama" and api_key != "EMPTY":
+        if api_key and api_key.strip() and api_key != "ollama" and api_key != "":
             headers["Authorization"] = f"Bearer {api_key.strip()}"
         return headers
 

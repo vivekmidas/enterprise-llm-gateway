@@ -220,7 +220,30 @@ async def update_workflow_node_properties(
         async with session.begin():
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
             if not workflow_node:
-                raise HTTPException(status_code=404, detail="Workflow node not found")
+                stmt = select(WorkflowDB).where(WorkflowDB.id == workflow_id)
+                res = await session.execute(stmt)
+                db_wf = res.scalar_one_or_none()
+                if not db_wf:
+                    raise HTTPException(status_code=404, detail="Workflow node not found")
+
+                agent_name = properties.get("name") or properties.get("agent_name") or ""
+                if not agent_name and db_wf.definition:
+                    raw_ui_data = _safe_json_loads(db_wf.definition, {})
+                    nodes = raw_ui_data.get("nodes") or raw_ui_data.get("nodes_structure") or []
+                    for n in nodes:
+                        n_dict = _node_to_dict(n)
+                        if n_dict.get("id") == agent_node_id:
+                            agent_name = (n_dict.get("data") or {}).get("name") or n_dict.get("name") or ""
+                            break
+
+                workflow_node = WorkflowNodeDB(
+                    workflow_id=workflow_id,
+                    agent_node_id=agent_node_id,
+                    agent_name=agent_name,
+                    updated_at=db_wf.updated_at
+                )
+                session.add(workflow_node)
+                await session.flush()
 
             # Get existing label and contracts first, fallback to passed values
             existing_result = await session.execute(
@@ -687,13 +710,21 @@ async def save_workflow_to_store(
                     if target_user_id:
                         db_workflow.user_id = target_user_id
                         
-                    if customer_id is not None:
-                        db_workflow.customer_id = customer_id
+                    target_customer_id = customer_id if customer_id is not None else definition.customer_id
+                    if target_customer_id is not None:
+                        db_workflow.customer_id = target_customer_id
                         
                     db_workflow.updated_at = datetime.utcnow().isoformat()
                     
                     # 2. Sync Node-to-Workflow associations
-                    # Clear existing associations for this workflow ID
+                    # Fetch existing saved properties before clearing
+                    existing_props_res = await session.execute(
+                        select(WorkflowNodePropertyDB).where(
+                            WorkflowNodePropertyDB.workflow_id == definition.id
+                        )
+                    )
+                    existing_props_map = {row.agent_node_id: (row.properties or {}) for row in existing_props_res.scalars().all()}
+
                     await session.execute(
                         delete(WorkflowNodePropertyDB).where(
                             WorkflowNodePropertyDB.workflow_id == definition.id
@@ -709,8 +740,10 @@ async def save_workflow_to_store(
                         agent_name = node_data.get("name") or n_dict.get("name")
                         catalog_result = await session.execute(select(NodeDB).where(NodeDB.name == agent_name))
                         catalog_node = catalog_result.scalars().first()
+                        saved_db_props = existing_props_map.get(n_dict.get("id"), {})
                         instance_properties = {
                             **_default_properties_from_node_definition(catalog_node),
+                            **saved_db_props,
                             **definition.properties.get(n_dict.get("id"), {}),
                             **_extract_node_properties(n_dict),
                         }

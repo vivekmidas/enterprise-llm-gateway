@@ -286,6 +286,18 @@ def require_admin_or_system_admin(request: Request):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
         )
+    return request.state.user
 
 require_resource_access = _require_resource_access
+
+@staticmethod
+def require_tenant(user: User) -> int:
+    if user.customer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not associated with a customer tenant.",
+        )
+
+    return user.customer_id
+
 

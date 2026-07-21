@@ -47,6 +47,9 @@ class KnowledgeRetrievalNode(BaseNode):
     output_contract: dict[str, Any] = {
         "type": "object",
         "properties": {
+            "answer": {
+                "type": "string",
+            },
             "results": {
                 "type": "array",
             },
@@ -57,15 +60,23 @@ class KnowledgeRetrievalNode(BaseNode):
                 "type": "array",
             },
         },
-        "required": ["results", "context", "citations"],
+        "required": ["answer", "results", "context", "citations"],
     }
 
     # Workflow-configurable properties.
     user_properties: list[dict[str, Any]] = [
         {
+            "key": "llm_profile_id",
+            "label": "LLM Profile",
+            "type": "choice",
+            "source": "/api/llm-profiles",
+            "description": "Select the LLM Profile preset for LLM, Embedding, and RAG search settings."
+        },
+        {
             "key": "knowledge_base_ids",
             "label": "Knowledge Bases",
             "type": "choice",
+            "source": "/api/knowledge/bases",
             "multiple": True,
             "options": [],
             "description": "Select the Knowledge Bases to query. If none selected, all active knowledge bases will be searched."
@@ -147,14 +158,44 @@ class KnowledgeRetrievalNode(BaseNode):
             )
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
-        """Execute tenant-scoped knowledge retrieval."""
+        """Execute tenant-scoped knowledge retrieval and LLM response generation."""
 
         data = self.get_input_data(inp)
 
         try:
             query = data["query"].strip()
 
-            # Runtime input can override workflow defaults where useful.
+            customer_id = self._resolve_customer_id(inp)
+
+            if customer_id is None:
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_code=400,
+                    error_message="customer_id is required for knowledge retrieval.",
+                    violations=["tenant_scope_missing"],
+                )
+
+            # Resolve profile — uses profile_id from config or falls back to tenant default
+            profile_id = data.get(
+                "llm_profile_id",
+                inp.config.get("llm_profile_id"),
+            )
+            if profile_id:
+                try:
+                    profile_id = int(profile_id)
+                except (ValueError, TypeError):
+                    profile_id = None
+
+            from app.core.profile_resolver import ProfileResolver
+            async with AsyncSessionLocal() as db:
+                profile = await ProfileResolver(db=db).resolve(
+                    profile_id=profile_id,
+                    customer_id=customer_id,
+                )
+
+            # Runtime input can override profile search settings
             knowledge_base_ids = self._normalise_int_list(
                 data.get(
                     "knowledge_base_ids",
@@ -172,36 +213,28 @@ class KnowledgeRetrievalNode(BaseNode):
             top_k = int(
                 data.get(
                     "top_k",
-                    inp.config.get("top_k", 5),
+                    inp.config.get("top_k", profile.search.top_k),
                 )
-            )
-
-            metadata = data.get(
-                "metadata",
-                inp.config.get("metadata"),
             )
 
             score_threshold = data.get(
                 "score_threshold",
-                inp.config.get("score_threshold"),
+                inp.config.get("score_threshold", profile.search.min_score),
             )
+            if score_threshold == "None":
+                score_threshold = profile.search.min_score
+            else:
+                score_threshold = float(score_threshold)
 
-            customer_id = self._resolve_customer_id(inp)
-
-            if customer_id is None:
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    data=inp.data,
-                    status="failure",
-                    error_code=400,
-                    error_message="customer_id is required for knowledge retrieval.",
-                    violations=["tenant_scope_missing"],
-                )
+            enable_reranking = profile.reranking.enabled
+            rerank_url = profile.reranking.url
+            rerank_model = profile.reranking.model
+            rerank_limit = profile.reranking.candidate_limit
+            approach = profile.search.approach
 
             # If no knowledge base IDs specified, query all active KBs for tenant
             if not knowledge_base_ids:
                 from app.models.db_models import KnowledgeBaseDB
-                from sqlalchemy import select
                 async with AsyncSessionLocal() as db:
                     kb_stmt = select(KnowledgeBaseDB.id).where(
                         KnowledgeBaseDB.customer_id == customer_id,
@@ -212,6 +245,7 @@ class KnowledgeRetrievalNode(BaseNode):
 
                 if not knowledge_base_ids:
                     output_data = {
+                        "answer": "no answer",
                         "results": [],
                         "context": "",
                         "citations": [],
@@ -235,13 +269,18 @@ class KnowledgeRetrievalNode(BaseNode):
 
             request = RetrievalServiceRequest(
                 customer_id=customer_id,
-                user_id=None,
+                user_id=inp.context.get("user_data", {}).get("user_id"),
                 query=query,
                 knowledge_base_ids=knowledge_base_ids,
                 top_k=top_k,
-                min_score=score_threshold or 0.0,
+                min_score=score_threshold,
                 include_metadata=True,
                 max_context_tokens=6000,
+                approach=approach,
+                enable_reranking=enable_reranking,
+                rerank_url=rerank_url,
+                rerank_model=rerank_model,
+                rerank_limit=rerank_limit,
             )
 
             async with AsyncSessionLocal() as db:
@@ -251,11 +290,30 @@ class KnowledgeRetrievalNode(BaseNode):
             chunks = retrieval_result.response.context.chunks
             context = retrieval_result.response.context.context
             citations = self._build_citations(chunks)
-
-            # Convert Pydantic objects to dicts for downstream workflow output serialization
             results = [chunk.model_dump() for chunk in chunks]
 
+            # Execute LLM Response Generation using context and config settings
+            from app.services.response_generation_service import ResponseGenerationService
+            from app.knowledge.retrieval_models import ResponseGenerationRequest as ResponseGenerationServiceRequest
+
+            user_id_val = inp.context.get("user_data", {}).get("user_id")
+            gen_req = ResponseGenerationServiceRequest(
+                query=query,
+                context=retrieval_result.response.context,
+                temperature=profile.generation.temperature,
+                max_generation_tokens=profile.generation.max_tokens,
+                customer_id=customer_id,
+                llm_config=profile.generation.model_dump(),
+            )
+
+            async with AsyncSessionLocal() as db:
+                gen_service = ResponseGenerationService()
+                gen_result = await gen_service.generate_response(gen_req, db=db)
+
+            answer = gen_result.answer
+
             output_data = {
+                "answer": answer,
                 "results": results,
                 "context": context,
                 "citations": citations,
@@ -267,6 +325,7 @@ class KnowledgeRetrievalNode(BaseNode):
                 customer_id=customer_id,
                 result_count=len(results),
                 citation_count=len(citations),
+                has_answer=bool(answer),
             )
 
             return NodeOutput(
@@ -275,7 +334,7 @@ class KnowledgeRetrievalNode(BaseNode):
             )
 
         except (TypeError, ValueError) as exc:
-            self.logger.warning(
+            self.logger.error(
                 "knowledge_retrieval_invalid_configuration",
                 trace_id=inp.trace_id,
                 error=str(exc),
@@ -335,13 +394,11 @@ class KnowledgeRetrievalNode(BaseNode):
     def _resolve_customer_id(self, inp: NodeInput) -> Optional[int]:
         """
         Resolve tenant scope from trusted execution context.
-
-        Do not trust customer_id supplied in the workflow payload.
         """
-
         context = inp.context or {}
-
-        customer_id = context.get("user_data").get("customer_id")
+        user_data = context.get("user_data") or {}
+        customer_id = user_data.get("customer_id")  
+        
         if customer_id is None:
             return None
 

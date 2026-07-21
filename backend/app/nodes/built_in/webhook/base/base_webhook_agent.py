@@ -80,21 +80,22 @@ class BaseWebhookAgent(TriggerNode, abc.ABC):
 
         try:
             json_content = json.loads(inp.data)
-            data_val = (
-                json_content.get("data") if isinstance(json_content, dict) else json_content
-            )
-            if (
-                data_val is None
-                or (isinstance(data_val, str) and not data_val.strip())
-                or (isinstance(data_val, (dict, list)) and not data_val)
-            ):
+            # data_val = (
+            #     json_content.get("data") if isinstance(json_content, dict) else json_content
+            # )
+            # if (
+            #     data_val is None
+            #     or (isinstance(data_val, str) and not data_val.strip())
+            #     or (isinstance(data_val, (dict, list)) and not data_val)
+            # ):
+            if not json_content:
                 return NodeOutput(
                     trace_id=inp.trace_id,
                     data=inp.data,
                     status="failure",
                     error_code=400,
-                    error_message="Invalid trigger: 'data' field cannot be empty",
-                )
+                error_message="Invalid trigger: 'data' field cannot be empty",
+            )
         except (json.JSONDecodeError, TypeError):
             pass
 

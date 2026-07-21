@@ -1,19 +1,10 @@
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.api.auth.dependencies import require_tenant
 from app.core.types.users import User
 from app.models.db_models import KnowledgeBaseDB, KnowledgeDocumentDB
 
-
-def _require_tenant(user: User) -> int:
-    if user.customer_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not associated with a customer",
-        )
-
-    return int(user.customer_id)
 
 
 async def get_knowledge_base(
@@ -22,7 +13,7 @@ async def get_knowledge_base(
     current_user: User,
 ) -> KnowledgeBaseDB:
 
-    customer_id = _require_tenant(current_user)
+    customer_id = require_tenant(current_user)
 
     stmt = select(KnowledgeBaseDB).where(
         KnowledgeBaseDB.id == knowledge_base_id,
@@ -47,7 +38,7 @@ async def get_document(
     current_user: User,
 ) -> KnowledgeDocumentDB:
 
-    customer_id = _require_tenant(current_user)
+    customer_id = require_tenant(current_user)
 
     stmt = select(KnowledgeDocumentDB).where(
         KnowledgeDocumentDB.id == document_id,

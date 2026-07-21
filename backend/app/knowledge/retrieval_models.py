@@ -52,6 +52,7 @@ class RetrievalRequest(BaseModel):
     max_context_tokens: int = Field(default=6000, ge=500)
 
     enable_reranking: bool | None = None
+    rerank_url: str | None = None
     rerank_model: str | None = None
     rerank_limit: int | None = None
 
@@ -284,6 +285,8 @@ class ResponseGenerationRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
     customer_id: int | None = None
+    llm_config: dict[str, Any] | None = None
+    llm_config_id: int | None = None
 
 
 class ResponseGenerationResult(BaseModel):
@@ -322,6 +325,8 @@ class RAGRequest(BaseModel):
     # Generation parameters
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    llm_config: dict[str, Any] | None = None
+    llm_config_id: int | None = None
 
     @field_validator("query")
     @classmethod

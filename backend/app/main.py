@@ -69,6 +69,10 @@ async def startup_event():
     await workflow_auto_discover()
     logger.info("workflows_registered")
    
+from app.api.llm_profiles import router as llm_profiles_router
+from app.api.profiles.router import router as profiles_router
+from app.api.playground import router as playground_router
+
 app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
 app.include_router(agents_router)
@@ -85,6 +89,10 @@ app.include_router(users.router)
 app.include_router(knowledge_router)
 app.include_router(jobs_router)
 app.include_router(company_router)
+app.include_router(llm_profiles_router)   # legacy — kept until full migration
+app.include_router(profiles_router)        # new structured profiles API
+app.include_router(playground_router)
+
 
 
 if __name__ == "__main__":

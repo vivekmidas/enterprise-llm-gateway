@@ -76,6 +76,9 @@ class RetrievalService:
             top_k=request.top_k,
             score_threshold=request.min_score,
             enable_reranking=request.enable_reranking,
+            rerank_url=request.rerank_url,
+            rerank_model=request.rerank_model,
+            rerank_limit=request.rerank_limit,
             approach=request.approach,
             enable_rrf=request.enable_rrf,
             metadata=request.metadata,
@@ -153,7 +156,8 @@ class RetrievalService:
         rerank_info = None
         if should_rerank:
             rerank_info = {
-                "technique": "Ollama Cross-Encoder (LLM Relevance Judge)" if settings.RERANK_PROVIDER == "ollama" else settings.RERANK_PROVIDER,
+                "technique": "LLM Relevance Judge",
+                "url": request.rerank_url or tenant_settings.get("rerank_url"),
                 "model": request.rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL,
                 "candidate_limit": request.rerank_limit or tenant_settings.get("rerank_limit") or tenant_settings.get("rerank_candidate_limit") or settings.RERANK_CANDIDATE_LIMIT,
             }
