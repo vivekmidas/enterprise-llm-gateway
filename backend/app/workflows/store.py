@@ -816,7 +816,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None,
     with tracer.start_as_current_span("load_workflow_from_store") as span:
         span.set_attribute("agent_id", agent_id)
         span.set_attribute("version", version or "1.0")
-        span.set_attribute("customer_id", customer_id)
+        span.set_attribute("customer_id", customer_id) # need to check why customer id is required
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB).where(WorkflowDB.id == agent_id)

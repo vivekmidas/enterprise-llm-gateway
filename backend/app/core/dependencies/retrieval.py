@@ -1,9 +1,9 @@
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.services.retrieval_service import RetrievalService
-from app.services.response_generation_service import ResponseGenerationService
-from app.services.rag_service import RAGService
+from app.nodes.built_in.kb.retrieval_service import RetrievalService
+from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
+from app.nodes.built_in.kb.rag_service import RAGService
 
 
 async def get_retrieval_service(db: AsyncSession = Depends(get_db)) -> RetrievalService:

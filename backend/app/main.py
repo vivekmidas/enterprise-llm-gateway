@@ -61,17 +61,22 @@ async def startup_event():
     # Sync workflow runnability status
     from app.core.database import AsyncSessionLocal
     from app.workflows.service import sync_workflows_runnability
+    # Seed default provider presets if missing
+    from app.core.seed_provider_presets import seed_provider_presets
     async with AsyncSessionLocal() as session:
         await sync_workflows_runnability(session)
+        await seed_provider_presets(session)
     
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).
     await workflow_auto_discover()
     logger.info("workflows_registered")
+
    
 from app.api.llm_profiles import router as llm_profiles_router
 from app.api.profiles.router import router as profiles_router
 from app.api.playground import router as playground_router
+from app.api.admin.provider_presets import router as provider_presets_router
 
 app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
@@ -92,6 +97,8 @@ app.include_router(company_router)
 app.include_router(llm_profiles_router)   # legacy — kept until full migration
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
+app.include_router(provider_presets_router)
+
 
 
 

@@ -1,5 +1,4 @@
-from sqlalchemy import Column, String, JSON, Integer, Boolean
-from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey
+from sqlalchemy import Column, String, JSON, Integer, Boolean, Float, ForeignKey
 from app.core.database import Base
 from datetime import datetime
 from sqlalchemy import JSON
@@ -383,5 +382,42 @@ class RetrievalConfigDB(Base):
         default=lambda: datetime.utcnow().isoformat(),
         onupdate=lambda: datetime.utcnow().isoformat(),
     )
+
+
+class ProviderPresetDB(Base):
+    __tablename__ = "provider_presets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider_key = Column(String(100), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(String(1000), nullable=True)
+    base_url = Column(String(500), nullable=False)
+
+    chat_models = Column(JSON, nullable=True, default=list)
+    default_chat_model = Column(String(255), nullable=True)
+
+    embedding_models = Column(JSON, nullable=True, default=list) # List of {"model": str, "dimension": int}
+    default_embedding_model = Column(String(255), nullable=True)
+    default_embedding_dimension = Column(Integer, nullable=True, default=768)
+
+    rerank_models = Column(JSON, nullable=True, default=list)
+    default_rerank_model = Column(String(255), nullable=True)
+
+    default_temperature = Column(Float, default=0.7)
+    default_max_tokens = Column(Integer, default=1024)
+    api_key_header = Column(String(100), nullable=True)
+    extra_config = Column(JSON, nullable=True, default=dict)
+
+    is_active = Column(Boolean, default=True, index=True)
+
+    created_at = Column(
+        String, default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String,
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+
 
 

@@ -1,4 +1,5 @@
 import abc
+import base64
 import json
 import time
 from functools import cached_property
@@ -13,6 +14,7 @@ import structlog
 from app.nodes.properties import property_entries_to_dict
 from app.core.types.common import NodeInput,NodeOutput
 from app.nodes.contracts import validate_contract
+from app.utils.file_utils import load_file_bytes, extract_document_text
 
 class JinjaFallbackDict(dict):
     def __init__(self, fallback_value, *args, **kwargs):
@@ -546,6 +548,158 @@ class BaseNode(BaseModel, abc.ABC):
 
         return None
 
+    # -------------------------------------------------------------------------
+    # File-field resolution
+    # -------------------------------------------------------------------------
+
+    def _iter_contract_rules(self, inp: NodeInput):
+        """
+        Yield each rule dict from the effective input contract.
+
+        Supports both formats:
+          • Array-of-rules  (contract has a 'rules' list)
+          • Dict keyed by field name (legacy / inline contract)
+        """
+        schema = inp.input_schema if getattr(inp, "input_schema", None) else self.input_contract
+        if not schema:
+            return
+
+        # Array-of-rules format: {"rules": [{"field_name": …, "field_type": …}, …]}
+        rules = schema.get("rules") if isinstance(schema, dict) else None
+        if isinstance(rules, list):
+            for rule in rules:
+                if isinstance(rule, dict):
+                    yield rule
+            return
+
+        # Dict-keyed format: {"file_path": {"type": "file", …}, …}
+        if isinstance(schema, dict):
+            for fname, fdef in schema.items():
+                if fname in {"type", "required", "additionalProperties"}:
+                    continue
+                if isinstance(fdef, dict):
+                    rule = dict(fdef)
+                    rule.setdefault("field_name", fname)
+                    yield rule
+
+    def _resolve_file_fields(self, inp: NodeInput) -> None:
+        """
+        Scan the effective input contract for rules whose ``field_type`` is
+        ``"file"`` (or any of its aliases: ``pdf``, ``doc``, ``docx``,
+        ``image``, ``png``, ``jpg``, ``jpeg``).
+
+        For each matching rule the method:
+
+        1. Looks up ``<field_name>.path`` in the current ``inp.data`` dict.
+        2. If found and non-empty, reads the file with
+           :func:`app.utils.file_utils.load_file_bytes`.
+        3. Injects a structured sub-dict back into ``inp.data``:
+
+           .. code-block:: json
+
+               {
+                   "path": "/abs/path/to/file.pdf",
+                   "type": ".pdf",
+                   "content_base64": "<base64-encoded bytes>"
+               }
+
+        The field is **optional** — if no path is provided the key is left
+        untouched and execution continues normally.
+
+        On ``FileNotFoundError``, ``PermissionError``, or ``OSError`` the
+        method logs the error and raises so the caller can return a
+        structured ``NodeOutput(status='failure', …)``.
+        """
+        _FILE_TYPES = {"file", "pdf", "doc", "docx", "image", "png", "jpg", "jpeg"}
+
+        # Parse current inp.data into a mutable dict
+        try:
+            data_obj = json.loads(inp.data) if inp.data else {}
+        except Exception:
+            data_obj = {}
+
+        if not isinstance(data_obj, dict):
+            return  # non-dict payload — nothing to inject
+
+        # Unwrap one "data" envelope if present
+        payload = data_obj.get("data", data_obj) if "data" in data_obj else data_obj
+        if not isinstance(payload, dict):
+            return
+
+        changed = False
+        for rule in self._iter_contract_rules(inp):
+            ft = str(rule.get("field_type") or rule.get("type") or "").lower()
+            if ft not in _FILE_TYPES:
+                continue
+
+            # The contract field name is the *top-level* key (before any dot)
+            field_name_full = str(rule.get("field_name") or rule.get("name") or "").strip()
+            # e.g. "file_path.type" → top key is "file_path"
+            top_key = field_name_full.split(".")[0] if "." in field_name_full else field_name_full
+            if not top_key:
+                continue
+
+            # Locate the file sub-object (e.g. payload["file_path"])
+            file_obj = payload.get(top_key)
+            if not isinstance(file_obj, dict):
+                # Also accept a bare string treated as the path directly
+                if isinstance(file_obj, str) and file_obj.strip():
+                    file_obj = {"path": file_obj.strip(), "type": ""}
+                else:
+                    continue  # no path provided — skip gracefully
+
+            file_path = str(file_obj.get("path") or "").strip()
+            if not file_path:
+                continue  # optional field with no path — skip
+
+            self.logger.info(
+                "file_field_resolving",
+                field=top_key,
+                path=file_path,
+                trace_id=inp.trace_id,
+            )
+
+            # Read file — propagate OS errors to caller for structured failure
+            raw_bytes, detected_ext = load_file_bytes(file_path)
+
+            mime_hint = str(file_obj.get("type") or detected_ext or "").lower()
+
+            # Attempt text extraction for text-based workflows (PDF, DOCX, TXT, MD, etc.)
+            extracted_text = ""
+            try:
+                extracted_text = extract_document_text(file_path, filename_or_ext=mime_hint or detected_ext)
+            except Exception as exc:
+                self.logger.warning("file_field_text_extraction_failed", field=top_key, path=file_path, error=str(exc))
+
+            b64_content = base64.b64encode(raw_bytes).decode("utf-8")
+
+            # Inject enriched sub-object back into payload containing both binary & text formats
+            payload[top_key] = {
+                "path": file_path,
+                "type": mime_hint or detected_ext,
+                #"content_base64": b64_content,
+                "content_text": extracted_text,
+                "text": extracted_text,
+                "content": extracted_text if (extracted_text and extracted_text.strip()) else b64_content,
+            }
+            changed = True
+            self.logger.info(
+                "file_field_resolved",
+                field=top_key,
+                #bytes_read=len(raw_bytes),
+                text_length=len(extracted_text),
+                ext=detected_ext,
+                trace_id=inp.trace_id,
+            )
+
+        if changed:
+            # Write enriched payload back into inp.data preserving the envelope
+            if "data" in data_obj:
+                data_obj["data"] = payload
+                inp.data = json.dumps(data_obj)
+            else:
+                inp.data = json.dumps(payload)
+
     def get_input_data(self, inp: NodeInput) -> Any:
         """
         Extracts the inner value of the 'data' parameter from the incoming payload.
@@ -702,6 +856,41 @@ class BaseNode(BaseModel, abc.ABC):
                 inp.config = resolved_config
             except Exception as e:
                 self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id, error=str(e))
+
+            # 0.1 Input Contract Validation
+            # 0.09 Resolve file fields declared as field_type='file' in the contract
+            try:
+                self._resolve_file_fields(inp)
+            except FileNotFoundError as exc:
+                self.logger.error("file_field_not_found", error=str(exc), trace_id=inp.trace_id)
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_message=(
+                        f"File not found: {exc}. "
+                        "Verify the path in the file field points to a server-accessible file."
+                    ),
+                )
+            except PermissionError as exc:
+                self.logger.error("file_field_permission_denied", error=str(exc), trace_id=inp.trace_id)
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_message=(
+                        f"Permission denied: {exc}. "
+                        "The server process cannot read this file."
+                    ),
+                )
+            except OSError as exc:
+                self.logger.error("file_field_os_error", error=str(exc), trace_id=inp.trace_id)
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_message=f"File I/O error: {exc}",
+                )
 
             # 0.1 Input Contract Validation
             contract_output = await self.validate_input_contract(inp)

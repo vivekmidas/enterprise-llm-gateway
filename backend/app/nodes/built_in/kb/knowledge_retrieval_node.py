@@ -7,6 +7,8 @@ from app.core.types.common import NodeInput, NodeOutput
 from app.knowledge.retrieval import retrieve
 from app.knowledge.retrieval_models import RetrievedChunk
 from app.nodes.base import BaseNode
+from sqlalchemy import select
+from app.nodes.built_in.kb.retrieval_service import RetrievalService
 
 
 class KnowledgeRetrievalNode(BaseNode):
@@ -264,7 +266,7 @@ class KnowledgeRetrievalNode(BaseNode):
                 top_k=top_k,
             )
 
-            from app.services.retrieval_service import RetrievalService
+            from app.nodes.built_in.kb.retrieval_service import RetrievalService
             from app.knowledge.retrieval_models import RetrievalRequest as RetrievalServiceRequest
 
             request = RetrievalServiceRequest(
@@ -293,7 +295,7 @@ class KnowledgeRetrievalNode(BaseNode):
             results = [chunk.model_dump() for chunk in chunks]
 
             # Execute LLM Response Generation using context and config settings
-            from app.services.response_generation_service import ResponseGenerationService
+            from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
             from app.knowledge.retrieval_models import ResponseGenerationRequest as ResponseGenerationServiceRequest
 
             user_id_val = inp.context.get("user_data", {}).get("user_id")

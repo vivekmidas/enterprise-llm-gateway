@@ -35,9 +35,9 @@ from app.knowledge.retrieval_models import (
     ResponseGenerationRequest as ResponseGenerationServiceRequest,
     ResponseGenerationResult,
 )
-from app.services.retrieval_service import RetrievalService
-from app.services.response_generation_service import ResponseGenerationService
-from app.services.rag_service import RAGService
+from app.nodes.built_in.kb.retrieval_service import RetrievalService
+from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
+from app.nodes.built_in.kb.rag_service import RAGService
 from app.core.dependencies.retrieval import get_rag_service
 
 logger = logging.getLogger(__name__)

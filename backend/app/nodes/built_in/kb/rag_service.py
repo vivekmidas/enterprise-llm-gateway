@@ -2,8 +2,8 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.retrieval_service import RetrievalService
-from app.services.response_generation_service import ResponseGenerationService
+from app.nodes.built_in.kb.retrieval_service import RetrievalService
+from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
 from app.knowledge.retrieval_models import (
     RAGRequest,
     RAGResponse,

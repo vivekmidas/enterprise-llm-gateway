@@ -437,8 +437,19 @@ async def test_llm_connection(
             )
             cfg = cfg_res.scalar_one_or_none()
             if cfg and cfg.settings:
-                llm_cfg = cfg.settings.get("llm_config") or cfg.settings
-                settings.update(llm_cfg)
+                gen_cfg = cfg.settings.get("generation")
+                if isinstance(gen_cfg, dict):
+                    if gen_cfg.get("provider"):
+                        settings["llm_provider"] = gen_cfg.get("provider")
+                    if gen_cfg.get("model"):
+                        settings["llm_model"] = gen_cfg.get("model")
+                    if gen_cfg.get("url"):
+                        settings["llm_base_url"] = gen_cfg.get("url")
+                    if gen_cfg.get("api_key") is not None:
+                        settings["llm_api_key"] = gen_cfg.get("api_key")
+                llm_cfg = cfg.settings.get("llm_config")
+                if isinstance(llm_cfg, dict):
+                    settings.update(llm_cfg)
 
         provider = (payload.get("llm_provider") or settings.get("llm_provider") or "").lower()
         base_url = payload.get("llm_base_url") or settings.get("llm_base_url")

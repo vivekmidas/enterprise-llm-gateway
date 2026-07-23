@@ -13,7 +13,7 @@ from app.schemas.llm_profile_schemas import (
     PlaygroundTestRequest,
     PlaygroundTestResponse,
 )
-from app.services.rag_service import RAGService
+from app.nodes.built_in.kb.rag_service import RAGService
 from app.knowledge.retrieval_models import RAGRequest
 
 router = APIRouter(prefix="/api/v1/playground", tags=["Playground"])

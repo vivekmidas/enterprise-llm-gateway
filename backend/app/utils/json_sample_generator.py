@@ -32,7 +32,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_TYPES = {"string","integer","number","boolean","null","object","array","phone","credit-card","email","uuid","date","datetime"}
+SUPPORTED_TYPES = {"string","integer","number","boolean","null","object","array","phone","credit-card","email","uuid","date","datetime","file"}
 
 class SchemaValidationError(ValueError):
     """Raised when the supplied schema is invalid."""
