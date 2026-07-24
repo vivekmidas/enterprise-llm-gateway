@@ -905,6 +905,7 @@ class BaseNode(BaseModel, abc.ABC):
 
             # 0.06 Get mappings from config
             mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
+            # making double sure the property is not missed. 
             if not mapping_config and isinstance(inp.config, dict):
                 user_props = inp.config.get("user_properties") or inp.config.get("properties")
                 if isinstance(user_props, str):
