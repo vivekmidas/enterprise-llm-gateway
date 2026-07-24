@@ -29,17 +29,28 @@ router = APIRouter()
 
 @router.get("/", response_model=List[LLMProfileResponse])
 async def list_profiles(
+    all_tenants: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all LLM profiles for the current tenant."""
-    customer_id = current_user.customer_id
-    result = await db.execute(
-        select(LLMProfileDB)
-        .where(LLMProfileDB.customer_id == customer_id)
-        .order_by(LLMProfileDB.id.desc())
-    )
+    """
+    List LLM profiles.
+    - Regular / Admin users: returns LLM profiles for their current tenant.
+    - System Admin with all_tenants=True: returns profiles across all tenants.
+    """
+    if all_tenants and getattr(current_user, "role", None) == "system_admin":
+        result = await db.execute(
+            select(LLMProfileDB).order_by(LLMProfileDB.id.desc())
+        )
+    else:
+        customer_id = current_user.customer_id
+        result = await db.execute(
+            select(LLMProfileDB)
+            .where(LLMProfileDB.customer_id == customer_id)
+            .order_by(LLMProfileDB.id.desc())
+        )
     return result.scalars().all()
+
 
 
 @router.post("/", response_model=LLMProfileResponse, status_code=status.HTTP_201_CREATED)

@@ -51,6 +51,20 @@ class DocumentCategorizerNode(BaseNode):
             "description": "Comma-separated list of allowed document categories.",
         },
         {
+            "key": "llm_profile",
+            "label": "LLM Profile",
+            "type": "source",
+            "source": "/api/profiles",
+            "description": "Select LLM Profile preset for endpoint, model, and authentication settings.",
+        },
+        {
+            "key": "model_type",
+            "label": "Model Type",
+            "type": "string",
+            "default": "generation",
+            "description": "Matching section in LLM profile (e.g. generation, embedding, reranking).",
+        },
+        {
             "key": "model",
             "label": "Model Name",
             "type": "string",
@@ -112,6 +126,24 @@ class DocumentCategorizerNode(BaseNode):
         "extracted_text": {"type": "string", "required": False},
     }
 
+    def _resolve_customer_id(self, inp: NodeInput) -> Optional[int]:
+        """Resolve customer ID from execution context or node attribute."""
+        context = inp.context or {}
+        user_data = context.get("user_data") or {}
+        customer_id = (
+            user_data.get("customer_id")
+            or context.get("customer_id")
+            or context.get("tenant_id")
+        )
+        if customer_id is None and hasattr(self, "customer_id"):
+            customer_id = getattr(self, "customer_id")
+        if customer_id is None:
+            return None
+        try:
+            return int(customer_id)
+        except (ValueError, TypeError):
+            return None
+
     async def init(self) -> None:
         await super().init()
         self.logger.info("document_categorizer_node_initialized", name=self.name)
@@ -131,6 +163,7 @@ class DocumentCategorizerNode(BaseNode):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start_time = time.time()
         config = inp.config or {}
+        input_data = self.get_input_data(inp)
 
         # 1. Resolve configuration parameters
         summary_words = int(config.get("summary_words", 50))
@@ -144,15 +177,84 @@ class DocumentCategorizerNode(BaseNode):
         else:
             categories = ["General"]
 
-        # LLM Connection settings
-        ip = config.get("ip") or "127.0.0.1"
-        port = config.get("port") or "11434"
-        path = config.get("path") or "/v1/chat/completions"
-        model_name = config.get("model") or config.get("model_name") or "qwen:0.5b"
-        llm_endpoint = f"http://{ip}:{port}{path}"
+        # Default connection settings
+        system_prompt = config.get("system_prompt")
+        api_key = config.get("api_key")
+        temperature = float(config.get("temperature", 0.2))
+        llm_endpoint = config.get("llm_endpoint") or "http://localhost:11434/api/chat"
+        model_name = config.get("model") or "llama3.2"
+
+        # Resolve LLM profile and model_type
+        profile_id_raw = config.get("llm_profile")
+        profile_id: Optional[int] = None
+        if profile_id_raw is not None and str(profile_id_raw).strip() != "":
+            try:
+                profile_id = int(profile_id_raw)
+            except (ValueError, TypeError):
+                profile_id = None
+
+        model_type_raw = (
+            config.get("model_type")
+            or (input_data.get("model_type") if isinstance(input_data, dict) else "search")
+        )
+        model_type = str(model_type_raw).strip().lower() if model_type_raw else "generation"
+
+        customer_id = self._resolve_customer_id(inp)
+
+        if profile_id is not None or customer_id is not None:
+            try:
+                from app.core.database import AsyncSessionLocal
+                from app.core.profile_resolver import ProfileResolver
+
+                async with AsyncSessionLocal() as db:
+                    ctx = await ProfileResolver(db=db).resolve_execution_context(
+                        profile_id=profile_id,
+                        customer_id=customer_id or 0,
+                        model_type=model_type,
+                    )
+
+                if ctx.get("final_url"):
+                    llm_endpoint = ctx["final_url"]
+                if ctx.get("model_name"):
+                    model_name = ctx["model_name"]
+                if ctx.get("api_key"):
+                    api_key = ctx["api_key"]
+                if ctx.get("temperature") is not None:
+                    temperature = ctx["temperature"]
+            except Exception as exc:
+                self.logger.warning("profile_resolver_failed", error=str(exc))
+
+
+        # # Direct DB lookup by explicit profile_id if needed
+        # if profile_id is not None and not profile_resolved:
+        #     try:
+        #         from app.core.database import AsyncSessionLocal
+        #         from app.models.db_models import LLMProfileDB
+        #         from app.schemas.profile_sections import ProfileSettings
+        #         from sqlalchemy import select
+
+        #         async with AsyncSessionLocal() as db:
+        #             stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        #             res = await db.execute(stmt)
+        #             db_profile = res.scalar_one_or_none()
+        #             if db_profile and db_profile.settings:
+        #                 parsed_settings = ProfileSettings.from_db(db_profile.settings)
+        #                 section = getattr(parsed_settings, model_type, None) or parsed_settings.generation
+        #                 if section:
+        #                     if getattr(section, "url", None):
+        #                         llm_endpoint = section.url
+        #                     if getattr(section, "model", None):
+        #                         model_name = section.model
+        #                     if getattr(section, "system_prompt", None):
+        #                         system_prompt = section.system_prompt
+        #                     if getattr(section, "api_key", None):
+        #                         api_key = section.api_key
+        #                     if hasattr(section, "temperature") and getattr(section, "temperature", None) is not None:
+        #                         temperature = float(section.temperature)
+        #     except Exception as exc:
+        #         self.logger.warning("direct_profile_fetch_failed", profile_id=profile_id, error=str(exc))
 
         # 2. Resolve input payload & extract text
-        input_data = self.get_input_data(inp)
         extracted_text = ""
 
         if isinstance(input_data, dict):
@@ -242,6 +344,9 @@ class DocumentCategorizerNode(BaseNode):
             categories=categories,
             llm_endpoint=llm_endpoint,
             model_name=model_name,
+            temperature=temperature,
+            system_prompt=system_prompt,
+            api_key=api_key,
         )
 
         result["extracted_text"] = extracted_text[:1000]
@@ -257,6 +362,7 @@ class DocumentCategorizerNode(BaseNode):
                 "tags_count": len(result["tags"]),
                 "summary_length": len(result["summary"].split()),
                 "endpoint": llm_endpoint,
+                "model_name": model_name,
             },
             latency_ms=round((time.time() - start_time) * 1000, 2),
         )

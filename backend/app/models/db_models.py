@@ -390,22 +390,31 @@ class ProviderPresetDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     provider_key = Column(String(100), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    display_name = Column(String(255), nullable=True)
     description = Column(String(1000), nullable=True)
     base_url = Column(String(500), nullable=False)
 
+    # Structured capability / model settings hierarchy
+    # List of {"name": str, "endpoint": str, "models": list, "default_model": str, "api_key": str, "payload_structure": dict}
+    model_types = Column(JSON, nullable=True, default=list)
+
     chat_models = Column(JSON, nullable=True, default=list)
     default_chat_model = Column(String(255), nullable=True)
+    search_endpoint = Column(String(500), nullable=True, default="/chat/completions")
 
     embedding_models = Column(JSON, nullable=True, default=list) # List of {"model": str, "dimension": int}
     default_embedding_model = Column(String(255), nullable=True)
     default_embedding_dimension = Column(Integer, nullable=True, default=768)
+    embedding_endpoint = Column(String(500), nullable=True, default="/embeddings")
 
     rerank_models = Column(JSON, nullable=True, default=list)
     default_rerank_model = Column(String(255), nullable=True)
+    rerank_endpoint = Column(String(500), nullable=True, default="/rerank")
 
     default_temperature = Column(Float, default=0.7)
     default_max_tokens = Column(Integer, default=1024)
     api_key_header = Column(String(100), nullable=True)
+    capability_configs = Column(JSON, nullable=True, default=dict)
     extra_config = Column(JSON, nullable=True, default=dict)
 
     is_active = Column(Boolean, default=True, index=True)
@@ -418,6 +427,7 @@ class ProviderPresetDB(Base):
         default=lambda: datetime.utcnow().isoformat(),
         onupdate=lambda: datetime.utcnow().isoformat(),
     )
+
 
 
 

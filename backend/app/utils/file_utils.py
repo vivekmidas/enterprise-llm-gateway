@@ -339,3 +339,4 @@ def extract_text_from_file(file_path: str) -> str:
         return extract_text_from_docx(raw)
 
     return path.read_text(encoding="utf-8")
+

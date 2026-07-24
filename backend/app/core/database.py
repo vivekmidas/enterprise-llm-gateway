@@ -121,6 +121,18 @@ def _refresh_knowledge_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN collection_id INTEGER")
 
 
+def _refresh_provider_presets_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("provider_presets"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("provider_presets")}
+    if "display_name" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE provider_presets ADD COLUMN display_name VARCHAR(255)")
+    if "model_types" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE provider_presets ADD COLUMN model_types JSON")
+
+
 async def init_db():
     """Initializes the database schema."""
     # Ensure all models are imported so Base metadata knows about them
@@ -132,7 +144,9 @@ async def init_db():
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)
         await conn.run_sync(_refresh_knowledge_documents_table)
+        await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(Base.metadata.create_all)
+
 
 
 async def get_db():

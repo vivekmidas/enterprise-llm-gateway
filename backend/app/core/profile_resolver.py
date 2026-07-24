@@ -65,6 +65,73 @@ class ProfileResolver:
         profile = await self.resolve(profile_id=profile_id, customer_id=customer_id)
         return getattr(profile, section)
 
+    async def resolve_execution_context(
+        self,
+        profile_id: Optional[int],
+        customer_id: int,
+        model_type: str = "search",
+    ) -> dict:
+        """
+        Resolves full target execution details including base_url, endpoint_path, final_url,
+        model_name, api_key, temperature, max_tokens, and payload_structure.
+        """
+        profile = await self.resolve(profile_id=profile_id, customer_id=customer_id)
+        section_key = model_type if model_type in ("search", "embedding", "reranking", "generation") else "generation"
+        section = getattr(profile, section_key, None) or profile.generation
+
+        provider_name = getattr(section, "provider", "ollama") or "ollama"
+        model_name = getattr(section, "model", "llama3.2") or "llama3.2"
+        endpoint_path = getattr(section, "endpoint_path", None)
+        raw_url = getattr(section, "url", None) or "http://localhost:11434/api/chat"
+        api_key = getattr(section, "api_key", None)
+        payload_config = getattr(section, "payload_config", None) or {}
+
+        # Look up matching provider preset for base URL & endpoint mapping if needed
+        from app.models.db_models import ProviderPresetDB
+        result = await self.db.execute(
+            select(ProviderPresetDB).where(ProviderPresetDB.provider_key == provider_name.lower())
+        )
+        preset = result.scalar_one_or_none()
+
+        base_url = preset.base_url if preset else raw_url.rsplit("/", 1)[0]
+        if preset and preset.model_types:
+            for mt in preset.model_types:
+                if isinstance(mt, dict) and mt.get("name") in (model_type, "search" if model_type == "generation" else model_type):
+                    if mt.get("endpoint"):
+                        endpoint_path = mt.get("endpoint")
+                    if mt.get("payload_structure"):
+                        payload_config = {**mt.get("payload_structure"), **payload_config}
+                    if mt.get("api_key") and not api_key:
+                        api_key = mt.get("api_key")
+                    break
+
+        if not endpoint_path:
+            if raw_url and raw_url.startswith("http"):
+                # Extract path component
+                from urllib.parse import urlparse
+                endpoint_path = urlparse(raw_url).path
+            else:
+                endpoint_path = "/chat/completions" if model_type in ("search", "generation") else "/embeddings"
+
+        # Construct final_url
+        if raw_url and raw_url.startswith("http") and not preset:
+            final_url = raw_url
+        else:
+            final_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}"
+
+        return {
+            "provider": provider_name,
+            "model_name": model_name,
+            "base_url": base_url,
+            "endpoint_path": endpoint_path,
+            "final_url": final_url,
+            "api_key": api_key,
+            "payload_structure": payload_config,
+            "temperature": float(getattr(section, "temperature", 0.7)),
+            "max_tokens": int(getattr(section, "max_tokens", 1024)),
+        }
+
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

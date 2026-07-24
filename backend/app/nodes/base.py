@@ -5,6 +5,12 @@ import time
 from functools import cached_property
 from typing import Any, Dict, List, Optional, Union, Set
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.models.db_models import NodeDB
+
 try:
     from jinja2.nativetypes import NativeTemplate
 except ImportError:
@@ -774,7 +780,89 @@ class BaseNode(BaseModel, abc.ABC):
         The core logic implementation for the node.
         This is the single abstract method to be implemented by child classes.
         """
-        pass
+
+
+    async def _resolve_source_properties(self, inp: NodeInput) -> None:
+        """
+        Generic resolution for any property of type 'source' or having a 'source' API URL defined.
+        Calls the configured API endpoint for selected property values and merges all returned JSON data key-values into inp.config.
+        """
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+
+            nodes_result = await session.execute(select(NodeDB).where(NodeDB.name == self.name))
+            result = nodes_result.scalars().first()
+            if not result:
+                return  
+            user_props = result.user_properties if isinstance(result.user_properties, list) else (list(result.user_properties.values()) if isinstance(result.user_properties, dict) else [])
+            system_props = result.system_properties if isinstance(result.system_properties, list) else (list(result.system_properties.values()) if isinstance(result.system_properties, dict) else [])
+            db_node_properties = user_props + system_props
+
+            source_schemas = [
+                s for s in db_node_properties
+                if isinstance(s, dict) and (s.get("source") or s.get("type") == "source")
+            ]   
+
+            if not source_schemas:
+                return
+
+            for schema in source_schemas:
+                prop_key = schema.get("key")
+                source_url = schema.get("source")
+                if not prop_key or not source_url or not isinstance(source_url, str):
+                    continue
+
+                val = inp.config.get(prop_key)
+                if val is None or val == "":
+                    continue
+
+                if not (source_url.startswith("/") or source_url.startswith("http")):
+                    continue
+
+                try:
+                    import os
+                    import httpx
+                    # need to find way to call internal apis
+
+                    backend_url = os.getenv("NEXT_PUBLIC_BACKEND_URL", "http://localhost:8000")
+                    full_url = source_url
+
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        res = await client.get(full_url)
+                        if res.status_code != 200:
+                            continue
+
+                        json_data = res.json()
+                    target_item = None
+
+                    if isinstance(json_data, dict):
+                        items = (
+                            json_data.get("items")
+                            or json_data.get("profiles")
+                            or json_data.get("bases")
+                            or json_data.get("results")
+                            or json_data.get("data")
+                        )
+                        if isinstance(items, list):
+                            for item in items:
+                                if isinstance(item, dict) and str(item.get("id") or item.get("key") or item.get("value") or item.get("name")) == str(val):
+                                    target_item = item
+                                    break
+                        else:
+                            target_item = json_data
+                    elif isinstance(json_data, list):
+                        for item in json_data:
+                            if isinstance(item, dict) and str(item.get("id") or item.get("key") or item.get("value") or item.get("name")) == str(val):
+                                target_item = item
+                                break
+
+                    # Store all returned data fields directly into inp.config
+                    if isinstance(target_item, dict):
+                        for k, v in target_item.items():
+                            if k not in inp.config or inp.config[k] is None or inp.config[k] == "":
+                                inp.config[k] = v
+                except Exception as exc:
+                    self.logger.warning("source_api_resolution_failed", prop_key=prop_key, source_url=source_url, error=str(exc))
 
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
@@ -799,6 +887,7 @@ class BaseNode(BaseModel, abc.ABC):
 
             # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
             inp.config = {**self.properties, **inp.config}
+            # await self._resolve_source_properties(inp)
 
             # 0.05 Parse input_data
             input_data = {}
@@ -810,7 +899,7 @@ class BaseNode(BaseModel, abc.ABC):
 
             # Extract the actual input values inside "data" key if present
             if isinstance(input_data, dict):
-                input_data_data = input_data.get("data") if "data" in input_data else input_data
+                input_data_data = input_data.get("data") if ("data" in input_data and "query_type" not in input_data) else input_data
             else:
                 input_data_data = input_data
 

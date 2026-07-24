@@ -104,6 +104,8 @@ async def summarize_and_classify_document(
     model_name: str = "qwen:0.5b",
     temperature: float = 0.2,
     timeout: float = 30.0,
+    system_prompt: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Summarize, extract keywords/tags, and classify a document using an LLM.
@@ -122,7 +124,7 @@ async def summarize_and_classify_document(
     categories:
         Allowed classification categories.
     llm_endpoint:
-        Full URL of the OpenAI-compatible completions endpoint.
+        Full URL of the OpenAI-compatible completions or Ollama endpoint.
         When ``None`` the heuristic fallback is used immediately.
     model_name:
         Model identifier sent in the API request.
@@ -130,6 +132,10 @@ async def summarize_and_classify_document(
         Sampling temperature (lower = more deterministic).
     timeout:
         HTTP request timeout in seconds.
+    system_prompt:
+        Optional system prompt prefix from LLM profile.
+    api_key:
+        Optional Bearer API key for authenticated LLM endpoints.
     """
     if not text or not text.strip():
         return {"summary": "", "tags": [], "category": "Unknown", "word_count": 0}
@@ -140,39 +146,66 @@ async def summarize_and_classify_document(
         else "General, Technical, Invoice, Resume, Contract, Policy, Report"
     )
 
-    prompt = (
+    task_instructions = (
         f"You are an AI document classifier and summarizer.\n"
         f"Tasks:\n"
         f"1. Generate a concise summary of the document in approximately {summary_words} words.\n"
         f"2. Extract up to {max_tags} relevant tags/keywords.\n"
         f"3. Classify the document into one primary category. Allowed categories: [{cats_str}] and count not exceeding {max_tags}.\n\n"
-        f'4. Output ONLY a raw JSON object in  json format only'
+        f"4. Output ONLY a raw JSON object in json format only with keys 'summary', 'tags', 'category'.\n"
         f"No markdown block, no conversational intro."
     )
-
     if not llm_endpoint:
         return heuristic_categorize_and_summarize(
             text, summary_words=summary_words, max_tags=max_tags, categories=categories
         )
 
+    full_system = f"{system_prompt}\n\n{task_instructions}" if system_prompt else task_instructions
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # if "/v1/chat/completions" in llm_endpoint or "chat/completions" in llm_endpoint:
     payload = {
         "model": model_name,
-        "system":prompt,
-        "prompt":text,
-        "think": False,
-        "stream": False,
+        "messages": [
+            {"role": "system", "content": full_system},
+            {"role": "user", "content": text},
+        ],
         "temperature": temperature,
     }
+    # else:
+    #     payload = {
+    #         "model": model_name,
+    #         "system": full_system,
+    #         "prompt": text,
+    #         "think": False,
+    #         "stream": False,
+    #         "temperature": temperature,
+    #     }
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.post(llm_endpoint, json=payload)
+            res = await client.post(llm_endpoint, json=payload, headers=headers)
             res.raise_for_status()
             data = res.json()
-            #logger.debug("LLM response: %s", data)
-            if data["response"]:
-                raw_content = data["response"]
-                # Strip markdown code fences if present
+
+            raw_content = None
+            if isinstance(data, dict):
+                if data.get("response"):
+                    raw_content = data["response"]
+                elif "choices" in data and isinstance(data["choices"], list) and data["choices"]:
+                    choice = data["choices"][0]
+                    if isinstance(choice, dict):
+                        if "message" in choice and isinstance(choice["message"], dict):
+                            raw_content = choice["message"].get("content")
+                        elif "text" in choice:
+                            raw_content = choice.get("text")
+                elif "message" in data and isinstance(data["message"], dict):
+                    raw_content = data["message"].get("content")
+
+            if raw_content:
                 clean_json = re.sub(r"^```json\s*", "", raw_content.strip(), flags=re.IGNORECASE)
                 clean_json = re.sub(r"^```\s*", "", clean_json)
                 clean_json = re.sub(r"\s*```$", "", clean_json)

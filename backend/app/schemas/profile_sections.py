@@ -14,11 +14,13 @@ from pydantic import BaseModel, Field
 class EmbeddingSection(BaseModel):
     """Controls how text is converted to vectors during ingestion and retrieval."""
 
-    provider: Literal["ollama", "openai", "azure"] = "ollama"
+    provider: str = "ollama"
     url: str = "http://localhost:11434/api/embeddings"
+    endpoint_path: Optional[str] = "/api/embeddings"
     model: str = "nomic-embed-text"
     dimension: int = Field(default=768, ge=64)
     api_key: Optional[str] = None
+    payload_config: Optional[dict] = None
 
     model_config = {"extra": "ignore"}
 
@@ -40,9 +42,11 @@ class RerankSection(BaseModel):
 
     enabled: bool = False
     url: str = "http://localhost:11434/api/chat"
+    endpoint_path: Optional[str] = "/api/chat"
     model: str = "qwen3:0.6b"
     candidate_limit: int = Field(default=20, ge=1, le=200)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    payload_config: Optional[dict] = None
 
     model_config = {"extra": "ignore"}
 
@@ -50,13 +54,15 @@ class RerankSection(BaseModel):
 class GenerationSection(BaseModel):
     """Controls response generation LLM."""
 
-    provider: Literal["ollama", "openai", "azure", "vllm"] = "ollama"
+    provider: str = "ollama"
     url: str = "http://localhost:11434/api/chat"
+    endpoint_path: Optional[str] = "/api/chat"
     model: str = "llama3.2"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1024, ge=1)
     system_prompt: Optional[str] = None
     api_key: Optional[str] = None
+    payload_config: Optional[dict] = None
 
     model_config = {"extra": "ignore"}
 
