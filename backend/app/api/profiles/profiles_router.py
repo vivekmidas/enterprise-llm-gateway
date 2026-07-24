@@ -10,9 +10,8 @@ POST   /api/profiles/{id}/set-default
 """
 import logging
 from datetime import datetime
-from typing import List, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any, Dict, List, Optional, Union
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,22 +20,27 @@ from app.core.database import get_db
 from app.core.types.users import User
 from app.models.db_models import CustomerDB, LLMProfileDB
 from app.schemas.llm_profile_schemas import LLMProfileCreate, LLMProfileResponse, LLMProfileUpdate
+from app.api.llm_profiles import project_profile_fields
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[LLMProfileResponse])
+# ==============================================================================
+# BLOCK COMMENT: UPDATED ROUTE - GET /api/profiles
+# Added optional ?fields= query param and role-based field filtering.
+# ==============================================================================
+@router.get("/", response_model=Union[List[LLMProfileResponse], List[Dict[str, Any]]])
 async def list_profiles(
     all_tenants: bool = False,
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include e.g. id,name,url,model_name"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List LLM profiles.
-    - Regular / Admin users: returns LLM profiles for their current tenant.
-    - System Admin with all_tenants=True: returns profiles across all tenants.
+    List LLM profiles for tenant.
+    Supports optional ?fields= projection parameter and role-based credential scrubbing.
     """
     if all_tenants and getattr(current_user, "role", None) == "system_admin":
         result = await db.execute(
@@ -49,7 +53,14 @@ async def list_profiles(
             .where(LLMProfileDB.customer_id == customer_id)
             .order_by(LLMProfileDB.id.desc())
         )
-    return result.scalars().all()
+    profiles = result.scalars().all()
+
+    role = getattr(current_user, "role", "user")
+    field_list = [f.strip() for f in fields.split(",")] if fields else None
+    if fields or role not in ("admin", "system_admin"):
+        return [project_profile_fields(p, fields=field_list, role=role) for p in profiles]
+
+    return profiles
 
 
 

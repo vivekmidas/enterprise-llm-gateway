@@ -328,6 +328,8 @@ class NodesRegistry:
             module = importlib.import_module(module_name)
 
             for _, obj in inspect.getmembers(module, inspect.isclass):
+                if obj.__module__ != module.__name__:
+                    continue
                 if issubclass(obj, BaseNode) and obj is not BaseNode and not inspect.isabstract(obj):
                     cls.logger.info("found_node_class", class_name=obj.__name__, module=module_name)
                     try:

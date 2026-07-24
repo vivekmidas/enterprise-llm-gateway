@@ -1,10 +1,12 @@
 import httpx
 from typing import Any, Dict, List, Optional
 import json
-from app.nodes.base import BaseNode
+from app.nodes.built_in.llm.base_llm_node import BaseLLMNode
 from app.core.types.common import NodeInput, NodeOutput
 
-class GenericLLMAgent(BaseNode):
+# BLOCK COMMENT FOR GENERIC LLM AGENT
+# GenericLLMAgent provides standard OpenAI-compatible API execution helpers
+class GenericLLMAgent(BaseLLMNode):
     name: str = "generic_llm_agent"
     label: str = "Generic LLM"
     description: str = "Calls an LLM via specific IP and Port using OpenAI-compatible API"
@@ -77,7 +79,13 @@ class GenericLLMAgent(BaseNode):
                 error_message="Input content is empty",
             )
         return None
-        
+
+    async def get_input_contract ():
+        return self.input_contract
+
+    async def get_output_contract ():
+        return self.output_contract
+    
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """
         Executes the LLM call using the merged config.

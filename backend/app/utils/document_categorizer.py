@@ -11,7 +11,8 @@ backwards compatibility.
 import json
 import re
 from typing import Any, Dict, List, Optional, Union
-
+from app.core.config import get_settings
+settings = get_settings()
 import httpx
 import structlog
 
@@ -101,7 +102,7 @@ async def summarize_and_classify_document(
     max_tags: int = 5,
     categories: Optional[List[str]] = None,
     llm_endpoint: Optional[str] = None,
-    model_name: str = "qwen:0.5b",
+    model_name: str = settings.DEFAULT_MODEL,
     temperature: float = 0.2,
     timeout: float = 30.0,
     system_prompt: Optional[str] = None,
@@ -222,3 +223,4 @@ async def summarize_and_classify_document(
         return heuristic_categorize_and_summarize(
             text, summary_words=summary_words, max_tags=max_tags, categories=categories
         )
+    

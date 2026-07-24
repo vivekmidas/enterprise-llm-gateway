@@ -491,7 +491,7 @@ class BaseNode(BaseModel, abc.ABC):
             try:
                 return pattern.sub(replace_match, template)
             except Exception as e:
-                self.logger.warning("jinja_template_render_failed", trace_id=inp.trace_id, template=template, error=str(e))
+                self.logger.warning("jinja_template_render_failed", template=template, error=str(e))
                 return template
         return template
 
@@ -819,16 +819,26 @@ class BaseNode(BaseModel, abc.ABC):
                 if not (source_url.startswith("/") or source_url.startswith("http")):
                     continue
 
+                # ==============================================================
+                # BLOCK COMMENT: UPDATED SOURCE FIELD RESOLUTION
+                # Appends configured fields query param and filters sensitive fields
+                # ==============================================================
+                req_fields = schema.get("fields") or schema.get("required_fields")
+                full_url = source_url
+                if req_fields and isinstance(req_fields, list):
+                    param_str = ",".join(str(f) for f in req_fields)
+                    delimiter = "&" if "?" in full_url else "?"
+                    full_url = f"{full_url}{delimiter}fields={param_str}"
+
                 try:
                     import os
                     import httpx
-                    # need to find way to call internal apis
 
                     backend_url = os.getenv("NEXT_PUBLIC_BACKEND_URL", "http://localhost:8000")
-                    full_url = source_url
+                    target_url = full_url if full_url.startswith("http") else f"{backend_url.rstrip('/')}{full_url if full_url.startswith('/') else '/' + full_url}"
 
                     async with httpx.AsyncClient(timeout=5.0) as client:
-                        res = await client.get(full_url)
+                        res = await client.get(target_url)
                         if res.status_code != 200:
                             continue
 
@@ -856,8 +866,41 @@ class BaseNode(BaseModel, abc.ABC):
                                 target_item = item
                                 break
 
-                    # Store all returned data fields directly into inp.config
+                    # Store returned data fields into inp.config
                     if isinstance(target_item, dict):
+                        model_type = str(inp.config.get("model_type") or "generation").lower()
+                        settings = target_item.get("settings")
+                        if isinstance(settings, dict):
+                            sec = (
+                                settings.get(model_type)
+                                or settings.get("generation")
+                                or settings.get("search")
+                                or settings.get("embedding")
+                            )
+                            if isinstance(sec, dict):
+                                if sec.get("url") and not inp.config.get("llm_endpoint"):
+                                    inp.config["llm_endpoint"] = sec.get("url")
+                                    inp.config["url"] = sec.get("url")
+                                if sec.get("model") and not inp.config.get("model"):
+                                    inp.config["model"] = sec.get("model")
+                                if sec.get("api_key") and not inp.config.get("api_key"):
+                                    inp.config["api_key"] = sec.get("api_key")
+                                if sec.get("system_prompt") and not inp.config.get("system_prompt"):
+                                    inp.config["system_prompt"] = sec.get("system_prompt")
+                                if sec.get("temperature") is not None and inp.config.get("temperature") is None:
+                                    inp.config["temperature"] = sec.get("temperature")
+
+                        if (target_item.get("url") or target_item.get("endpoint")) and not inp.config.get("llm_endpoint"):
+                            endpoint = target_item.get("url") or target_item.get("endpoint")
+                            inp.config["llm_endpoint"] = endpoint
+                            inp.config["url"] = endpoint
+                        if target_item.get("model") and not inp.config.get("model"):
+                            inp.config["model"] = target_item.get("model")
+                        if target_item.get("api_key") and not inp.config.get("api_key"):
+                            inp.config["api_key"] = target_item.get("api_key")
+                        if target_item.get("system_prompt") and not inp.config.get("system_prompt"):
+                            inp.config["system_prompt"] = target_item.get("system_prompt")
+
                         for k, v in target_item.items():
                             if k not in inp.config or inp.config[k] is None or inp.config[k] == "":
                                 inp.config[k] = v
@@ -867,10 +910,9 @@ class BaseNode(BaseModel, abc.ABC):
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
         The standardized execution lifecycle for every node in the system.
-
-        Execution Steps:
-        1. Property Resolution: Merges static node properties with runtime workflow config.
-        2. Validation: Executes pre-flight checks (validate_input).
+        Executes:
+        1. Context Setup: Enriches context with execution tracing data.
+        2. Config Setup: Merges static properties with runtime input configs.
         3. Execution: Runs the core business logic (execute).
         4. Observability: Captures latency, start/end times, and status.
         5. Error Handling: Gracefully catches exceptions and returns a failure NodeOutput.
@@ -903,19 +945,8 @@ class BaseNode(BaseModel, abc.ABC):
             else:
                 input_data_data = input_data
 
-            # 0.06 Get mappings from config
+            # 0.06 Get mappings directly from config
             mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
-            # making double sure the property is not missed. 
-            if not mapping_config and isinstance(inp.config, dict):
-                user_props = inp.config.get("user_properties") or inp.config.get("properties")
-                if isinstance(user_props, str):
-                    try:
-                        user_props = json.loads(user_props)
-                    except Exception:
-                        user_props = {}
-                if isinstance(user_props, dict):
-                    mapping_config = user_props.get("mapping_template") or user_props.get("input_mappings")
-
             if mapping_config:
                 if isinstance(mapping_config, str):
                     try:

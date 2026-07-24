@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "enterprise_knowledge"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    LLM_PROVIDER: str = "vllm"
-    OLLAMA_MODEL: str = "qwen:0.5b"
+    LLM_PROVIDER: str = "ollama"
+    DEFAULT_MODEL: str = "qwen:0.5b"
     EMBEDDING_PROVIDER: str = "ollama" # change to "openai" if you want to use openai embeddings
     EMBEDDING_MODEL: str = "nomic-embed-text"
     EMBEDDING_DIMENSION: int = 768

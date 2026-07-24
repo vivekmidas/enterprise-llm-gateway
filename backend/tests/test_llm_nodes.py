@@ -173,3 +173,71 @@ async def test_base_llm_execution():
             assert kwargs["json"]["model"] == "gpt-mock"
             assert kwargs["json"]["temperature"] == 0.5
             assert kwargs["json"]["max_tokens"] == 150
+
+@pytest.mark.asyncio
+async def test_ollama_node_chat_execution():
+    node = OllamaNode()
+    await node.init()
+    
+    trace_id = str(uuid.uuid4())
+    inp = NodeInput(
+        trace_id=trace_id,
+        data=json.dumps({"prompt": "Tell me a joke"}),
+        config={
+            "base_url": "http://127.0.0.1:11434",
+            "model_type": "chat",
+            "model": "llama3.2",
+            "temperature": 0.7
+        }
+    )
+    
+    mock_response = {
+        "message": {"role": "assistant", "content": "Why did the computer cross the road? To get to the other byte!"},
+        "usage": {"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20}
+    }
+    
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_post.return_value = AsyncMock(
+            status_code=200,
+            json=lambda: mock_response,
+            raise_for_status=lambda: None
+        )
+        
+        result = await node.execute(inp)
+        assert result.status == "success"
+        res_data = json.loads(result.data)
+        assert res_data["data"]["text"] == "Why did the computer cross the road? To get to the other byte!"
+        assert res_data["data"]["usage"]["total_tokens"] == 20
+        assert result.metadata["model_type"] == "chat"
+
+@pytest.mark.asyncio
+async def test_ollama_node_embedding_execution():
+    node = OllamaNode()
+    await node.init()
+    
+    trace_id = str(uuid.uuid4())
+    inp = NodeInput(
+        trace_id=trace_id,
+        data=json.dumps({"prompt": "Sample embedding text"}),
+        config={
+            "base_url": "http://127.0.0.1:11434",
+            "model_type": "embedding",
+            "model": "nomic-embed-text"
+        }
+    )
+    
+    mock_response = {"embedding": [0.1, 0.2, 0.3, 0.4]}
+    
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_post.return_value = AsyncMock(
+            status_code=200,
+            json=lambda: mock_response,
+            raise_for_status=lambda: None
+        )
+        
+        result = await node.execute(inp)
+        assert result.status == "success"
+        res_data = json.loads(result.data)
+        assert res_data["data"]["embedding"] == [0.1, 0.2, 0.3, 0.4]
+        assert result.metadata["model_type"] == "embedding"
+

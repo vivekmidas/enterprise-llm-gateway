@@ -214,6 +214,25 @@ class ProfileResolver:
             ),
             generation=GenerationSection(
                 url=f"{_settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat",
-                model=_settings.OLLAMA_MODEL,
+                model=getattr(_settings, "OLLAMA_MODEL", getattr(_settings, "DEFAULT_MODEL", "llama3.2")),
             ),
         )
+
+
+PROVIDER_TO_NODE_MAP: dict[str, str] = {
+    "ollama": "ollama_node",
+    "openai": "openai_node",
+    "gemini": "gemini_node",
+    "vllm": "ollama_node",
+    "groq": "openai_node",
+    "deepseek": "openai_node",
+    "anthropic": "generic_llm_agent",
+}
+
+
+def get_node_name_for_provider(provider: str) -> str:
+    """Map model provider key to corresponding registered node name."""
+    if not provider:
+        return "ollama_node"
+    clean_p = str(provider).strip().lower()
+    return PROVIDER_TO_NODE_MAP.get(clean_p, f"{clean_p}_node")

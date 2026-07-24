@@ -104,3 +104,47 @@ async def test_document_categorizer_node_auto_discovery():
     assert discovered_node.label == "Document Categorizer"
     assert discovered_node.group == "Data"
     assert discovered_node.category == "11"
+
+
+@pytest.mark.asyncio
+async def test_document_categorizer_node_llm_profile_properties():
+    node = DocumentCategorizerNode()
+    user_keys = [p["key"] for p in node.user_properties]
+    assert "llm_profile" in user_keys
+    assert "model_type" in user_keys
+
+    llm_prof_prop = next(p for p in node.user_properties if p["key"] == "llm_profile")
+    assert llm_prof_prop["type"] == "source"
+    assert llm_prof_prop["source"] == "/api/profiles"
+
+
+@pytest.mark.asyncio
+async def test_document_categorizer_node_stored_source_data():
+    node = DocumentCategorizerNode()
+    await node.init()
+
+    inp = NodeInput(
+        trace_id="test-stored-source-trace",
+        data="Sample document content for contract analysis.",
+        config={
+            "_source_data": {
+                "id": 99,
+                "name": "Custom Ollama Profile",
+                "settings": {
+                    "generation": {
+                        "url": "http://localhost:11434/api/chat",
+                        "model": "qwen:0.5b",
+                        "temperature": 0.1
+                    }
+                }
+            },
+            "llm_endpoint": "http://localhost:11434/api/chat",
+            "model": "qwen:0.5b",
+            "categories": "Contract, Invoice, General"
+        }
+    )
+
+    out = await node.execute(inp)
+    assert out.status == "success"
+
+

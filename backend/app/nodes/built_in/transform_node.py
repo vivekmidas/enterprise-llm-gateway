@@ -15,8 +15,8 @@ class TransformNode(BaseNode):
         await super().init()
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
-        # Basic validation: ensure mapping_template is present
-        if not self.properties.get("mapping_template"):
+        # Basic validation: ensure mapping_template is present in inp.config
+        if not inp.config.get("mapping_template"):
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,

@@ -414,8 +414,20 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     if not cust_node or not cust_node.is_enabled:
                         raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
 
-                # Resolve effective config merging node_config with instance properties from WorkflowNodePropertyDB
+                # ==============================================================================
+                # PROPERTIES RESOLUTION ORDER: WORKFLOW_NODE_PROPERTIES > NODE_PROPERTIES > SYSTEM_LEVEL_PROPERTIES
+                # ==============================================================================
                 effective_config = dict(node_config or {})
+                if cust_node and cust_node.properties:
+                    cust_props = cust_node.properties
+                    if isinstance(cust_props, str):
+                        try:
+                            cust_props = json.loads(cust_props)
+                        except Exception:
+                            cust_props = {}
+                    if isinstance(cust_props, dict):
+                        effective_config.update(cust_props)
+
                 if wf_node_prop and wf_node_prop.properties:
                     wf_props = wf_node_prop.properties
                     if isinstance(wf_props, str):
@@ -425,6 +437,7 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                             wf_props = {}
                     if isinstance(wf_props, dict):
                         effective_config.update(wf_props)
+                # ==============================================================================
 
                 input_schema = getattr(agent, "input_contract", {})
                 if cust_node and cust_node.input_contract is not None:

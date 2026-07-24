@@ -94,7 +94,7 @@ app.include_router(users.router)
 app.include_router(knowledge_router)
 app.include_router(jobs_router)
 app.include_router(company_router)
-app.include_router(llm_profiles_router)   # legacy — kept until full migration
+app.include_router(llm_profiles_router)   # customer specific LLM profiles router with role projection
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
 app.include_router(provider_presets_router)
