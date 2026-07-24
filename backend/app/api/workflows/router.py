@@ -100,6 +100,10 @@ async def get_node_properties(
                 )
             )
             cust_node = result.scalars().first()
+            if current_user.role != "system_admin" and workflow.customer_id is not None:
+                if not cust_node or not cust_node.is_enabled:
+                    raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
+
             tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
             if cust_node:
                 if cust_node.input_contract is not None:
@@ -192,15 +196,27 @@ async def update_node_properties(
     input_contract = properties.pop("input_contract", None)
     output_contract = properties.pop("output_contract", None)
 
-    # Prevent standard users and customer admins from modifying system properties
+    # Prevent standard users and customer admins from modifying system properties or updating disabled nodes
     if current_user.role != "system_admin":
         from app.core.database import AsyncSessionLocal
         from app.workflows.store import _get_workflow_node, _load_workflow_node_properties, _get_workflow_node_details
         from app.nodes.properties import property_entries_to_dict
+        from app.models.db_models import CustomerNodeDB
         async with AsyncSessionLocal() as session:
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
             if workflow_node:
                 agent_name = workflow_node.agent_name
+                if workflow.customer_id is not None:
+                    cn_res = await session.execute(
+                        select(CustomerNodeDB).where(
+                            CustomerNodeDB.customer_id == workflow.customer_id,
+                            CustomerNodeDB.node_name == agent_name
+                        )
+                    )
+                    cust_n = cn_res.scalars().first()
+                    if not cust_n or not cust_n.is_enabled:
+                        raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
+
                 db_node = await _get_workflow_node_details(session, agent_name)
                 if db_node and db_node.system_properties:
                     system_keys = set(property_entries_to_dict(db_node.system_properties).keys())

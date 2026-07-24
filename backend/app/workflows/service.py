@@ -414,6 +414,18 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     if not cust_node or not cust_node.is_enabled:
                         raise ValueError(f"Workflow execution halted: Node '{agent_name}' is disabled or not assigned to the customer.")
 
+                # Resolve effective config merging node_config with instance properties from WorkflowNodePropertyDB
+                effective_config = dict(node_config or {})
+                if wf_node_prop and wf_node_prop.properties:
+                    wf_props = wf_node_prop.properties
+                    if isinstance(wf_props, str):
+                        try:
+                            wf_props = json.loads(wf_props)
+                        except Exception:
+                            wf_props = {}
+                    if isinstance(wf_props, dict):
+                        effective_config.update(wf_props)
+
                 input_schema = getattr(agent, "input_contract", {})
                 if cust_node and cust_node.input_contract is not None:
                     input_schema = cust_node.input_contract
@@ -427,7 +439,7 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     output_schema = wf_node_prop.output_contract
 
                 from app.nodes.contracts import contract_from_expected_output
-                node_expected_output = (node_config or {}).get("expected_output")
+                node_expected_output = effective_config.get("expected_output")
                 dynamic_output_contract = contract_from_expected_output(node_expected_output)
                 if dynamic_output_contract is not None:
                     output_schema = dynamic_output_contract
@@ -457,7 +469,7 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 agent_input = NodeInput(
                     trace_id=state.trace_id,
                     data=node_data,
-                    config=node_config or {},
+                    config=effective_config,
                     context=state.context,
                     metadata=state.metadata,
                     input_schema=input_schema,
@@ -493,6 +505,11 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     "masked_content": result.data,
                 }
 
+                def try_parse_json(val):
+                    if not val: return None
+                    try: return json.loads(val)
+                    except: return val
+
                 updates["context"] = {
                     "nodes": {
                         **(state.context.get("nodes", {}) if state.context else {}),
@@ -520,6 +537,7 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 updates["agents_executed"] = [agent_name]
 
                 return updates
+
             except Exception as e:
                 logger.error(
                     "node_execution_failed",
@@ -568,10 +586,24 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
 
     # Add Nodes to the graph
     logger.info("starting_building_workflow_graph_nodes", workflow_id=agent_config.get("id"), version=agent_config.get("version"), tenant_id=agent_config.get("customer_id"))
+    from app.nodes.properties import property_entries_to_dict
     for node in nodes_raw:
         agent_node_id = node["id"]
         node_data = node.get("data", {})
-        node_props = node_data.get("user_properties") or node_data.get("properties") or node.get("config") or {}
+        
+        node_props = {}
+        if isinstance(node_data.get("properties"), dict):
+            node_props.update(node_data["properties"])
+        elif isinstance(node_data.get("properties"), list):
+            node_props.update(property_entries_to_dict(node_data["properties"]))
+
+        if isinstance(node_data.get("user_properties"), dict):
+            node_props.update(node_data["user_properties"])
+        elif isinstance(node_data.get("user_properties"), list):
+            node_props.update(property_entries_to_dict(node_data["user_properties"]))
+
+        if isinstance(node.get("config"), dict):
+            node_props.update(node["config"])
         
         raw_type = str(node_data.get("node_type") or node.get("type") or "NODE").upper()
         if raw_type in {"START", "TRIGGER"}:

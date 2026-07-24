@@ -301,3 +301,38 @@ def require_tenant(user: User) -> int:
     return user.customer_id
 
 
+async def verify_node_tenant_access(
+    node_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    FastAPI dependency to verify node tenant authorization.
+    Super admin bypasses check. For tenant admin and users, verifies CustomerNodeDB assignment and enablement.
+    """
+    if current_user.role == "system_admin":
+        return current_user
+
+    if current_user.customer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not associated with a customer tenant."
+        )
+
+    from app.models.db_models import CustomerNodeDB
+    stmt = select(CustomerNodeDB).where(
+        CustomerNodeDB.customer_id == current_user.customer_id,
+        CustomerNodeDB.node_name == node_name
+    )
+    result = await db.execute(stmt)
+    cust_node = result.scalar_one_or_none()
+
+    if not cust_node or not cust_node.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Node '{node_name}' is disabled or not assigned to your tenant."
+        )
+
+    return current_user
+
+

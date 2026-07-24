@@ -182,6 +182,11 @@ async def configure_customer_node(
             raise HTTPException(status_code=404, detail="Node not found")
             
         if not customer_node:
+            if current_user.role == "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail="This node is not assigned to your tenant and cannot be configured."
+                )
             customer_node = CustomerNodeDB(
                 customer_id=target_customer_id,
                 node_name=node_name,
@@ -612,7 +617,7 @@ async def get_node(
     result = await db.execute(stmt)
     cust_node = result.scalar_one_or_none()
     
-    if current_user.role not in ["system_admin", "admin"]:
+    if current_user.role != "system_admin":
         if not cust_node or not cust_node.is_enabled:
             return {"error": "Node not found or not enabled by admin"}
             
@@ -651,7 +656,7 @@ async def get_node_by_id(
     result = await db.execute(stmt)
     cust_node = result.scalar_one_or_none()
     
-    if current_user.role not in ["system_admin", "admin"]:
+    if current_user.role != "system_admin":
         if not cust_node or not cust_node.is_enabled:
             return {"error": "Node not found or not enabled by admin"}
             
@@ -937,6 +942,9 @@ async def test_node_directly(
     node = NodesRegistry.get_node(node_name)
     if not node:
         raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
+
+    from app.api.auth.dependencies import verify_node_tenant_access
+    await verify_node_tenant_access(node_name=node_name, current_user=current_user, db=db)
         
     config = payload.get("config") or {}
     data_val = payload.get("data")
