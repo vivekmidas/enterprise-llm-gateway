@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.repositories.job_repository import JobRepository
 from app.schemas.job import JobListResponse, JobResponse
-from app.nodes.built_in.kb.job_service import JobService
+from app.models.services.job_service import JobService
 
 router = APIRouter(
     prefix="/api/jobs",
