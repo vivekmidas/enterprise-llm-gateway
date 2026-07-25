@@ -101,7 +101,7 @@ async def upload_document(
 
         await db.commit()
 
-        from app.services.document_ingestion_service import document_ingestion_service
+        from app.nodes.built_in.kb.document_ingestion_service import document_ingestion_service
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
 
         return await document_ingestion_service.start_ingestion(

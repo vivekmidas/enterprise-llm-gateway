@@ -13,7 +13,7 @@ from app.core.database import AsyncSessionLocal
 from app.jobs.enums import EntityType, JobType
 from app.models.db_models import KnowledgeChunkDB, KnowledgeDocumentDB, KnowledgeCollectionDB
 from app.repositories.job_repository import JobRepository
-from app.services.job_service import JobService
+from app.models.services.job_service import JobService
 from app.utils.file_utils import extract_text_from_file
 from app.utils.text_splitter import chunk_text
 from app.knowledge.embeddings import get_embedding_provider_for_model, get_embedding_provider

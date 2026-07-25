@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.models.db_models import JobDB
-from app.models.enums import JobStatus
+from app.jobs.enums import JobStatus
 from app.repositories.job_repository import JobRepository
 
 
