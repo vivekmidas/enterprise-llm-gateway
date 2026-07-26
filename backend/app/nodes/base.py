@@ -870,6 +870,9 @@ class BaseNode(BaseModel, abc.ABC):
                     if isinstance(target_item, dict):
                         model_type = str(inp.config.get("model_type") or "generation").lower()
                         settings = target_item.get("settings")
+                        sensitive_keys = {"api_key", "secret", "password", "auth_token"}
+                        allowed_keys = set(req_fields) if (req_fields and isinstance(req_fields, list)) else None
+
                         if isinstance(settings, dict):
                             sec = (
                                 settings.get(model_type)
@@ -883,7 +886,7 @@ class BaseNode(BaseModel, abc.ABC):
                                     inp.config["url"] = sec.get("url")
                                 if sec.get("model") and not inp.config.get("model"):
                                     inp.config["model"] = sec.get("model")
-                                if sec.get("api_key") and not inp.config.get("api_key"):
+                                if sec.get("api_key") and not inp.config.get("api_key") and (not allowed_keys or "api_key" in allowed_keys):
                                     inp.config["api_key"] = sec.get("api_key")
                                 if sec.get("system_prompt") and not inp.config.get("system_prompt"):
                                     inp.config["system_prompt"] = sec.get("system_prompt")
@@ -896,12 +899,16 @@ class BaseNode(BaseModel, abc.ABC):
                             inp.config["url"] = endpoint
                         if target_item.get("model") and not inp.config.get("model"):
                             inp.config["model"] = target_item.get("model")
-                        if target_item.get("api_key") and not inp.config.get("api_key"):
+                        if target_item.get("api_key") and not inp.config.get("api_key") and (not allowed_keys or "api_key" in allowed_keys):
                             inp.config["api_key"] = target_item.get("api_key")
                         if target_item.get("system_prompt") and not inp.config.get("system_prompt"):
                             inp.config["system_prompt"] = target_item.get("system_prompt")
 
                         for k, v in target_item.items():
+                            if allowed_keys and k not in allowed_keys and k not in ("llm_endpoint", "url", "model", "model_name"):
+                                continue
+                            if k.lower() in sensitive_keys:
+                                continue
                             if k not in inp.config or inp.config[k] is None or inp.config[k] == "":
                                 inp.config[k] = v
                 except Exception as exc:

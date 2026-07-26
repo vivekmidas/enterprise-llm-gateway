@@ -28,6 +28,8 @@ class EmbeddingSection(BaseModel):
 class SearchSection(BaseModel):
     """Controls retrieval strategy and candidate selection."""
 
+    provider: str = "ollama"
+    model: str = "qwen3:0.6b"
     approach: Literal["hybrid", "vector", "keyword"] = "hybrid"
     top_k: int = Field(default=10, ge=1, le=100)
     min_score: float = Field(default=0.65, ge=0.0, le=1.0)
@@ -40,6 +42,7 @@ class SearchSection(BaseModel):
 class RerankSection(BaseModel):
     """Controls LLM-based reranking of retrieved candidates."""
 
+    provider: str = "ollama"
     enabled: bool = False
     url: str = "http://localhost:11434/api/chat"
     endpoint_path: Optional[str] = "/api/chat"

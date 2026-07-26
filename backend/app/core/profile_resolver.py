@@ -86,14 +86,29 @@ class ProfileResolver:
         api_key = getattr(section, "api_key", None)
         payload_config = getattr(section, "payload_config", None) or {}
 
-        # Look up matching provider preset for base URL & endpoint mapping if needed
+        # ==============================================================================
+        # BLOCK COMMENT: SYSTEM ADMIN PROVIDER PRESET BASE_URL OVERRIDE
+        # Force resolution of base_url and endpoint paths directly from ProviderPresetDB
+        # defined by System Admin, ignoring any custom URLs in LLM Profile.
+        # ==============================================================================
         from app.models.db_models import ProviderPresetDB
         result = await self.db.execute(
             select(ProviderPresetDB).where(ProviderPresetDB.provider_key == provider_name.lower())
         )
         preset = result.scalar_one_or_none()
 
-        base_url = preset.base_url if preset else raw_url.rsplit("/", 1)[0]
+        if preset:
+            base_url = preset.base_url
+            if model_type == "embedding":
+                endpoint_path = preset.embedding_endpoint or "/api/embeddings"
+            elif model_type == "reranking":
+                endpoint_path = preset.rerank_endpoint or "/api/chat"
+            else:
+                endpoint_path = preset.search_endpoint or "/api/chat"
+        else:
+            base_url = raw_url.rsplit("/", 1)[0] if raw_url.startswith("http") else "http://localhost:11434"
+            endpoint_path = endpoint_path or ("/api/embeddings" if model_type == "embedding" else "/api/chat")
+
         if preset and preset.model_types:
             for mt in preset.model_types:
                 if isinstance(mt, dict) and mt.get("name") in (model_type, "search" if model_type == "generation" else model_type):
@@ -105,19 +120,7 @@ class ProfileResolver:
                         api_key = mt.get("api_key")
                     break
 
-        if not endpoint_path:
-            if raw_url and raw_url.startswith("http"):
-                # Extract path component
-                from urllib.parse import urlparse
-                endpoint_path = urlparse(raw_url).path
-            else:
-                endpoint_path = "/chat/completions" if model_type in ("search", "generation") else "/embeddings"
-
-        # Construct final_url
-        if raw_url and raw_url.startswith("http") and not preset:
-            final_url = raw_url
-        else:
-            final_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}"
+        final_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}"
 
         return {
             "provider": provider_name,

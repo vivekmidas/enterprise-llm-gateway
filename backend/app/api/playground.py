@@ -49,28 +49,28 @@ async def run_playground_test(
     customer_id = int(current_user.customer_id)
 
     # Base profile settings
-    settings: Dict[str, Any] = {
-        "llm_config": {
-            "provider": "openai",
-            "model": "gpt-4o",
-            "temperature": 0.7,
-            "max_tokens": 1024,
-        },
-        "retrieval_config": {
-            "approach": "hybrid",
-            "top_k": 5,
-            "min_score": 0.0,
-            "max_context_tokens": 4096,
-            "enable_rrf": True,
-        },
-        "rerank_config": {
-            "enable_reranking": False,
-            "candidate_limit": 30,
-        },
-        "query_settings": {
-            "enable_query_rewrite": False,
-        },
-    }
+    # settings: Dict[str, Any] = {
+    #     "llm_config": {
+    #         "provider": "openai",
+    #         "model": "gpt-4o",
+    #         "temperature": 0.7,
+    #         "max_tokens": 1024,
+    #     },
+    #     "retrieval_config": {
+    #         "approach": "hybrid",
+    #         "top_k": 5,
+    #         "min_score": 0.0,
+    #         "max_context_tokens": 4096,
+    #         "enable_rrf": True,
+    #     },
+    #     "rerank_config": {
+    #         "enable_reranking": False,
+    #         "candidate_limit": 30,
+    #     },
+    #     "query_settings": {
+    #         "enable_query_rewrite": False,
+    #     },
+    # }
 
     # 1. Load base profile if profile_id provided
     if payload.profile_id:
@@ -143,7 +143,7 @@ async def run_playground_test(
         "total_latency_ms": total_latency_ms,
         "retrieval_count": len(chunks),
         "llm_provider": llm_cfg.get("provider", "openai"),
-        "llm_model": llm_cfg.get("model", "gpt-4o"),
+        "llm_model": llm_cfg.get("model", ""),
         "temperature": llm_cfg.get("temperature", 0.7),
         "search_approach": ret_cfg.get("approach", "hybrid"),
         "reranking_enabled": rerank_cfg.get("enable_reranking", False),

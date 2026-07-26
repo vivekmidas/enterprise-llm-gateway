@@ -45,9 +45,12 @@ async def list_all_provider_presets_admin(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all provider presets including inactive (System Admin only)."""
-    if current_user.role not in ("admin", "system_admin"):
-        raise HTTPException(status_code=403, detail="Admin role required")
+    # ==============================================================================
+    # BLOCK COMMENT: SYSTEM ADMIN AUTHORIZATION FOR ADMIN PROVIDER PRESET ENDPOINTS
+    # Restrict provider preset administrative management strictly to System Admin.
+    # ==============================================================================
+    if current_user.role != "system_admin":
+        raise HTTPException(status_code=403, detail="System Admin role required")
 
     result = await db.execute(select(ProviderPresetDB).order_by(ProviderPresetDB.id.asc()))
     presets = result.scalars().all()

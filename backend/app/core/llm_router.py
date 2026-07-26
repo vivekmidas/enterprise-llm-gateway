@@ -68,7 +68,7 @@ class LLMRouter:
                 streaming=False,
             )
         elif provider == "openai":
-            model = tenant_config.get("llm_model") or "gpt-4o-mini"
+            model = tenant_config.get("llm_model")
             api_key = tenant_config.get("llm_api_key") or os.getenv("OPENAI_API_KEY")
             base_url = tenant_config.get("llm_base_url") or "https://api.openai.com/v1"
             return ChatOpenAI(

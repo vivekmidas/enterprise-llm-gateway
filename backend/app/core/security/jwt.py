@@ -102,9 +102,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Missing token"}
             )
 
-        token = auth.split()[1]
-
         try:
+            token = auth.split()[1]
             payload = jwt.decode(
                 token,
                 settings.SECRET_KEY,

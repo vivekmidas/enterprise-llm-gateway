@@ -169,6 +169,26 @@ async def get_llm_profile(
     return profile
 
 
+# ==============================================================================
+# BLOCK COMMENT: SANITIZE SETTINGS HELPER
+# Strips custom url / base_url fields from profile settings so System Admin
+# provider preset URLs remain canonical and immutable for tenant admins.
+# ==============================================================================
+def _sanitize_profile_settings(raw_settings: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(raw_settings, dict):
+        return {}
+    sanitized = dict(raw_settings)
+    for sec_key in ("embedding", "reranking", "generation"):
+        if isinstance(sanitized.get(sec_key), dict):
+            sec_dict = dict(sanitized[sec_key])
+            sec_dict.pop("url", None)
+            sec_dict.pop("base_url", None)
+            sanitized[sec_key] = sec_dict
+    sanitized.pop("base_url", None)
+    sanitized.pop("url", None)
+    return sanitized
+
+
 @router.post("", response_model=LLMProfileResponse, status_code=status.HTTP_201_CREATED)
 async def create_llm_profile(
     payload: LLMProfileCreate,
@@ -186,6 +206,7 @@ async def create_llm_profile(
         )
 
     settings_val = payload.settings.model_dump() if hasattr(payload.settings, "model_dump") else (payload.settings or {})
+    settings_val = _sanitize_profile_settings(settings_val)
 
     profile = LLMProfileDB(
         name=payload.name,
@@ -257,7 +278,8 @@ async def update_llm_profile(
     if payload.description is not None:
         profile.description = payload.description
     if payload.settings is not None:
-        profile.settings = payload.settings.model_dump() if hasattr(payload.settings, "model_dump") else payload.settings
+        raw_st = payload.settings.model_dump() if hasattr(payload.settings, "model_dump") else payload.settings
+        profile.settings = _sanitize_profile_settings(raw_st)
 
     if payload.is_default is True:
         await db.execute(
