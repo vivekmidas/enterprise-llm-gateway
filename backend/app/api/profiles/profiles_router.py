@@ -29,39 +29,38 @@ router = APIRouter()
 
 # ==============================================================================
 # BLOCK COMMENT: UPDATED ROUTE - GET /api/profiles
-# Added optional ?fields= query param and role-based field filtering.
+# Added optional ?customer_id= and ?fields= query params and role-based field filtering.
 # ==============================================================================
 @router.get("/", response_model=Union[List[LLMProfileResponse], List[Dict[str, Any]]])
 async def list_profiles(
     all_tenants: bool = False,
+    customer_id: Optional[int] = Query(None, description="Filter profiles by customer_id (system_admin only)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include e.g. id,name,url,model_name"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List LLM profiles for tenant.
-    Supports optional ?fields= projection parameter and role-based credential scrubbing.
+    List LLM profiles for tenant or all tenants if system_admin.
+    Supports optional ?customer_id= filter, ?fields= projection parameter and role-based credential scrubbing.
     """
-    if all_tenants and getattr(current_user, "role", None) == "system_admin":
-        result = await db.execute(
-            select(LLMProfileDB).order_by(LLMProfileDB.id.desc())
-        )
+    role = getattr(current_user, "role", "user")
+    if role == "system_admin":
+        if customer_id is not None:
+            stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id).order_by(LLMProfileDB.id.desc())
+        else:
+            stmt = select(LLMProfileDB).order_by(LLMProfileDB.id.desc())
     else:
-        customer_id = current_user.customer_id
-        result = await db.execute(
-            select(LLMProfileDB)
-            .where(LLMProfileDB.customer_id == customer_id)
-            .order_by(LLMProfileDB.id.desc())
-        )
+        cid = current_user.customer_id
+        stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == cid).order_by(LLMProfileDB.id.desc())
+
+    result = await db.execute(stmt)
     profiles = result.scalars().all()
 
-    role = getattr(current_user, "role", "user")
     field_list = [f.strip() for f in fields.split(",")] if fields else None
     if fields or role not in ("admin", "system_admin"):
         return [project_profile_fields(p, fields=field_list, role=role) for p in profiles]
 
     return profiles
-
 
 
 @router.post("/", response_model=LLMProfileResponse, status_code=status.HTTP_201_CREATED)
@@ -71,7 +70,11 @@ async def create_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new LLM profile for the tenant."""
-    customer_id = current_user.get("tenant")
+    role = current_user.get("role")
+    if role == "system_admin" and payload.customer_id is not None:
+        customer_id = payload.customer_id
+    else:
+        customer_id = current_user.get("tenant")
 
     if payload.is_default:
         await db.execute(
@@ -118,13 +121,15 @@ async def get_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single LLM profile."""
-    customer_id = current_user.customer_id
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = getattr(current_user, "role", "user")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == customer_id,
+            LLMProfileDB.customer_id == current_user.customer_id,
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")
@@ -139,13 +144,15 @@ async def update_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the settings of an existing LLM profile."""
-    customer_id = current_user.get("tenant")
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = current_user.get("role")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == customer_id,
+            LLMProfileDB.customer_id == current_user.get("tenant"),
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")
@@ -163,7 +170,7 @@ async def update_profile(
     if payload.is_default is True:
         await db.execute(
             update(LLMProfileDB)
-            .where(LLMProfileDB.customer_id == customer_id)
+            .where(LLMProfileDB.customer_id == profile.customer_id)
             .values(is_default=False)
         )
         profile.is_default = True
@@ -183,13 +190,15 @@ async def delete_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an LLM profile."""
-    customer_id = require_tenant(current_user)
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = current_user.get("role")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == customer_id,
+            LLMProfileDB.customer_id == current_user.get("tenant"),
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")
@@ -206,26 +215,29 @@ async def set_default_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Set a profile as the tenant default."""
-    customer_id = require_tenant(current_user)
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = current_user.get("role")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == customer_id,
+            LLMProfileDB.customer_id == current_user.get("tenant"),
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")
 
+    target_customer_id = profile.customer_id
     await db.execute(
         update(LLMProfileDB)
-        .where(LLMProfileDB.customer_id == customer_id)
+        .where(LLMProfileDB.customer_id == target_customer_id)
         .values(is_default=False)
     )
     profile.is_default = True
     profile.updated_at = datetime.utcnow().isoformat()
 
-    res = await db.execute(select(CustomerDB).where(CustomerDB.id == customer_id))
+    res = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     cust = res.scalar_one_or_none()
     if cust:
         settings_dict = dict(cust.settings or {})

@@ -49,8 +49,8 @@ async def list_all_provider_presets_admin(
     # BLOCK COMMENT: SYSTEM ADMIN AUTHORIZATION FOR ADMIN PROVIDER PRESET ENDPOINTS
     # Restrict provider preset administrative management strictly to System Admin.
     # ==============================================================================
-    if current_user.role != "system_admin":
-        raise HTTPException(status_code=403, detail="System Admin role required")
+    if current_user.role not in ["admin", "system_admin"]:
+        raise HTTPException(status_code=403, detail="Admin or System Admin role required")
 
     result = await db.execute(select(ProviderPresetDB).order_by(ProviderPresetDB.id.asc()))
     presets = result.scalars().all()

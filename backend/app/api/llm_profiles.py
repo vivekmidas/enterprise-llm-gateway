@@ -24,29 +24,41 @@ router = APIRouter(prefix="/api/llm-profiles", tags=["LLM Profiles"])
 def project_profile_fields(
     profile: LLMProfileDB,
     fields: Optional[List[str]] = None,
-    role: Optional[str] = "user"
+    role: Optional[str] = "user",
+    type_param: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Extract profile fields and format payload based on role and requested projection fields.
+    Extract profile fields and format payload based on role, requested model type, and requested projection fields.
     Non-admin users ('user') will have sensitive keys (e.g. api_key) automatically omitted.
     """
     settings = dict(profile.settings or {}) if isinstance(profile.settings, dict) else {}
 
-    # Extract common nested configuration properties for convenient top-level projection
-    generation_cfg = settings.get("generation") or settings.get("llm_config") or {}
-    if not isinstance(generation_cfg, dict):
-        generation_cfg = {}
+    # Dynamic model type resolution
+    type_key = type_param.strip() if type_param else None
 
-    provider = generation_cfg.get("provider") or settings.get("llm_provider") or ""
+    if type_key:
+        if isinstance(settings, dict) and type_key in settings and isinstance(settings[type_key], dict):
+            target_cfg = settings[type_key]
+            active_settings = {type_key: target_cfg}
+        else:
+            target_cfg = {}
+            active_settings = {}
+    else:
+        target_cfg = settings.get("generation") or settings.get("llm_config") or {}
+        if not isinstance(target_cfg, dict):
+            target_cfg = {}
+        active_settings = settings
+
+    provider = target_cfg.get("provider") or settings.get("llm_provider") or ""
     model_name = (
-        generation_cfg.get("model")
-        or generation_cfg.get("model_name")
+        target_cfg.get("model")
+        or target_cfg.get("model_name")
         or settings.get("llm_model")
         or ""
     )
     url = (
-        generation_cfg.get("url")
-        or generation_cfg.get("base_url")
+        target_cfg.get("url")
+        or target_cfg.get("base_url")
         or settings.get("llm_base_url")
         or ""
     )
@@ -63,14 +75,14 @@ def project_profile_fields(
         "model": model_name,
         "url": url,
         "base_url": url,
-        "settings": settings,
+        "settings": active_settings,
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
     }
 
     is_admin = role in ("admin", "system_admin")
     if not is_admin:
-        safe_settings = dict(settings)
+        safe_settings = dict(active_settings)
         sensitive_keys = {"api_key", "llm_api_key", "secret", "password", "auth_token"}
         
         for sec_key, sec_val in list(safe_settings.items()):
@@ -81,6 +93,7 @@ def project_profile_fields(
                 safe_settings.pop(sec_key, None)
 
         full_dump["settings"] = safe_settings
+        active_settings = safe_settings
 
     if fields:
         requested_set = {f.strip() for f in fields if f and f.strip()}
@@ -89,13 +102,13 @@ def project_profile_fields(
             for field_name in requested_set:
                 if field_name in full_dump:
                     projected[field_name] = full_dump[field_name]
-                elif field_name in settings:
-                    projected[field_name] = settings[field_name]
-                elif field_name in generation_cfg:
-                    projected[field_name] = generation_cfg[field_name]
+                elif field_name in active_settings:
+                    projected[field_name] = active_settings[field_name]
+                elif field_name in target_cfg:
+                    projected[field_name] = target_cfg[field_name]
             return projected
 
-    if not is_admin and not fields:
+    if not is_admin and not fields and not type_param:
         return {
             "id": profile.id,
             "name": profile.name,
@@ -111,34 +124,58 @@ def project_profile_fields(
 
 # ==============================================================================
 # BLOCK COMMENT: UPDATED ROUTE - GET /api/llm-profiles
-# List all LLM profiles for user's tenant with role projection & ?fields= support.
+# List all LLM profiles for user's tenant with role projection, ?fields= & ?type= support.
 # ==============================================================================
 @router.get("", response_model=Union[List[LLMProfileResponse], List[Dict[str, Any]]])
 async def list_llm_profiles(
     fields: Optional[str] = Query(
         None, description="Comma-separated fields to include e.g. id,name,url,model_name,provider"
     ),
+    type: Optional[str] = Query(
+        None, description="Filter profiles by model type (e.g. embedding, search, reranking, generation) and return matching section"
+    ),
+    customer_id: Optional[int] = Query(
+        None, description="Filter profiles by customer_id (system_admin only)"
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all LLM profiles for the user's customer tenant."""
-    customer_id = current_user.customer_id
-    result = await db.execute(
-        select(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id).order_by(LLMProfileDB.id.desc())
-    )
-    profiles = result.scalars().all()
+    """List all LLM profiles for tenant or across all tenants if system_admin."""
+    role = getattr(current_user, "role", "user")
+    if role == "system_admin":
+        if customer_id is not None:
+            stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id).order_by(LLMProfileDB.id.desc())
+        else:
+            stmt = select(LLMProfileDB).order_by(LLMProfileDB.id.desc())
+    else:
+        cid = current_user.customer_id
+        stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == cid).order_by(LLMProfileDB.id.desc())
+
+    result = await db.execute(stmt)
+    profiles = list(result.scalars().all())
+
+    type_key = type.strip() if type else None
+
+    if type_key:
+        filtered_profiles = []
+        for p in profiles:
+            p_settings = p.settings if isinstance(p.settings, dict) else {}
+            sec = p_settings.get(type_key)
+            if sec and isinstance(sec, dict):
+                filtered_profiles.append(p)
+        profiles = filtered_profiles
 
     role = getattr(current_user, "role", "user")
     field_list = [f.strip() for f in fields.split(",")] if fields else None
-    if fields or role not in ("admin", "system_admin"):
-        return [project_profile_fields(p, fields=field_list, role=role) for p in profiles]
+    if fields or type or role not in ("admin", "system_admin"):
+        return [project_profile_fields(p, fields=field_list, role=role, type_param=type) for p in profiles]
 
     return profiles
 
 
 # ==============================================================================
 # BLOCK COMMENT: UPDATED ROUTE - GET /api/llm-profiles/{profile_id}
-# Fetch single LLM profile for tenant with role projection & ?fields= support.
+# Fetch single LLM profile for tenant with role projection, ?fields= & ?type= support.
 # ==============================================================================
 @router.get("/{profile_id}", response_model=Union[LLMProfileResponse, Dict[str, Any]])
 async def get_llm_profile(
@@ -146,25 +183,30 @@ async def get_llm_profile(
     fields: Optional[str] = Query(
         None, description="Comma-separated fields to include e.g. id,name,url,model_name,provider"
     ),
+    type: Optional[str] = Query(
+        None, description="Filter/extract model configuration type e.g. embedding, search, reranking, generation"
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch details of a single LLM profile."""
-    customer_id = current_user.customer_id
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = getattr(current_user, "role", "user")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == customer_id,
+            LLMProfileDB.customer_id == current_user.customer_id,
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")
 
     role = getattr(current_user, "role", "user")
     field_list = [f.strip() for f in fields.split(",")] if fields else None
-    if fields or role not in ("admin", "system_admin"):
-        return project_profile_fields(profile, fields=field_list, role=role)
+    if fields or type or role not in ("admin", "system_admin"):
+        return project_profile_fields(profile, fields=field_list, role=role, type_param=type)
 
     return profile
 

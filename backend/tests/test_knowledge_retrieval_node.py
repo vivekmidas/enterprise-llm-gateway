@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from app.nodes.base import NodeInput
 from app.nodes.registry import NodesRegistry
-from app.nodes.built_in.knowledge_retrieval_node import KnowledgeRetrievalNode
+from app.nodes.built_in.kb.knowledge_retrieval_node import KnowledgeRetrievalNode
 from app.knowledge.retrieval_models import (
     RetrievalResult,
     RetrievalResponse,

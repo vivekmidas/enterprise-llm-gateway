@@ -46,13 +46,16 @@ async def _patch_section(
     current_user: User,
     db: AsyncSession,
 ) -> LLMProfileDB:
-    customer_id = current_user.get("tenant")
-    result = await db.execute(
-        select(LLMProfileDB).where(
+    role = current_user.get("role")
+    if role == "system_admin":
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+    else:
+        customer_id = current_user.get("tenant")
+        stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,
             LLMProfileDB.customer_id == customer_id,
         )
-    )
+    result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="LLM profile not found.")

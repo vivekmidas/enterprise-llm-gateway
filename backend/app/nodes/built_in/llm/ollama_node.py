@@ -102,37 +102,18 @@ class OllamaNode(GenericLLMAgent):
 
     # Standard System Properties configured by System Admins
     system_properties: List[Dict[str, Any]] = [
-        {"key": "base_url", "label": "Base URL", "type": "string", "default": "http://127.0.0.1:11434", "description": "Ollama server URL from provider preset."},
-        {"key": "api_key", "label": "API Key", "type": "password", "default": "ollama", "description": "Optional API Key for authentication header."},
         {"key": "timeout_seconds", "label": "Timeout (seconds)", "type": "number", "default": 60, "description": "HTTP request timeout limit."},
-        {"key": "max_retries", "label": "Max Retries", "type": "number", "default": 3, "description": "Number of retry attempts on request failure."},
-        {"key": "default_model", "label": "Default Model", "type": "string", "default": "llama3.2", "description": "Default fallback model name."}
+        {"key": "max_retries", "label": "Max Retries", "type": "number", "default": 3, "description": "Number of retry attempts on request failure."}
     ]
 
     # Common User-Editable Properties in Workflow Builder
     user_properties: List[Dict[str, Any]] = [
         {
-            "key": "model_type",
-            "label": "Model Type",
+            "key": "llm_profile_id",
+            "label": "LLM Profile",
             "type": "choice",
-            "options": ["chat", "search", "embedding", "reranking"],
-            "default": "chat",
-            "description": "Select execution capability type."
-        },
-        {
-            "key": "model",
-            "label": "Model Name",
-            "type": "choice",
-            "options": ["llama3.2", "qwen2.5-coder", "mistral", "llama3.1", "qwen3:0.6b", "nomic-embed-text", "bge-m3", "mxbai-embed-large", "all-minilm", "bge-reranker-large", "bge-reranker-base"],
-            "default": "llama3.2",
-            "description": "Select local model name configured in Ollama."
-        },
-        {
-            "key": "user_prompt",
-            "label": "User Prompt Template",
-            "type": "textarea",
-            "default": "",
-            "description": "Optional prompt template override. Can use {{ input_data }} placeholders."
+            "source": "/api/llm-profiles",
+            "description": "Select LLM Profile for endpoint URL, model, and authentication settings."
         },
         {
             "key": "system_prompt",
@@ -142,25 +123,11 @@ class OllamaNode(GenericLLMAgent):
             "description": "System prompt instructions for the LLM."
         },
         {
-            "key": "temperature",
-            "label": "Temperature",
-            "type": "number",
-            "default": 0.7,
-            "description": "Sampling temperature for generated content."
-        },
-        {
-            "key": "max_tokens",
-            "label": "Max Tokens",
-            "type": "number",
-            "default": 1024,
-            "description": "Maximum number of tokens to generate."
-        },
-        {
-            "key": "top_p",
-            "label": "Top P",
-            "type": "number",
-            "default": 1.0,
-            "description": "Nucleus sampling parameter."
+            "key": "user_prompt",
+            "label": "User Prompt Template",
+            "type": "textarea",
+            "default": "",
+            "description": "Optional prompt template override. Can use {{ input_data }} placeholders."
         }
     ]
 
@@ -179,7 +146,6 @@ class OllamaNode(GenericLLMAgent):
             from app.models.db_models import ProviderPresetDB
 
             async with AsyncSessionLocal() as session:
-                # Query DB where provider_key matches node.name or 'ollama'
                 keys_to_query = [self.name, self.name.replace("_node", ""), "ollama"]
                 stmt = select(ProviderPresetDB).where(ProviderPresetDB.provider_key.in_(keys_to_query))
                 result = await session.execute(stmt)
@@ -198,59 +164,16 @@ class OllamaNode(GenericLLMAgent):
                         "default_chat_model": preset_db.default_chat_model,
                         "default_embedding_model": preset_db.default_embedding_model,
                         "default_rerank_model": preset_db.default_rerank_model,
-                        "default_temperature": preset_db.default_temperature,
-                        "default_max_tokens": preset_db.default_max_tokens,
                     }
         except Exception as exc:
             self.logger.warning("ollama_preset_fetch_failed", node_name=self.name, error=str(exc))
         return None
 
     # BLOCK COMMENT FOR NODE INITIALIZATION
-    # Node initialization loads preset values from DB, updates model drop-down choices and base_url,
-    # and invokes super().init() which loads system-configured input/output contracts from NodeDB catalog.
     async def init(self) -> None:
         """
         Initializes OllamaNode by pulling configs from provider_presets and NodeDB contracts.
         """
-        preset = await self._fetch_provider_preset()
-        if preset:
-            base_url = preset.get("base_url") or "http://127.0.0.1:11434"
-            # Collect unique list of models across chat, embedding, and rerank
-            models_set = set()
-            
-            # Read models from model_types array
-            for mt in preset.get("model_types", []):
-                if isinstance(mt, dict) and "models" in mt:
-                    for m in mt["models"]:
-                        if isinstance(m, dict) and "model" in m:
-                            models_set.add(m["model"])
-                        elif isinstance(m, str):
-                            models_set.add(m)
-            
-            # Read fallback model lists
-            for m in (preset.get("chat_models") or []) + (preset.get("rerank_models") or []):
-                if isinstance(m, str):
-                    models_set.add(m)
-            for m in preset.get("embedding_models") or []:
-                if isinstance(m, dict) and "model" in m:
-                    models_set.add(m["model"])
-                elif isinstance(m, str):
-                    models_set.add(m)
-
-            all_models = sorted(list(models_set)) if models_set else None
-
-            if all_models:
-                for prop in self.user_properties:
-                    if isinstance(prop, dict) and prop.get("key") == "model":
-                        prop["options"] = all_models
-                        if prop.get("default") not in all_models:
-                            prop["default"] = all_models[0]
-
-            for prop in self.system_properties:
-                if isinstance(prop, dict) and prop.get("key") == "base_url":
-                    prop["default"] = base_url
-
-        # Load system-configured properties and contracts from NodeDB
         await super().init()
         self.logger.info("ollama_node_initialized", node_name=self.name, properties=self.properties)
 
@@ -337,24 +260,53 @@ class OllamaNode(GenericLLMAgent):
         # 2. Priority Resolution of Configuration Parameters
         config = inp.config or {}
 
+        llm_profile_id = config.get("llm_profile_id") or self.properties.get("llm_profile_id")
+        customer_id = None
+        if inp.context and isinstance(inp.context, dict):
+            user_data = inp.context.get("user_data") or {}
+            customer_id = user_data.get("customer_id")
+
+        profile_config = {}
+        if llm_profile_id or customer_id:
+            try:
+                import sys
+                if "pytest" not in sys.modules:
+                    from app.core.database import AsyncSessionLocal
+                    from app.core.profile_resolver import ProfileResolver
+                    async with AsyncSessionLocal() as db_session:
+                        resolver = ProfileResolver(db=db_session)
+                        resolved = await resolver.resolve_execution_context(
+                            profile_id=int(llm_profile_id) if llm_profile_id else None,
+                            customer_id=customer_id or 1,
+                            model_type=str(config.get("model_type") or "generation")
+                        )
+                        if resolved:
+                            profile_config = resolved
+            except Exception as exc:
+                self.logger.warning("ollama_profile_resolution_failed", error=str(exc))
+
         base_url = (
             config.get("base_url") 
+            or profile_config.get("base_url")
             or self.properties.get("base_url") 
             or "http://127.0.0.1:11434"
         )
         api_key = (
             config.get("api_key") 
+            or profile_config.get("api_key")
             or self.properties.get("api_key") 
             or "ollama"
         )
         model_type = str(
             config.get("model_type") 
+            or profile_config.get("model_type")
             or self.properties.get("model_type") 
             or "chat"
         ).lower()
         model_name = (
             config.get("model") 
             or config.get("model_name") 
+            or profile_config.get("model_name")
             or self.properties.get("model") 
             or self.properties.get("default_model") 
             or "llama3.2"
@@ -363,6 +315,8 @@ class OllamaNode(GenericLLMAgent):
         def get_float(key: str, default_val: float) -> float:
             try:
                 val = config.get(key)
+                if val is None or str(val).strip() == "":
+                    val = profile_config.get(key)
                 if val is None or str(val).strip() == "":
                     val = self.properties.get(key)
                 return float(val) if val is not None else default_val
@@ -373,13 +327,15 @@ class OllamaNode(GenericLLMAgent):
             try:
                 val = config.get(key)
                 if val is None or str(val).strip() == "":
+                    val = profile_config.get(key)
+                if val is None or str(val).strip() == "":
                     val = self.properties.get(key)
                 return int(val) if val is not None else default_val
             except (ValueError, TypeError):
                 return default_val
 
-        temperature = get_float("temperature", 0.7)
-        max_tokens = get_int("max_tokens", 1024)
+        temperature = get_float("temperature", float(profile_config.get("temperature", 0.7)))
+        max_tokens = get_int("max_tokens", int(profile_config.get("max_tokens", 1024)))
         top_p = get_float("top_p", 1.0)
         timeout_seconds = get_int("timeout_seconds", 60)
         max_retries = get_int("max_retries", 3)
@@ -392,7 +348,7 @@ class OllamaNode(GenericLLMAgent):
             history = []
             documents = []
         elif isinstance(input_payload, dict):
-            user_query = input_payload.get("prompt") or input_payload.get("input") or ""
+            user_query = input_payload.get("prompt") or input_payload.get("input") or input_payload.get("query") or input_payload.get("context") or ""
             system_prompt_override = input_payload.get("system_prompt_override")
             history = input_payload.get("history") or []
             documents = input_payload.get("documents") or []

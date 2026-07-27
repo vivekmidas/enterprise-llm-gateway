@@ -19,6 +19,7 @@ class LLMProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = Field(default=None)
     is_default: bool = Field(default=False)
+    customer_id: Optional[int] = Field(default=None)
     settings: Union[ProfileSettings, Dict[str, Any]] = Field(default_factory=ProfileSettings)
 
 

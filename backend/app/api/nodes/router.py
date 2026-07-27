@@ -182,11 +182,6 @@ async def configure_customer_node(
             raise HTTPException(status_code=404, detail="Node not found")
             
         if not customer_node:
-            if current_user.role == "admin":
-                raise HTTPException(
-                    status_code=403,
-                    detail="This node is not assigned to your tenant and cannot be configured."
-                )
             customer_node = CustomerNodeDB(
                 customer_id=target_customer_id,
                 node_name=node_name,
@@ -306,6 +301,11 @@ async def configure_customer_node(
             elif k == "is_enabled":
                 if is_customer_config:
                     customer_node.is_enabled = v
+            elif k == "allow_node_testing":
+                if is_customer_config:
+                    existing = dict(customer_node.properties or {})
+                    existing["allow_node_testing"] = bool(v)
+                    customer_node.properties = existing
             elif k == "input_contract":
                 customer_node.input_contract = v
             elif k == "output_contract":
@@ -571,6 +571,7 @@ async def list_nodes(
             overrides = cust_node.properties if cust_node and cust_node.properties else {}
             merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
+            merged["allow_node_testing"] = bool(overrides.get("allow_node_testing", False))
             if cust_node:
                 if cust_node.input_contract is not None:
                     merged["input_contract"] = cust_node.input_contract
@@ -926,6 +927,8 @@ async def get_json_samples(
 # BLOCK COMMENT: Isolated node testing endpoints with tenant safety switch (allow_node_testing)
 @router.post("/test-node")
 @router.post("/{node_name}/test")
+@router.post("/api/nodes/test-node")
+@router.post("/api/nodes/{node_name}/test")
 async def test_node_directly(
     payload: dict,
     node_name: Optional[str] = None,
@@ -973,7 +976,7 @@ async def test_node_directly(
             )
 
     config_override = payload.get("config") or payload.get("properties") or {}
-    data_val = payload.get("data") or payload.get("input") or payload.get("input_payload")
+    data_val = payload #.get("data") or payload.get("input") or payload.get("input_payload")
     context = payload.get("context") or {}
     
     # Secure customer isolation: override or inject user's customer_id

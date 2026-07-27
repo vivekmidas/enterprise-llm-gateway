@@ -18,6 +18,35 @@ from app.core.types.users import User
 router = APIRouter(prefix="/api/admin/company", tags=["admin"])
 logger = structlog.get_logger(__name__)
 logger = logger.bind(module=__name__)
+
+
+async def _resolve_target_customer_id(
+    db: AsyncSession,
+    current_user: User,
+    customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    payload_customer_id: Optional[int] = None,
+) -> int:
+    target = customer_id or tenant_id or payload_customer_id
+    if current_user.role != "system_admin":
+        if current_user.customer_id is not None:
+            return current_user.customer_id
+        raise HTTPException(status_code=400, detail="User is not associated with a customer tenant")
+
+    if target is not None:
+        return target
+    if current_user.customer_id is not None:
+        return current_user.customer_id
+
+    # Default to first customer tenant for system_admin if none specified
+    res = await db.execute(select(CustomerDB.id).order_by(CustomerDB.id.asc()).limit(1))
+    first_id = res.scalar_one_or_none()
+    if first_id is not None:
+        return first_id
+
+    raise HTTPException(status_code=400, detail="No customer tenants exist in system")
+
+
 @router.get("/settings", response_model=dict)
 async def get_company_settings(
     customer_id: Optional[int] = None,
@@ -29,12 +58,7 @@ async def get_company_settings(
     """
     Get company settings, resolving either user's default customer or passed customer_id/tenant_id.
     """
-    target_customer_id = customer_id or tenant_id
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
-        
-    if target_customer_id is None:
-        raise HTTPException(status_code=400, detail="User is not associated with a customer tenant, and no customer_id/tenant_id was specified")
+    target_customer_id = await _resolve_target_customer_id(db, current_user, customer_id, tenant_id)
         
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -76,12 +100,9 @@ async def update_company_settings(
     """
     Update company settings, resolving either user's default customer or passed customer_id/tenant_id.
     """
-    target_customer_id = customer_id or tenant_id or payload.get("customer_id") or payload.get("tenant_id")
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
-        
-    if target_customer_id is None:
-        raise HTTPException(status_code=400, detail="User is not associated with a customer tenant, and no customer_id/tenant_id was specified")
+    target_customer_id = await _resolve_target_customer_id(
+        db, current_user, customer_id, tenant_id, payload.get("customer_id") or payload.get("tenant_id")
+    )
         
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -130,12 +151,7 @@ async def get_llm_profiles(
     db: AsyncSession = Depends(get_db)
 ):
     """List all saved LLM profiles for tenant."""
-    target_customer_id = customer_id or tenant_id
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
-        
-    if target_customer_id is None:
-        raise HTTPException(status_code=400, detail="No customer specified")
+    target_customer_id = await _resolve_target_customer_id(db, current_user, customer_id, tenant_id)
 
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -178,9 +194,9 @@ async def create_llm_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new LLM profile for tenant."""
-    target_customer_id = customer_id or tenant_id or payload.get("customer_id") or payload.get("tenant_id")
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
+    target_customer_id = await _resolve_target_customer_id(
+        db, current_user, customer_id, tenant_id, payload.get("customer_id") or payload.get("tenant_id")
+    )
         
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -244,9 +260,9 @@ async def update_llm_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing LLM profile."""
-    target_customer_id = customer_id or tenant_id or payload.get("customer_id") or payload.get("tenant_id")
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
+    target_customer_id = await _resolve_target_customer_id(
+        db, current_user, customer_id, tenant_id, payload.get("customer_id") or payload.get("tenant_id")
+    )
 
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -298,9 +314,7 @@ async def delete_llm_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete an LLM profile."""
-    target_customer_id = customer_id or tenant_id
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
+    target_customer_id = await _resolve_target_customer_id(db, current_user, customer_id, tenant_id)
 
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -337,9 +351,7 @@ async def activate_llm_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """Set an LLM profile as active default for tenant."""
-    target_customer_id = customer_id or tenant_id
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
+    target_customer_id = await _resolve_target_customer_id(db, current_user, customer_id, tenant_id)
 
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     customer = result.scalar_one_or_none()
@@ -392,9 +404,9 @@ async def test_llm_connection(
     import urllib.parse
     import socket
     
-    target_customer_id = payload.get("customer_id") or payload.get("tenant_id")
-    if current_user.role != "system_admin" or target_customer_id is None:
-        target_customer_id = current_user.customer_id
+    target_customer_id = await _resolve_target_customer_id(
+        db, current_user, payload_customer_id=payload.get("customer_id") or payload.get("tenant_id")
+    )
 
     steps = [
         {"step": 1, "name": "Configuration Parsing", "status": "pending", "message": "Waiting..."},
