@@ -177,6 +177,67 @@ class BaseNode(BaseModel, abc.ABC):
         self.properties = {**self.system_properties, **self.user_properties}
         self.logger.info(f"Initiating node ended {self.name}")
 
+    # BLOCK COMMENT: BaseNode property precedence resolution & isolated test method
+    def get_resolved_properties(
+        self,
+        instance_overrides: Optional[Dict[str, Any]] = None,
+        tenant_overrides: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Native property resolution inherited by all node subclasses.
+        Precedence: Instance Overrides > Tenant Overrides > Global Code/DB Defaults.
+        System properties remain protected.
+        """
+        global_user = property_entries_to_dict(getattr(self, "user_properties", {}))
+        global_system = property_entries_to_dict(getattr(self, "system_properties", {}))
+        tenant_user = tenant_overrides or {}
+        instance_user = instance_overrides or {}
+
+        resolved_user = {**global_user, **tenant_user, **instance_user}
+        return {**global_system, **resolved_user}
+
+    async def test(
+        self,
+        test_input: Dict[str, Any],
+        override_properties: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes single node in isolation with transient properties without graph state.
+        """
+        resolved_props = self.get_resolved_properties(instance_overrides=override_properties)
+        node_input = NodeInput(data=test_input, config=resolved_props)
+        start_time = time.perf_counter()
+
+        # Validate input contract if present
+        if self.input_contract:
+            validation_err = validate_contract(test_input, self.input_contract)
+            if validation_err:
+                return {
+                    "status": "error",
+                    "error": f"Input validation failed: {validation_err}",
+                    "latency_ms": round((time.perf_counter() - start_time) * 1000, 2)
+                }
+
+        try:
+            output: NodeOutput = await self.execute(node_input)
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return {
+                "status": "success" if output.status == "success" else "failed",
+                "output": output.data,
+                "error": output.error,
+                "latency_ms": latency_ms,
+                "metadata": output.metadata
+            }
+        except Exception as e:
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            self.logger.error("isolated_node_test_failed", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e),
+                "latency_ms": latency_ms
+            }
+
+
     def _resolve_dotted_path(self, dotted_path: str, obj: Any) -> Any:
         """Helper to navigate a dotted path (e.g. 'foo.bar') within a dict/object."""
         parts = [p.strip() for p in dotted_path.split('.') if p.strip()]

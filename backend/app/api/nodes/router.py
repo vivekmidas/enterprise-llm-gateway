@@ -549,6 +549,7 @@ async def configure_customer_node(
         }
 
 
+# BLOCK COMMENT: Non-breaking allowed nodes governance for standard users and tenant admins
 @router.get("")
 async def list_nodes(
     current_user: User = Depends(get_current_user),
@@ -579,16 +580,19 @@ async def list_nodes(
                     merged["label"] = cust_node.label
             filtered_nodes.append(merged)
         else:
-            if cust_node and cust_node.is_enabled:
-                overrides = cust_node.properties or {}
+            # Standard users: allow node if explicitly enabled, or if no cust_node record exists yet (non-breaking default)
+            is_allowed = cust_node.is_enabled if cust_node else True
+            if is_allowed:
+                overrides = cust_node.properties if cust_node and cust_node.properties else {}
                 merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
                 merged["is_enabled"] = True
-                if cust_node.input_contract is not None:
-                    merged["input_contract"] = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    merged["output_contract"] = cust_node.output_contract
-                if getattr(cust_node, "label", None) is not None:
-                    merged["label"] = cust_node.label
+                if cust_node:
+                    if cust_node.input_contract is not None:
+                        merged["input_contract"] = cust_node.input_contract
+                    if cust_node.output_contract is not None:
+                        merged["output_contract"] = cust_node.output_contract
+                    if getattr(cust_node, "label", None) is not None:
+                        merged["label"] = cust_node.label
                 filtered_nodes.append(merged)
                 
     return {"nodes": filtered_nodes}
@@ -919,14 +923,18 @@ async def get_json_samples(
     """
     return generate_sample_json(payload["schema"])
 
+# BLOCK COMMENT: Isolated node testing endpoints with tenant safety switch (allow_node_testing)
 @router.post("/test-node")
+@router.post("/{node_name}/test")
 async def test_node_directly(
     payload: dict,
+    node_name: Optional[str] = None,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Executes a specific node directly for testing/playground purposes.
+    Controlled by tenant/node property `allow_node_testing`.
     Only accessible by Admin and System Admin.
     """
     import json
@@ -935,19 +943,37 @@ async def test_node_directly(
     from app.core.types.common import NodeInput
     from app.nodes.registry import NodesRegistry
     
-    node_name = payload.get("node_name")
-    if not node_name:
+    target_node_name = node_name or payload.get("node_name")
+    if not target_node_name:
         raise HTTPException(status_code=400, detail="Missing required field 'node_name'")
         
-    node = NodesRegistry.get_node(node_name)
+    node = NodesRegistry.get_node(target_node_name)
     if not node:
-        raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
+        raise HTTPException(status_code=404, detail=f"Node '{target_node_name}' not found")
 
     from app.api.auth.dependencies import verify_node_tenant_access
-    await verify_node_tenant_access(node_name=node_name, current_user=current_user, db=db)
-        
-    config = payload.get("config") or {}
-    data_val = payload.get("data")
+    await verify_node_tenant_access(node_name=target_node_name, current_user=current_user, db=db)
+
+    # BLOCK COMMENT: Default disabled for isolated node testing unless explicitly enabled by Admin
+    if current_user.role != "system_admin" and current_user.customer_id is not None:
+        stmt = select(CustomerNodeDB).where(
+            CustomerNodeDB.customer_id == current_user.customer_id,
+            CustomerNodeDB.node_name == target_node_name
+        )
+        res = await db.execute(stmt)
+        cust_node_row = res.scalars().first()
+        allow_testing = False
+        if cust_node_row and cust_node_row.properties:
+            allow_testing = bool(cust_node_row.properties.get("allow_node_testing", False))
+
+        if not allow_testing:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Isolated node testing is disabled for node '{target_node_name}'. An administrator must enable testing for this node."
+            )
+
+    config_override = payload.get("config") or payload.get("properties") or {}
+    data_val = payload.get("data") or payload.get("input") or payload.get("input_payload")
     context = payload.get("context") or {}
     
     # Secure customer isolation: override or inject user's customer_id
@@ -959,8 +985,16 @@ async def test_node_directly(
     context["user_data"] = user_data
     context["customer_id"] = current_user.customer_id
     context["tenant_id"] = current_user.customer_id
-    
-    # Serialize data payload if dict/list
+
+    # If node has test method on BaseNode, run isolated test
+    if hasattr(node, "test") and callable(node.test) and isinstance(data_val, dict):
+        try:
+            test_result = await node.test(test_input=data_val, override_properties=config_override)
+            return test_result
+        except Exception as e:
+            logger.exception("isolated_node_test_method_failed", node_name=target_node_name)
+
+    # Fallback to standard node.run / node.execute
     if isinstance(data_val, (dict, list)):
         data_str = json.dumps(data_val)
     elif data_val is not None:
@@ -968,17 +1002,18 @@ async def test_node_directly(
     else:
         data_str = ""
         
+    resolved_config = node.get_resolved_properties(instance_overrides=config_override) if hasattr(node, "get_resolved_properties") else config_override
+
     node_input = NodeInput(
-        trace_id=f"test-direct-{node_name}-{int(time.time())}",
+        trace_id=f"test-direct-{target_node_name}-{int(time.time())}",
         data=data_str,
-        config=config,
+        config=resolved_config,
         context=context
     )
     
     try:
         node_output = await node.run(node_input)
         
-        # Attempt to deserialize output data for UI/API client convenience
         output_data = node_output.data
         try:
             output_data = json.loads(node_output.data)
@@ -995,7 +1030,7 @@ async def test_node_directly(
             "latency_ms": node_output.latency_ms
         }
     except Exception as e:
-        logger.exception("direct_node_execution_failed", node_name=node_name)
+        logger.exception("direct_node_execution_failed", node_name=target_node_name)
         raise HTTPException(status_code=500, detail=f"Direct node execution failed: {str(e)}")
 
 
