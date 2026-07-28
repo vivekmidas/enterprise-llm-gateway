@@ -198,42 +198,61 @@ class BaseNode(BaseModel, abc.ABC):
 
     async def test(
         self,
-        test_input: Dict[str, Any],
-        override_properties: Optional[Dict[str, Any]] = None
+        test_input: Any,
+        override_properties: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes single node in isolation with transient properties without graph state.
         """
         resolved_props = self.get_resolved_properties(instance_overrides=override_properties)
-        node_input = NodeInput(data=test_input, config=resolved_props)
+
+        if isinstance(test_input, (dict, list)):
+            data_str = json.dumps(test_input)
+        elif isinstance(test_input, str):
+            data_str = test_input
+        elif test_input is not None:
+            data_str = str(test_input)
+        else:
+            data_str = ""
+
+        trace_id = f"test-{self.name}-{int(time.time())}"
+        node_input = NodeInput(
+            trace_id=trace_id,
+            data=data_str,
+            config=resolved_props,
+            context=context or {}
+        )
         start_time = time.perf_counter()
 
-        # Validate input contract if present
-        if self.input_contract:
-            validation_err = validate_contract(test_input, self.input_contract)
-            if validation_err:
-                return {
-                    "status": "error",
-                    "error": f"Input validation failed: {validation_err}",
-                    "latency_ms": round((time.perf_counter() - start_time) * 1000, 2)
-                }
-
         try:
-            output: NodeOutput = await self.execute(node_input)
+            output: NodeOutput = await self.run(node_input)
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            
+            output_data = output.data
+            if isinstance(output.data, str):
+                try:
+                    output_data = json.loads(output.data)
+                except Exception:
+                    pass
+
             return {
-                "status": "success" if output.status == "success" else "failed",
-                "output": output.data,
-                "error": output.error,
-                "latency_ms": latency_ms,
-                "metadata": output.metadata
+                "status": output.status,
+                "data": output_data,
+                "error_message": output.error_message,
+                "error_code": output.error_code,
+                "violations": output.violations,
+                "metadata": output.metadata,
+                "latency_ms": latency_ms
             }
         except Exception as e:
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
             self.logger.error("isolated_node_test_failed", error=str(e))
             return {
                 "status": "error",
-                "error": str(e),
+                "error_message": str(e),
+                "error_code": 500,
+                "data": None,
                 "latency_ms": latency_ms
             }
 

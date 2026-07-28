@@ -51,7 +51,6 @@ class RetrievalRequest(BaseModel):
     rerank_url: str | None = None
     rerank_model: str | None = None
     rerank_limit: int | None = None
-
     approach: str | None = None
     enable_rrf: bool | None = None
     metadata: dict[str, Any] | None = None

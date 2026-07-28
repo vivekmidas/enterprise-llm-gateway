@@ -291,10 +291,8 @@ class KnowledgeRetrievalNode(BaseNode):
 
             output_data = {
                 "query": query,
-                "prompt": query,
                 "answer": answer,
                 "chunks": chunks,
-                "results": chunks,
                 "context": context,
                 "citations": citations,
             }

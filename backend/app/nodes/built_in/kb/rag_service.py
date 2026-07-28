@@ -54,6 +54,9 @@ class RAGService:
             context=retrieval_result.response.context,
             temperature=request.temperature,
             max_generation_tokens=request.max_generation_tokens,
+            customer_id=request.customer_id,
+            llm_config=request.llm_config,
+            llm_config_id=request.llm_config_id,
         )
 
         generation_result = await self.generation_service.generate_response(generation_req)

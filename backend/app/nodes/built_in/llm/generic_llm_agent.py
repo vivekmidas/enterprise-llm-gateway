@@ -16,45 +16,45 @@ class GenericLLMAgent(BaseLLMNode):
     icon: str = "bot"
 
     user_properties: List[Dict[str, Any]] = [
-        {
-            "key": "model",
-            "label": "Model Name",
-            "type": "string",
-            "default": "qwen:0.5b"
-        },
-        {
-            "key": "temperature",
-            "label": "Temperature",
-            "type": "number",
-            "default": 0.7
-        },
-        {
-            "key": "system_prompt",
-            "label": "System Prompt",
-            "type": "textarea",
-            "default": ""
-        }
+        # {
+        #     "key": "model",
+        #     "label": "Model Name",
+        #     "type": "string",
+        #     "default": "qwen:0.5b"
+        # },
+        # {
+        #     "key": "temperature",
+        #     "label": "Temperature",
+        #     "type": "number",
+        #     "default": 0.7
+        # },
+        # {
+        #     "key": "system_prompt",
+        #     "label": "System Prompt",
+        #     "type": "textarea",
+        #     "default": ""
+        # }
     ]
 
     system_properties: List[Dict[str, Any]] = [
-        {
-            "key": "ip",
-            "label": "IP Address",
-            "type": "string",
-            "default": "127.0.0.1"
-        },
-        {
-            "key": "port",
-            "label": "Port",
-            "type": "string",
-            "default": "11434"
-        },
-        {
-            "key": "path",
-            "label": "Path",
-            "type": "string",
-            "default": "/v1/chat/completions"
-        }
+        # {
+        #     "key": "ip",
+        #     "label": "IP Address",
+        #     "type": "string",
+        #     "default": "127.0.0.1"
+        # },
+        # {
+        #     "key": "port",
+        #     "label": "Port",
+        #     "type": "string",
+        #     "default": "11434"
+        # },
+        # {
+        #     "key": "path",
+        #     "label": "Path",
+        #     "type": "string",
+        #     "default": "/v1/chat/completions"
+        # }
     ]
 
     async def init(self) -> None:

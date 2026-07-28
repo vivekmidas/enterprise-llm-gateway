@@ -21,37 +21,46 @@ class ResponseGenerationService:
         """
         start_time = time.perf_counter()
 
-        # Check if context is empty
-        if not request.context or not request.context.chunks or not request.context.context.strip():
+        has_context = bool(
+            request.context
+            and (request.context.chunks or (request.context.context and request.context.context.strip()))
+        )
+
+        effective_llm_config = getattr(request, "llm_config", None) or {}
+        llm_config_id = getattr(request, "llm_config_id", None) or getattr(request, "llm_profile_id", None)
+        llm_profile = getattr(request, "llm_profile", None)
+
+        if not has_context and not effective_llm_config and not llm_profile and not request.system_prompt and not llm_config_id:
             logger.info("response_generation_empty_context_returning_no_answer")
             return ResponseGenerationResult(
                 answer="no answer",
                 used_tokens=0,
             )
 
+        if has_context:
+            user_prompt = (
+                f"Context:\n"
+                f"{request.context.context}\n\n"
+                f"Query:\n"
+                f"{request.query}"
+            )
+        else:
+            user_prompt = request.query
+
         from app.core.config import get_settings
-        settings = get_settings()
-        system_prompt = settings.SYSTEM_PROMPT
+        system_prompt = get_settings().SYSTEM_PROMPT
 
-        user_prompt = (
-            f"Context:\n"
-            f"{request.context.context}\n\n"
-            f"Query:\n"
-            f"{request.query}"
-        )
+        if request.system_prompt:
+            system_prompt = request.system_prompt
 
-        logger.info(
-            "response_generation_started",
-            temperature=request.temperature,
-            max_generation_tokens=request.max_generation_tokens,
-            context_length=len(request.context.context),
-            query=request.query,
-        )
-
-        effective_llm_config = getattr(request, "llm_config", None)
-        llm_config_id = getattr(request, "llm_config_id", None)
-
-        if not effective_llm_config and request.customer_id and db:
+        if llm_profile:
+            if hasattr(llm_profile, "generation"):
+                gen = llm_profile.generation
+                gen_dict = gen.model_dump() if hasattr(gen, "model_dump") else dict(gen)
+                effective_llm_config = {**gen_dict, **effective_llm_config}
+                if hasattr(gen, "system_prompt") and gen.system_prompt and not request.system_prompt:
+                    system_prompt = gen.system_prompt
+        elif not effective_llm_config and request.customer_id and db:
             try:
                 from app.core.profile_resolver import ProfileResolver
                 resolver = ProfileResolver(db=db)
@@ -60,16 +69,35 @@ class ResponseGenerationService:
                     customer_id=request.customer_id,
                 )
                 effective_llm_config = profile.generation.model_dump()
-                # Use system_prompt from profile if available
-                if profile.generation.system_prompt:
+                if profile.generation.system_prompt and not request.system_prompt:
                     system_prompt = profile.generation.system_prompt
             except Exception as ex:
                 logger.warning("failed_to_resolve_profile_for_generation", error=str(ex))
 
+        gen_max_tokens = effective_llm_config.get("max_tokens") or effective_llm_config.get("max_generation_tokens") if isinstance(effective_llm_config, dict) else None
+        if gen_max_tokens is not None and (request.max_generation_tokens == 1024 or request.max_generation_tokens is None):
+            max_tokens_to_use = int(gen_max_tokens)
+        else:
+            max_tokens_to_use = request.max_generation_tokens or (int(gen_max_tokens) if gen_max_tokens else 1024)
+
+        # Ensure LLMRouter keys are populated
+        if isinstance(effective_llm_config, dict):
+            effective_llm_config = dict(effective_llm_config)
+            effective_llm_config["max_tokens"] = max_tokens_to_use
+            effective_llm_config["max_generation_tokens"] = max_tokens_to_use
+            if "llm_provider" not in effective_llm_config and "provider" in effective_llm_config:
+                effective_llm_config["llm_provider"] = effective_llm_config["provider"]
+            if "llm_model" not in effective_llm_config and "model" in effective_llm_config:
+                effective_llm_config["llm_model"] = effective_llm_config["model"]
+            if "llm_base_url" not in effective_llm_config:
+                raw_url = effective_llm_config.get("url") or effective_llm_config.get("base_url") or "http://localhost:11434"
+                base_url = str(raw_url).rsplit("/api/", 1)[0].rsplit("/v1", 1)[0] if "http" in str(raw_url) else "http://localhost:11434"
+                effective_llm_config["llm_base_url"] = base_url
+
         # Get LLM provider model
         llm = await self.llm_router.get_llm(
             temperature=request.temperature,
-            max_tokens=request.max_generation_tokens,
+            max_tokens=max_tokens_to_use,
             customer_id=request.customer_id,
             db=db,
             llm_config=effective_llm_config,
@@ -100,12 +128,10 @@ class ResponseGenerationService:
             normalized_answer = "".join(c for c in answer.lower() if c.isalnum() or c.isspace()).strip()
             if (
                 normalized_answer == "no answer"
-                or "no answer" in normalized_answer
                 or "information is not available" in normalized_answer
-                or "not available in the provided" in normalized_answer
-                or "not available in the context" in normalized_answer
-                or "i do not know" in normalized_answer
-                or "i dont know" in normalized_answer
+                or "do not know" in normalized_answer
+                or "dont know" in normalized_answer
+                or "don t know" in normalized_answer
             ):
                 answer = "no answer"
 

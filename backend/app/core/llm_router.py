@@ -44,6 +44,24 @@ class LLMRouter:
         provider = provider.lower()
         self.provider = provider
 
+        raw_max_tokens = tenant_config.get("max_tokens") or tenant_config.get("max_generation_tokens")
+        if raw_max_tokens is not None:
+            try:
+                effective_max_tokens = int(raw_max_tokens)
+            except (ValueError, TypeError):
+                effective_max_tokens = max_tokens
+        else:
+            effective_max_tokens = max_tokens
+
+        raw_temperature = tenant_config.get("temperature")
+        if raw_temperature is not None:
+            try:
+                effective_temperature = float(raw_temperature)
+            except (ValueError, TypeError):
+                effective_temperature = temperature
+        else:
+            effective_temperature = temperature
+
         if provider == "vllm":
             model = tenant_config.get("llm_model") or os.getenv("VLLM_MODEL")
             base_url = tenant_config.get("llm_base_url") or os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1")
@@ -52,8 +70,8 @@ class LLMRouter:
                 model=model,
                 openai_api_base=base_url,
                 openai_api_key=api_key,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 streaming=True,
             )
         elif provider == "ollama":
@@ -63,8 +81,8 @@ class LLMRouter:
                 model=model,
                 openai_api_base=f"{base_url}/v1",
                 openai_api_key="ollama",
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 streaming=False,
             )
         elif provider == "openai":
@@ -75,8 +93,8 @@ class LLMRouter:
                 model=model,
                 openai_api_base=base_url,
                 openai_api_key=api_key,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 streaming=True,
             )
         raise ValueError(f"Provider {provider} not supported yet")

@@ -76,20 +76,20 @@ class BaseLLMNode(BaseNode, abc.ABC):
 
     # Standard System Properties
     system_properties: List[Dict[str, Any]] = [
-        {"key": "base_url", "label": "Base URL", "type": "string", "default": ""},
-        {"key": "api_key", "label": "API Key", "type": "password", "default": ""},
-        {"key": "timeout_seconds", "label": "Timeout (seconds)", "type": "number", "default": 60},
-        {"key": "max_retries", "label": "Max Retries", "type": "number", "default": 3},
-        {"key": "default_model", "label": "Default Model", "type": "string", "default": ""}
+        # {"key": "base_url", "label": "Base URL", "type": "string", "default": ""},
+        # {"key": "api_key", "label": "API Key", "type": "password", "default": ""},
+        # {"key": "timeout_seconds", "label": "Timeout (seconds)", "type": "number", "default": 60},
+        # {"key": "max_retries", "label": "Max Retries", "type": "number", "default": 3},
+        # {"key": "default_model", "label": "Default Model", "type": "string", "default": ""}
     ]
 
     # Standard User Properties
     user_properties: List[Dict[str, Any]] = [
-        {"key": "model", "label": "Model Name Override", "type": "string", "default": ""},
-        {"key": "system_prompt", "label": "System Prompt", "type": "textarea", "default": ""},
-        {"key": "temperature", "label": "Temperature", "type": "number", "default": 0.7},
-        {"key": "max_tokens", "label": "Max Tokens", "type": "number", "default": 1024},
-        {"key": "top_p", "label": "Top P", "type": "number", "default": 1.0}
+        # {"key": "model", "label": "Model Name Override", "type": "string", "default": ""},
+        # {"key": "system_prompt", "label": "System Prompt", "type": "textarea", "default": ""},
+        # {"key": "temperature", "label": "Temperature", "type": "number", "default": 0.7},
+        # {"key": "max_tokens", "label": "Max Tokens", "type": "number", "default": 1024},
+        # {"key": "top_p", "label": "Top P", "type": "number", "default": 1.0}
     ]
 
     @abc.abstractmethod

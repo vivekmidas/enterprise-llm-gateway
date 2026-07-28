@@ -1,9 +1,10 @@
+import uuid
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class NodeInput(BaseModel):
     """Standardized input envelope passed to every node's execution method."""
-    trace_id: str
+    trace_id: str = Field(default_factory=lambda: f"trace-{uuid.uuid4().hex[:8]}")
     data: str
     config: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
