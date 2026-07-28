@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     RERANK_MODEL: str = "qwen3.5:0.8b"
     RERANK_CANDIDATE_LIMIT: int = 5
     SYSTEM_PROMPT: str = (
-        "You are a helpful enterprise assistant. Answer the user's query using only the provided context. "
-        "If the context does not contain enough information to answer the query, you must respond with 'I dont have response to the question' and nothing else. "
-        "Do not try to make up or extrapolate any answers. Be polite"
+        "You are a helpful enterprise assistant. Answer the user's query directly and accurately. "
+        "Use the provided context as your primary reference. If the query asks for general concepts or explanations related to the topic, "
+        "provide a clear and helpful response using both the context and relevant general knowledge. Be polite."
     )
 
     class Config:
