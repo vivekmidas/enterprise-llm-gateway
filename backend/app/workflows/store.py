@@ -265,8 +265,9 @@ async def update_workflow_node_properties(
                 existing_label, existing_input_contract, existing_output_contract = existing_row
 
             final_label = label if label is not None else existing_label
-            final_input = input_contract if input_contract is not None else existing_input_contract
-            final_output = output_contract if output_contract is not None else existing_output_contract
+            # Disabled: contracts are read dynamically from node definitions, not stored in workflow_node_properties
+            final_input = None
+            final_output = None
 
             await session.execute(
                 delete(WorkflowNodePropertyDB).where(
@@ -412,20 +413,7 @@ async def _hydrate_workflow_definition(
                 resolved_user[k] = v
 
         # Check if the instance itself defines custom contracts
-        instance_input = None
-        instance_output = None
-        if prop_row:
-            if prop_row.input_contract is not None:
-                instance_input = prop_row.input_contract
-            if prop_row.output_contract is not None:
-                instance_output = prop_row.output_contract
-        
-        # Fallback to definition for legacy workflows
-        if instance_input is None:
-            instance_input = data.get("input_contract")
-        if instance_output is None:
-            instance_output = data.get("output_contract")
-
+        # Disabled: read node level contracts dynamically from catalog/customer definitions, ignoring instance copy
         input_contract = {}
         output_contract = {}
         if catalog_node:
@@ -436,11 +424,6 @@ async def _hydrate_workflow_definition(
                 input_contract = cust_node.input_contract
             if cust_node.output_contract is not None:
                 output_contract = cust_node.output_contract
-
-        if instance_input:
-            input_contract = instance_input
-        if instance_output:
-            output_contract = instance_output
         
         # Check for expected_output dynamic contract
         from app.nodes.contracts import contract_from_expected_output
@@ -764,8 +747,9 @@ async def save_workflow_to_store(
                                 agent_name=agent_name,
                                 properties=instance_properties,
                                 label=node_data.get("label") or n_dict.get("label"),
-                                input_contract=node_data.get("input_contract"),
-                                output_contract=node_data.get("output_contract"),
+                                # Disabled: do not populate workflow_node input and output contracts
+                                input_contract=None,
+                                output_contract=None,
                             )
                         )
 

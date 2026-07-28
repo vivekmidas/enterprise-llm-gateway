@@ -44,13 +44,9 @@ class RetrievalRequest(BaseModel):
     knowledge_base_ids: list[int]
 
     top_k: int = Field(default=5, ge=1)
-
     min_score: float = Field(default=0.65, ge=0.0, le=1.0)
-
     include_metadata: bool = True
-
     max_context_tokens: int = Field(default=6000, ge=500)
-
     enable_reranking: bool | None = None
     rerank_url: str | None = None
     rerank_model: str | None = None
@@ -86,17 +82,11 @@ class RetrievedChunk(BaseModel):
     )
 
     chunk_id: int
-
     document_id: int
-
     knowledge_base_id: int
-
     score: float
-
     chunk_index: int
-
     content: str
-
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -287,6 +277,11 @@ class ResponseGenerationRequest(BaseModel):
     customer_id: int | None = None
     llm_config: dict[str, Any] | None = None
     llm_config_id: int | None = None
+    llm_profile_id: int | None = None
+    llm_profile: Any | None = None
+    system_prompt: str | None = None
+    embedding_config: dict[str, Any] | None = None
+    search_config: dict[str, Any] | None = None
 
 
 class ResponseGenerationResult(BaseModel):

@@ -104,12 +104,12 @@ async def get_node_properties(
                 if not cust_node or not cust_node.is_enabled:
                     raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
 
-            tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
-            if cust_node:
-                if cust_node.input_contract is not None:
-                    input_contract = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    output_contract = cust_node.output_contract
+            # NodeDB (Node) is SOT for contracts; do not read contracts from customer_nodes
+            # if cust_node:
+            #     if cust_node.input_contract is not None:
+            #         input_contract = cust_node.input_contract
+            #     if cust_node.output_contract is not None:
+            #         output_contract = cust_node.output_contract
 
             # Merge workflow node overrides (end-user)
             from app.models.db_models import WorkflowNodePropertyDB
@@ -120,11 +120,12 @@ async def get_node_properties(
                 )
             )
             prop_row = prop_result.scalars().first()
-            if prop_row:
-                if prop_row.input_contract is not None:
-                    input_contract = prop_row.input_contract
-                if prop_row.output_contract is not None:
-                    output_contract = prop_row.output_contract
+            # Disabled: read node level contracts dynamically from catalog/customer node definitions
+            # if prop_row:
+            #     if prop_row.input_contract is not None:
+            #         input_contract = prop_row.input_contract
+            #     if prop_row.output_contract is not None:
+            #         output_contract = prop_row.output_contract
 
             # System properties are sacrosanct and cannot be overridden by tenant
             resolved_system = dict(global_system_defaults)

@@ -26,51 +26,53 @@ class BaseLLMNode(BaseNode, abc.ABC):
     node_type: str = "Node"
 
     # Default contracts
-    input_contract: Dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "The main user instruction or query."
-            },
-            "system_prompt_override": {
-                "type": "string",
-                "description": "Optional system prompt override."
-            },
-            "history": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "role": {"type": "string", "enum": ["system", "user", "assistant"]},
-                        "content": {"type": "string"}
-                    },
-                    "required": ["role", "content"]
-                },
-                "description": "Optional conversation history list."
-            }
-        },
-        "required": ["prompt"]
-    }
+    # input_contract: Dict[str, Any] = {
+    #     "type": "object",
+    #     "properties": {
+    #         "prompt": {
+    #             "type": "string",
+    #             "description": "The main user instruction or query."
+    #         },
+    #         "system_prompt_override": {
+    #             "type": "string",
+    #             "description": "Optional system prompt override."
+    #         },
+    #         "history": {
+    #             "type": "array",
+    #             "items": {
+    #                 "type": "object",
+    #                 "properties": {
+    #                     "role": {"type": "string", "enum": ["system", "user", "assistant"]},
+    #                     "content": {"type": "string"}
+    #                 },
+    #                 "required": ["role", "content"]
+    #             },
+    #             "description": "Optional conversation history list."
+    #         }
+    #     },
+    #     "required": ["prompt"]
+    # }
 
-    output_contract: Dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "text": {
-                "type": "string",
-                "description": "Cleaned response string returned by the LLM."
-            },
-            "usage": {
-                "type": "object",
-                "properties": {
-                    "prompt_tokens": {"type": "integer", "default": 0},
-                    "completion_tokens": {"type": "integer", "default": 0},
-                    "total_tokens": {"type": "integer", "default": 0}
-                }
-            }
-        },
-        "required": ["text"]
-    }
+    # output_contract: Dict[str, Any] = {
+    #     "type": "object",
+    #     "properties": {
+    #         "text": {
+    #             "type": "string",
+    #             "description": "Cleaned response string returned by the LLM."
+    #         },
+    #         "usage": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "prompt_tokens": {"type": "integer", "default": 0},
+    #                 "completion_tokens": {"type": "integer", "default": 0},
+    #                 "total_tokens": {"type": "integer", "default": 0}
+    #             }
+    #         }
+    #     },
+    #     "required": ["text"]
+    # }
+    input_contract: dict[str, Any] = {}
+    output_contract: dict[str, Any] = {}
 
     # Standard System Properties
     system_properties: List[Dict[str, Any]] = [

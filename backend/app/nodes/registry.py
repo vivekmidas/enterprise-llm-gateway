@@ -444,8 +444,8 @@ class NodesRegistry:
                         db_node.sub_label = node.sub_label
                         db_node.user_properties = user_props_code
                         db_node.system_properties = system_props_code
-                        db_node.input_contract = node.input_contract
-                        db_node.output_contract = node.output_contract
+                        db_node.input_contract = node.input_contract or db_node.input_contract
+                        db_node.output_contract = node.output_contract or db_node.output_contract
                         db_node.customer_id = db_cust_id
                         session.add(db_node)
                     else:

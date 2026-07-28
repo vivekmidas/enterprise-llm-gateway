@@ -1027,16 +1027,21 @@ class BaseNode(BaseModel, abc.ABC):
 
             # 0.08 Build render context and resolve templates
             try:
-                render_context = {
-                    "data": input_data_data,
-                    "input_data": input_data_data,
-                    **(input_data_data if isinstance(input_data_data, dict) else {}),
-                    "nodes": inp.context.get("nodes", {}) if inp.context else {},
-                    "user_data": inp.context.get("user_data", {}) if inp.context else {},
-                }
+                render_context = {}
+                if isinstance(inp.context, dict):
+                    render_context.update(inp.context)
+                if isinstance(input_data_data, dict):
+                    render_context.update(input_data_data)
+
+                render_context["data"] = input_data_data
+                render_context["input_data"] = input_data_data
+                if inp.context and isinstance(inp.context, dict):
+                    render_context["nodes"] = inp.context.get("nodes", {})
+                    render_context["user_data"] = inp.context.get("user_data", {})
+
                 self.logger.debug("running_node:resolve_jinja_template", render_context=render_context, trace_id=inp.trace_id)
                 
-                # Resolve mapping_config if present, otherwise resolve templates in input_data_data directly
+                # Resolve mapping_config if present (uses mapping strictly as data source), otherwise resolve templates in input_data_data directly
                 if mapping_config:
                     resolved_data = self._resolve_jinja_templates(mapping_config, render_context)
                 else:

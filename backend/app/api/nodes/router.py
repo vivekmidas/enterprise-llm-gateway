@@ -306,10 +306,11 @@ async def configure_customer_node(
                     existing = dict(customer_node.properties or {})
                     existing["allow_node_testing"] = bool(v)
                     customer_node.properties = existing
-            elif k == "input_contract":
-                customer_node.input_contract = v
-            elif k == "output_contract":
-                customer_node.output_contract = v
+            # Disabled: NodeDB is SOT for contracts
+            # elif k == "input_contract":
+            #     customer_node.input_contract = v
+            # elif k == "output_contract":
+            #     customer_node.output_contract = v
             elif k == "user_properties" and current_user.role == "system_admin" and not is_customer_config:
                 customer_node.user_properties = sync_properties_selective(customer_node.user_properties, v)
             elif k == "system_properties" and current_user.role == "system_admin" and not is_customer_config:
@@ -505,10 +506,11 @@ async def configure_customer_node(
             if is_customer_config:
                 customer_node.is_enabled = config_data["is_enabled"]
                 
-        if "input_contract" in config_data:
-            customer_node.input_contract = config_data["input_contract"]
-        if "output_contract" in config_data:
-            customer_node.output_contract = config_data["output_contract"]
+        # Disabled: NodeDB is SOT for contracts
+        # if "input_contract" in config_data:
+        #     customer_node.input_contract = config_data["input_contract"]
+        # if "output_contract" in config_data:
+        #     customer_node.output_contract = config_data["output_contract"]
         if "label" in config_data:
             if is_customer_config:
                 customer_node.label = config_data["label"]
@@ -573,10 +575,11 @@ async def list_nodes(
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
             merged["allow_node_testing"] = bool(overrides.get("allow_node_testing", False))
             if cust_node:
-                if cust_node.input_contract is not None:
-                    merged["input_contract"] = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    merged["output_contract"] = cust_node.output_contract
+                # Disabled: NodeDB is SOT for contracts
+                # if cust_node.input_contract is not None:
+                #     merged["input_contract"] = cust_node.input_contract
+                # if cust_node.output_contract is not None:
+                #     merged["output_contract"] = cust_node.output_contract
                 if getattr(cust_node, "label", None) is not None:
                     merged["label"] = cust_node.label
             filtered_nodes.append(merged)
@@ -588,10 +591,11 @@ async def list_nodes(
                 merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
                 merged["is_enabled"] = True
                 if cust_node:
-                    if cust_node.input_contract is not None:
-                        merged["input_contract"] = cust_node.input_contract
-                    if cust_node.output_contract is not None:
-                        merged["output_contract"] = cust_node.output_contract
+                    # Disabled: NodeDB is SOT for contracts
+                    # if cust_node.input_contract is not None:
+                    #     merged["input_contract"] = cust_node.input_contract
+                    # if cust_node.output_contract is not None:
+                    #     merged["output_contract"] = cust_node.output_contract
                     if getattr(cust_node, "label", None) is not None:
                         merged["label"] = cust_node.label
                 filtered_nodes.append(merged)
@@ -631,10 +635,11 @@ async def get_node(
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
-        if cust_node.input_contract is not None:
-            merged_node["input_contract"] = cust_node.input_contract
-        if cust_node.output_contract is not None:
-            merged_node["output_contract"] = cust_node.output_contract
+        # Disabled: NodeDB is SOT for contracts
+        # if cust_node.input_contract is not None:
+        #     merged_node["input_contract"] = cust_node.input_contract
+        # if cust_node.output_contract is not None:
+        #     merged_node["output_contract"] = cust_node.output_contract
         if getattr(cust_node, "label", None) is not None:
             merged_node["label"] = cust_node.label
     return {"node": merged_node}
@@ -670,10 +675,11 @@ async def get_node_by_id(
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
-        if cust_node.input_contract is not None:
-            merged_node["input_contract"] = cust_node.input_contract
-        if cust_node.output_contract is not None:
-            merged_node["output_contract"] = cust_node.output_contract
+        # Disabled: NodeDB is SOT for contracts
+        # if cust_node.input_contract is not None:
+        #     merged_node["input_contract"] = cust_node.input_contract
+        # if cust_node.output_contract is not None:
+        #     merged_node["output_contract"] = cust_node.output_contract
         if getattr(cust_node, "label", None) is not None:
             merged_node["label"] = cust_node.label
     return {"node": merged_node}
@@ -775,10 +781,11 @@ async def get_nodes_by_category(
             merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
             if cust_node:
-                if cust_node.input_contract is not None:
-                    merged["input_contract"] = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    merged["output_contract"] = cust_node.output_contract
+                # Disabled: NodeDB is SOT for contracts
+                # if cust_node.input_contract is not None:
+                #     merged["input_contract"] = cust_node.input_contract
+                # if cust_node.output_contract is not None:
+                #     merged["output_contract"] = cust_node.output_contract
                 if getattr(cust_node, "label", None) is not None:
                     merged["label"] = cust_node.label
             filtered_nodes.append(merged)
@@ -786,10 +793,11 @@ async def get_nodes_by_category(
             if cust_node and cust_node.is_enabled:
                 overrides = cust_node.properties or {}
                 merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=True)
-                if cust_node.input_contract is not None:
-                    merged["input_contract"] = cust_node.input_contract
-                if cust_node.output_contract is not None:
-                    merged["output_contract"] = cust_node.output_contract
+                # Disabled: NodeDB is SOT for contracts
+                # if cust_node.input_contract is not None:
+                #     merged["input_contract"] = cust_node.input_contract
+                # if cust_node.output_contract is not None:
+                #     merged["output_contract"] = cust_node.output_contract
                 if getattr(cust_node, "label", None) is not None:
                     merged["label"] = cust_node.label
                 filtered_nodes.append(merged)

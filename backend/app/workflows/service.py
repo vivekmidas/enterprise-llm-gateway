@@ -442,14 +442,16 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 input_schema = getattr(agent, "input_contract", {})
                 if cust_node and cust_node.input_contract is not None:
                     input_schema = cust_node.input_contract
-                if wf_node_prop and wf_node_prop.input_contract is not None:
-                    input_schema = wf_node_prop.input_contract
+                # Disabled: read node level contracts dynamically at instance execution
+                # if wf_node_prop and wf_node_prop.input_contract is not None:
+                #     input_schema = wf_node_prop.input_contract
 
                 output_schema = getattr(agent, "output_contract", {})
                 if cust_node and cust_node.output_contract is not None:
                     output_schema = cust_node.output_contract
-                if wf_node_prop and wf_node_prop.output_contract is not None:
-                    output_schema = wf_node_prop.output_contract
+                # Disabled: read node level contracts dynamically at instance execution
+                # if wf_node_prop and wf_node_prop.output_contract is not None:
+                #     output_schema = wf_node_prop.output_contract
 
                 from app.nodes.contracts import contract_from_expected_output
                 node_expected_output = effective_config.get("expected_output")

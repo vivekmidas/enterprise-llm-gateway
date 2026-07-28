@@ -35,69 +35,43 @@ class KnowledgeRetrievalNode(BaseNode):
     badge: Optional[str] = "RAG"
     sub_label: Optional[str] = "Knowledge Base Search"
 
-    # Runtime payload contract.
-    input_contract: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-            }
-        },
-        "required": ["query"],
-    }
-
-    output_contract: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "answer": {
-                "type": "string",
-            },
-            "results": {
-                "type": "array",
-            },
-            "context": {
-                "type": "string",
-            },
-            "citations": {
-                "type": "array",
-            },
-        },
-        "required": ["answer", "results", "context", "citations"],
-    }
+    # Contracts are loaded dynamically from DB (NodeDB/CustomerNodeDB)
+    input_contract: dict[str, Any] = {}
+    output_contract: dict[str, Any] = {}
 
     # Workflow-configurable properties.
-    user_properties: list[dict[str, Any]] = [
-        {
-            "key": "llm_profile_id",
-            "label": "LLM Profile",
-            "type": "choice",
-            "source": "/api/llm-profiles",
-            "description": "Select the LLM Profile preset for LLM, Embedding, and RAG search settings."
-        },
-        {
-            "key": "knowledge_base_ids",
-            "label": "Knowledge Bases",
-            "type": "choice",
-            "source": "/api/knowledge/bases",
-            "multiple": True,
-            "options": [],
-            "description": "Select the Knowledge Bases to query. If none selected, all active knowledge bases will be searched."
-        },
-        {
-            "key": "top_k",
-            "label": "Top K Chunks",
-            "type": "number",
-            "default": 5,
-            "description": "Number of relevant text chunks to retrieve."
-        },
-        {
-            "key": "score_threshold",
-            "label": "Score Threshold",
-            "type": "number",
-            "default": 0.0,
-            "description": "Minimum similarity score threshold (0.0 to 1.0)."
-        }
-    ]
+    # user_properties: list[dict[str, Any]] = [
+    #     {
+    #         "key": "llm_profile_id",
+    #         "label": "LLM Profile",
+    #         "type": "source",
+    #         "source": "/api/llm-profiles",
+    #         "description": "Select the LLM Profile preset for LLM, Embedding, and RAG search settings."
+    #     },
+    #     {
+    #         "key": "knowledge_base_ids",
+    #         "label": "Knowledge Bases",
+    #         "type": "source",
+    #         "source": "/api/knowledge/bases",
+    #         "multiple": True,
+    #         "options": [],
+    #         "description": "Select the Knowledge Bases to query. If none selected, all active knowledge bases will be searched."
+    #     },
+    #     {
+    #         "key": "top_k",
+    #         "label": "Top K Chunks",
+    #         "type": "number",
+    #         "default": 5,
+    #         "description": "Number of relevant text chunks to retrieve."
+    #     },
+    #     {
+    #         "key": "score_threshold",
+    #         "label": "Score Threshold",
+    #         "type": "number",
+    #         "default": 0.0,
+    #         "description": "Minimum similarity score threshold (0.0 to 1.0)."
+    #     }
+    # ]
 
     async def init(self) -> None:
         """Load node properties and database overrides."""
@@ -248,6 +222,7 @@ class KnowledgeRetrievalNode(BaseNode):
                 if not knowledge_base_ids:
                     output_data = {
                         "answer": "no answer",
+                        "chunks": [],
                         "results": [],
                         "context": "",
                         "citations": [],
@@ -292,7 +267,7 @@ class KnowledgeRetrievalNode(BaseNode):
             chunks = retrieval_result.response.context.chunks
             context = retrieval_result.response.context.context
             citations = self._build_citations(chunks)
-            results = [chunk.model_dump() for chunk in chunks]
+            chunks = [chunk.model_dump() for chunk in chunks]
 
             # Execute LLM Response Generation using context and config settings
             from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
@@ -315,8 +290,11 @@ class KnowledgeRetrievalNode(BaseNode):
             answer = gen_result.answer
 
             output_data = {
+                "query": query,
+                "prompt": query,
                 "answer": answer,
-                "results": results,
+                "chunks": chunks,
+                "results": chunks,
                 "context": context,
                 "citations": citations,
             }
@@ -325,7 +303,7 @@ class KnowledgeRetrievalNode(BaseNode):
                 "knowledge_retrieval_completed",
                 trace_id=inp.trace_id,
                 customer_id=customer_id,
-                result_count=len(results),
+                chunk_count=len(chunks),
                 citation_count=len(citations),
                 has_answer=bool(answer),
             )
@@ -399,14 +377,14 @@ class KnowledgeRetrievalNode(BaseNode):
         """
         context = inp.context or {}
         user_data = context.get("user_data") or {}
-        customer_id = user_data.get("customer_id")  
+        customer_id = user_data.get("customer_id") if user_data.get("customer_id") is not None else context.get("customer_id")
         
         if customer_id is None:
             return None
 
         return int(customer_id)
 
-    @staticmethod
+    @staticmethod #TODO: move to utils    
     def _normalise_int_list(value: Any) -> list[int]:
         """Convert supported ID formats into a validated integer list."""
 
