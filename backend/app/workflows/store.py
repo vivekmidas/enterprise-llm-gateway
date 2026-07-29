@@ -16,6 +16,14 @@ logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _safe_set_span_attribute(span: Any, key: str, value: Any) -> None:
+    if span and value is not None:
+        if isinstance(value, (bool, str, bytes, int, float)):
+            span.set_attribute(key, value)
+        else:
+            span.set_attribute(key, str(value))
+
+
 def _safe_json_loads(value: Any, fallback: Any = None) -> Any:
     if value is None:
         return fallback
@@ -282,11 +290,18 @@ async def update_workflow_node_properties(
             if existing_row:
                 existing_label, existing_input_contract, existing_output_contract, existing_allow_node_testing = existing_row
 
+            agent_name = (workflow_node.agent_name if workflow_node else "") or properties.get("name") or ""
+            is_webhook_node = "webhook" in str(agent_name or "").lower() or "webhook" in str(agent_node_id or "").lower()
+
             final_label = label if label is not None else existing_label
             final_allow_testing = allow_node_testing if allow_node_testing is not None else existing_allow_node_testing
-            # Disabled: contracts are read dynamically from node definitions, not stored in workflow_node_properties
-            final_input = None
-            final_output = None
+            
+            if is_webhook_node:
+                final_input = input_contract if input_contract is not None else existing_input_contract
+                final_output = output_contract if output_contract is not None else existing_output_contract
+            else:
+                final_input = None
+                final_output = None
 
             await session.execute(
                 delete(WorkflowNodePropertyDB).where(
@@ -444,6 +459,12 @@ async def _hydrate_workflow_definition(
                 input_contract = cust_node.input_contract
             if cust_node.output_contract is not None:
                 output_contract = cust_node.output_contract
+        is_webhook_node = agent_name == "api_webhook_agent" or "webhook" in (agent_name or "").lower()
+        if prop_row and is_webhook_node:
+            if prop_row.input_contract is not None:
+                input_contract = prop_row.input_contract
+            if prop_row.output_contract is not None:
+                output_contract = prop_row.output_contract
         
         # Check for expected_output dynamic contract
         from app.nodes.contracts import contract_from_expected_output
@@ -624,8 +645,9 @@ async def save_workflow_to_store(
     Save workflow definition to database + invalidate Redis cache.
     """
     with tracer.start_as_current_span("save_agent_to_store") as span:
-        span.set_attribute("agent_id", definition.id)
-        span.set_attribute("version", definition.version)
+        _safe_set_span_attribute(span, "agent_id", definition.id)
+        _safe_set_span_attribute(span, "version", definition.version)
+        _safe_set_span_attribute(span, "customer_id", customer_id)
         logger.info("saving_agent_to_store", agent_id=definition.id, version=definition.version)
 
         if not definition.id:
@@ -726,7 +748,12 @@ async def save_workflow_to_store(
                             WorkflowNodePropertyDB.workflow_id == definition.id
                         )
                     )
-                    existing_props_map = {row.agent_node_id: (row.properties or {}) for row in existing_props_res.scalars().all()}
+                    existing_rows = existing_props_res.scalars().all()
+                    existing_props_map = {row.agent_node_id: (row.properties or {}) for row in existing_rows}
+                    existing_contracts_map = {
+                        row.agent_node_id: (row.input_contract, row.output_contract)
+                        for row in existing_rows
+                    }
 
                     await session.execute(
                         delete(WorkflowNodePropertyDB).where(
@@ -750,6 +777,40 @@ async def save_workflow_to_store(
                             **definition.properties.get(n_dict.get("id"), {}),
                             **_extract_node_properties(n_dict),
                         }
+
+                        is_webhook_node = (
+                            "webhook" in str(agent_name or "").lower()
+                            or "webhook" in str(n_dict.get("id", "")).lower()
+                            or (catalog_node and "webhook" in str(getattr(catalog_node, "name", "")).lower())
+                        )
+                        existing_in_contract, existing_out_contract = existing_contracts_map.get(n_dict.get("id"), (None, None))
+                        node_in_contract = None
+                        node_out_contract = None
+                        if is_webhook_node:
+                            def _get_contract_candidate(*candidates):
+                                for cand in candidates:
+                                    if isinstance(cand, dict) and cand:
+                                        return cand
+                                return None
+
+                            node_in_contract = _get_contract_candidate(
+                                node_data.get("input_contract"),
+                                node_data.get("inputContract"),
+                                n_dict.get("input_contract"),
+                                n_dict.get("inputContract"),
+                                instance_properties.get("input_contract"),
+                                existing_in_contract,
+                                catalog_node.input_contract if catalog_node else None,
+                            )
+                            node_out_contract = _get_contract_candidate(
+                                node_data.get("output_contract"),
+                                node_data.get("outputContract"),
+                                n_dict.get("output_contract"),
+                                n_dict.get("outputContract"),
+                                instance_properties.get("output_contract"),
+                                existing_out_contract,
+                                catalog_node.output_contract if catalog_node else None,
+                            )
                         
                         workflow_node = WorkflowNodeDB(
                             workflow_id=definition.id,
@@ -767,9 +828,8 @@ async def save_workflow_to_store(
                                 agent_name=agent_name,
                                 properties=instance_properties,
                                 label=node_data.get("label") or n_dict.get("label"),
-                                # Disabled: do not populate workflow_node input and output contracts
-                                input_contract=None,
-                                output_contract=None,
+                                input_contract=node_in_contract,
+                                output_contract=node_out_contract,
                             )
                         )
 
@@ -789,7 +849,7 @@ async def get_workflow_user_customer_id(workflow_id: str) -> tuple[Optional[str]
     Get the user_id associated with a workflow.
     """
     with tracer.start_as_current_span("get_workflow_id") as span:
-        span.set_attribute("workflow_id", workflow_id)
+        _safe_set_span_attribute(span, "workflow_id", workflow_id)
 
         try:
             async with AsyncSessionLocal() as session:
@@ -818,9 +878,9 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None,
     Load workflow definition from database and validate it.
     """
     with tracer.start_as_current_span("load_workflow_from_store") as span:
-        span.set_attribute("agent_id", agent_id)
-        span.set_attribute("version", version or "1.0")
-        span.set_attribute("customer_id", customer_id) # need to check why customer id is required
+        _safe_set_span_attribute(span, "agent_id", agent_id)
+        _safe_set_span_attribute(span, "version", version or "1.0")
+        _safe_set_span_attribute(span, "customer_id", customer_id)
         try:
             async with AsyncSessionLocal() as session:
                 stmt = select(WorkflowDB).where(WorkflowDB.id == agent_id)
@@ -868,8 +928,8 @@ async def list_workflows_from_store(customer_id: Optional[int] = None) -> list:
 async def delete_workflow_from_store(workflow_id: str, version: Optional[str] = None) -> bool:
     """Delete workflow file and invalidate cache."""
     with tracer.start_as_current_span("delete_workflow_from_store") as span:
-        span.set_attribute("workflow_id", workflow_id)
-        span.set_attribute("version", version or "1.0")
+        _safe_set_span_attribute(span, "workflow_id", workflow_id)
+        _safe_set_span_attribute(span, "version", version or "1.0")
 
         try:
             async with AsyncSessionLocal() as session:

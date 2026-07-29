@@ -386,9 +386,12 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
 
     async def agent_node(state: Any) -> Dict[str, Any]:
         with tracer.start_as_current_span(f"node_exec:{node_id}") as span:
-            span.set_attribute("agent.name", agent_name)
-            span.set_attribute("node.id", node_id)
-            span.set_attribute("trace_id", state.trace_id)
+            if agent_name:
+                span.set_attribute("agent.name", str(agent_name))
+            if node_id:
+                span.set_attribute("node.id", str(node_id))
+            if getattr(state, "trace_id", None):
+                span.set_attribute("trace_id", str(state.trace_id))
             
             try:
                 #logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
