@@ -11,7 +11,6 @@ def _extract_json(text: str) -> dict:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -26,8 +25,10 @@ class LegalDomainParser:
     def __init__(self, llm):
         self.llm = llm
 
-    async def parse(self, document_text: str) -> dict:
-        prompt = LEGAL_USER_TEMPLATE.replace("{{DOCUMENT}}", document_text)
+    async def parse(self, document_text: str, source_spans: list[dict]) -> dict:
+        spans_json = json.dumps(source_spans, ensure_ascii=False, separators=(",", ":"))
+        prompt = LEGAL_USER_TEMPLATE.replace("{{SOURCE_SPANS}}", spans_json)
+        prompt = prompt.replace("{{DOCUMENT}}", document_text)
         raw = await self.llm.complete(
             system_prompt=LEGAL_SYSTEM_PROMPT,
             user_prompt=prompt,
