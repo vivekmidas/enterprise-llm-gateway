@@ -124,23 +124,10 @@ class WebhookAgent(BaseWebhookAgent):
 
     # Define default contracts and properties
     input_contract: Dict[str, Any] = {
-        "data": {"type": "json", "required": "True"},
-        "auth_token": {"type": "string", "required": "False"},
-        "source_system": {"type": "string", "required": "True"},
-        "event_type": {"type": "string", "required": "False"},
-        "request_id": {"type": "string", "required": "False"}
+      
     }
-    output_contract: Dict[str, Any] = {
-        "result": {
-            "data": "{{data}}",
-            "error_code": "{{error_code}}",
-            "status": "{{status}}",
-            "error_message": "{{error_message}}"
-        }
-    }
-    system_properties: Dict[str, Any] = {
-        "base_path": "docs"
-    }
+    output_contract: Dict[str, Any] = {}
+    system_properties: Dict[str, Any] = {}
     user_properties: Dict[str, Any] = {}
 
     async def validate_request(self, request: Request, payload: str) -> bool:

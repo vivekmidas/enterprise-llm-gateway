@@ -112,7 +112,7 @@ async def get_node_properties(
             #     if cust_node.output_contract is not None:
             #         output_contract = cust_node.output_contract
 
-            # Merge workflow node overrides (end-user)
+            # Merge workflow node overrides (instance level contracts allowed for webhooks/triggers)
             from app.models.db_models import WorkflowNodePropertyDB
             prop_result = await session.execute(
                 select(WorkflowNodePropertyDB).where(
@@ -121,12 +121,12 @@ async def get_node_properties(
                 )
             )
             prop_row = prop_result.scalars().first()
-            # Disabled: read node level contracts dynamically from catalog/customer node definitions
-            # if prop_row:
-            #     if prop_row.input_contract is not None:
-            #         input_contract = prop_row.input_contract
-            #     if prop_row.output_contract is not None:
-            #         output_contract = prop_row.output_contract
+            is_webhook_node = agent_name == "api_webhook_agent" or "webhook" in agent_name.lower()
+            if prop_row and is_webhook_node:
+                if prop_row.input_contract is not None:
+                    input_contract = prop_row.input_contract
+                if prop_row.output_contract is not None:
+                    output_contract = prop_row.output_contract
 
             # System properties are sacrosanct and cannot be overridden by tenant
             resolved_system = dict(global_system_defaults)
