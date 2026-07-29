@@ -111,8 +111,11 @@ async def _load_workflow_node_properties(
         )
     )
     row = result.scalar_one_or_none()
-    if row and row.properties:
-        return row.properties if isinstance(row.properties, dict) else _safe_json_loads(row.properties, {})
+    if row:
+        props = row.properties if isinstance(row.properties, dict) else _safe_json_loads(row.properties, {})
+        if row.allow_node_testing is not None:
+            props["allow_node_testing"] = row.allow_node_testing
+        return props
     return {}
 
 
@@ -178,12 +181,15 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
         global_system_defaults = property_entries_to_dict(system_node_properties.system_properties) if system_node_properties else {}
         global_user_defaults = property_entries_to_dict(system_node_properties.user_properties) if system_node_properties else {}
 
-        # System properties are sacrosanct (no tenant overrides)
+        # System properties are sacrosanct (no tenant overrides for infra keys, but testing switch can resolve)
         resolved_system = dict(global_system_defaults)
         
         # User properties resolved with correct precedence (instance > tenant > global)
+        global_user_defaults.pop("allow_node_testing", None)
         resolved_user = {}
         for k, v in global_user_defaults.items():
+            if k == "allow_node_testing":
+                continue
             if k in workflow_overrides:
                 resolved_user[k] = workflow_overrides[k]
             elif k in tenant_overrides:
@@ -191,12 +197,18 @@ async def get_workflow_node_properties(workflow_id: str, agent_node_id: str) -> 
             else:
                 resolved_user[k] = v
 
+        # Resolve allow_node_testing into system properties
+        if "allow_node_testing" in workflow_overrides:
+            resolved_system["allow_node_testing"] = bool(workflow_overrides["allow_node_testing"])
+        elif "allow_node_testing" in tenant_overrides:
+            resolved_system["allow_node_testing"] = bool(tenant_overrides["allow_node_testing"])
+
         # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
         for k, v in workflow_overrides.items():
-            if k not in resolved_user and k not in resolved_system:
+            if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
                 resolved_user[k] = v
         for k, v in tenant_overrides.items():
-            if k not in resolved_user and k not in resolved_system:
+            if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
                 resolved_user[k] = v
                 
         return {**resolved_system, **resolved_user}
@@ -215,7 +227,11 @@ async def update_workflow_node_properties(
     label: Optional[str] = None,
     input_contract: Optional[dict] = None,
     output_contract: Optional[dict] = None,
+    allow_node_testing: Optional[bool] = None,
 ) -> dict:
+    if allow_node_testing is None and "allow_node_testing" in properties:
+        allow_node_testing = bool(properties.pop("allow_node_testing"))
+        
     async with AsyncSessionLocal() as session:
         async with session.begin():
             workflow_node = await _get_workflow_node(session, workflow_id, agent_node_id)
@@ -250,7 +266,8 @@ async def update_workflow_node_properties(
                 select(
                     WorkflowNodePropertyDB.label,
                     WorkflowNodePropertyDB.input_contract,
-                    WorkflowNodePropertyDB.output_contract
+                    WorkflowNodePropertyDB.output_contract,
+                    WorkflowNodePropertyDB.allow_node_testing
                 ).where(
                     WorkflowNodePropertyDB.workflow_id == workflow_id,
                     WorkflowNodePropertyDB.agent_node_id == agent_node_id
@@ -261,10 +278,12 @@ async def update_workflow_node_properties(
             existing_label = None
             existing_input_contract = None
             existing_output_contract = None
+            existing_allow_node_testing = None
             if existing_row:
-                existing_label, existing_input_contract, existing_output_contract = existing_row
+                existing_label, existing_input_contract, existing_output_contract, existing_allow_node_testing = existing_row
 
             final_label = label if label is not None else existing_label
+            final_allow_testing = allow_node_testing if allow_node_testing is not None else existing_allow_node_testing
             # Disabled: contracts are read dynamically from node definitions, not stored in workflow_node_properties
             final_input = None
             final_output = None
@@ -284,6 +303,7 @@ async def update_workflow_node_properties(
                     label=final_label,
                     input_contract=final_input,
                     output_contract=final_output,
+                    allow_node_testing=final_allow_testing,
                 )
             )
 

@@ -126,6 +126,7 @@ class WorkflowNodePropertyDB(Base):
     label = Column(String, nullable=True)
     input_contract = Column(JSON, nullable=True)
     output_contract = Column(JSON, nullable=True)
+    allow_node_testing = Column(Boolean, nullable=True)
 
     
 class CredentialDB(Base):

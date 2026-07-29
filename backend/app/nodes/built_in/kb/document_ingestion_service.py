@@ -52,11 +52,18 @@ class DocumentIngestionService:
             content=content,
         )
 
+        # BLOCK: Resolve KB customer_id for system-admin uploads
+        from app.models.db_models import KnowledgeBaseDB
+        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
+        kb_res = await db.execute(kb_stmt)
+        target_kb = kb_res.scalar_one_or_none()
+        target_customer_id = target_kb.customer_id if target_kb else current_user.customer_id
+
         # Create Job in DB (JobStatus.QUEUED)
         job_repo = JobRepository(db)
         job_service = JobService(job_repo)
         job = await job_service.create_job(
-            customer_id=current_user.customer_id,
+            customer_id=target_customer_id,
             job_type=JobType.DOCUMENT_INDEX,
             entity_type=EntityType.DOCUMENT,
             entity_id=None,
@@ -74,7 +81,7 @@ class DocumentIngestionService:
             collection = KnowledgeCollectionDB(
                 name=f"kb_collection_{knowledge_base_id}",
                 knowledge_base_id=knowledge_base_id,
-                customer_id=current_user.customer_id,
+                customer_id=target_customer_id,
                 embedding_model=settings.EMBEDDING_MODEL,
                 vector_dimension=settings.EMBEDDING_DIMENSION,
                 distance_metric="COSINE",
@@ -107,12 +114,13 @@ class DocumentIngestionService:
 
         document = KnowledgeDocumentDB(
             knowledge_base_id=knowledge_base_id,
-            customer_id=current_user.customer_id,
+            customer_id=target_customer_id,
             created_by=int(current_user.id),
             name=upload_file.filename or "unnamed-document",
             source_type="upload",
             mime_type=upload_file.content_type,
             status="pending",
+# END BLOCK
             file_path=str(file_path),
             file_size=len(content),
             checksum=checksum,

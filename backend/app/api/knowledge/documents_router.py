@@ -13,7 +13,8 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+# BLOCK: Multi-tenant support for system-admin in Document CRUD endpoints
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,11 +31,6 @@ router = APIRouter()
 _ALLOWED_EXTENSIONS = {".txt", ".pdf", ".doc", ".docx"}
 _MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
-
-# ---------------------------------------------------------------------------
-# Document upload / ingestion
-# ---------------------------------------------------------------------------
-
 @router.post(
     "/bases/{kb_id}/upload",
     response_model=KnowledgeDocumentResponse,
@@ -50,8 +46,6 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and ingest a document into a specific knowledge base."""
-    customer_id = require_tenant(current_user)
-
     content = await file.read(_MAX_FILE_SIZE_BYTES + 1)
     if len(content) > _MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File size exceeds the 50 MB limit.")
@@ -65,20 +59,27 @@ async def upload_document(
             detail=f"Unsupported file type. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}",
         )
 
-    kb_stmt = select(KnowledgeBaseDB).where(
-        KnowledgeBaseDB.id == kb_id,
-        KnowledgeBaseDB.customer_id == customer_id,
-    )
+    if current_user.role == "system_admin":
+        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
+    else:
+        customer_id = require_tenant(current_user)
+        kb_stmt = select(KnowledgeBaseDB).where(
+            KnowledgeBaseDB.id == kb_id,
+            KnowledgeBaseDB.customer_id == customer_id,
+        )
+
     kb_res = await db.execute(kb_stmt)
     kb = kb_res.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
 
+    target_customer_id = kb.customer_id
+
     try:
         # Archive existing docs with same name (upsert behaviour)
         old_docs_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.knowledge_base_id == kb.id,
-            KnowledgeDocumentDB.customer_id == customer_id,
+            KnowledgeDocumentDB.customer_id == target_customer_id,
             KnowledgeDocumentDB.name == filename,
             KnowledgeDocumentDB.status != "archived",
         )
@@ -130,19 +131,23 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
 ):
     """List all documents under a specific knowledge base."""
-    customer_id = require_tenant(current_user)
+    if current_user.role == "system_admin":
+        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
+        doc_stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.knowledge_base_id == kb_id)
+    else:
+        customer_id = require_tenant(current_user)
+        kb_stmt = select(KnowledgeBaseDB).where(
+            KnowledgeBaseDB.id == kb_id,
+            KnowledgeBaseDB.customer_id == customer_id,
+        )
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
 
-    kb_stmt = select(KnowledgeBaseDB).where(
-        KnowledgeBaseDB.id == kb_id,
-        KnowledgeBaseDB.customer_id == customer_id,
-    )
     if not (await db.execute(kb_stmt)).scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
 
-    doc_stmt = select(KnowledgeDocumentDB).where(
-        KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        KnowledgeDocumentDB.customer_id == customer_id,
-    )
     doc_res = await db.execute(doc_stmt)
     return doc_res.scalars().all()
 
@@ -155,12 +160,19 @@ async def get_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Get status/details of a specific document."""
-    customer_id = require_tenant(current_user)
-    doc_stmt = select(KnowledgeDocumentDB).where(
-        KnowledgeDocumentDB.id == doc_id,
-        KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        KnowledgeDocumentDB.customer_id == customer_id,
-    )
+    if current_user.role == "system_admin":
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
+    else:
+        customer_id = require_tenant(current_user)
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
+
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -176,12 +188,19 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a document's name or metadata."""
-    customer_id = require_tenant(current_user)
-    doc_stmt = select(KnowledgeDocumentDB).where(
-        KnowledgeDocumentDB.id == doc_id,
-        KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        KnowledgeDocumentDB.customer_id == customer_id,
-    )
+    if current_user.role == "system_admin":
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
+    else:
+        customer_id = require_tenant(current_user)
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
+
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -210,12 +229,19 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a specific document and its vector embeddings."""
-    customer_id = require_tenant(current_user)
-    doc_stmt = select(KnowledgeDocumentDB).where(
-        KnowledgeDocumentDB.id == doc_id,
-        KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        KnowledgeDocumentDB.customer_id == customer_id,
-    )
+    if current_user.role == "system_admin":
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
+    else:
+        customer_id = require_tenant(current_user)
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
+
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -248,27 +274,31 @@ async def delete_document(
 
 @router.get("/document-types", response_model=List[str])
 async def get_document_types(
+    customer_id: Optional[int] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve custom document types for the current tenant."""
-    customer_id = current_user.customer_id
-    stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+    target_customer_id = customer_id if (current_user.role == "system_admin" and customer_id is not None) else current_user.customer_id
+    if target_customer_id is None:
+        return ["General", "Policy", "FAQ", "Technical", "Contract"]
+    stmt = select(CustomerDB).where(CustomerDB.id == target_customer_id)
     customer = (await db.execute(stmt)).scalar_one_or_none()
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer tenant not found.")
+        return ["General", "Policy", "FAQ", "Technical", "Contract"]
     return customer.document_types or ["General", "Policy", "FAQ", "Technical", "Contract"]
 
 
 @router.put("/document-types", response_model=List[str])
 async def update_document_types(
     payload: List[str],
+    customer_id: Optional[int] = Query(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Update custom document types for the current tenant (Admin only)."""
-    customer_id = require_tenant(current_user)
-    stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+    target_customer_id = customer_id if (current_user.role == "system_admin" and customer_id is not None) else require_tenant(current_user)
+    stmt = select(CustomerDB).where(CustomerDB.id == target_customer_id)
     customer = (await db.execute(stmt)).scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer tenant not found.")
@@ -278,3 +308,4 @@ async def update_document_types(
     await db.commit()
     await db.refresh(customer)
     return customer.document_types or ["General", "Policy", "FAQ", "Technical", "Contract"]
+# END BLOCK

@@ -94,8 +94,10 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
     node = dict(node)
     user_props = merge_list(node.get("user_properties"), overrides)
     system_props = merge_list(node.get("system_properties"), overrides)
+       
     node["user_properties"] = user_props
     node["system_properties"] = system_props
+    node["allow_node_testing"] = bool(overrides.get("allow_node_testing", False))
     return node
 
 
@@ -965,17 +967,39 @@ async def test_node_directly(
     from app.api.auth.dependencies import verify_node_tenant_access
     await verify_node_tenant_access(node_name=target_node_name, current_user=current_user, db=db)
 
-    # BLOCK COMMENT: Default disabled for isolated node testing unless explicitly enabled by Admin
+    # BLOCK COMMENT: Default disabled for isolated node testing unless explicitly enabled
     if current_user.role != "system_admin" and current_user.customer_id is not None:
-        stmt = select(CustomerNodeDB).where(
-            CustomerNodeDB.customer_id == current_user.customer_id,
-            CustomerNodeDB.node_name == target_node_name
-        )
-        res = await db.execute(stmt)
-        cust_node_row = res.scalars().first()
         allow_testing = False
-        if cust_node_row and cust_node_row.properties:
-            allow_testing = bool(cust_node_row.properties.get("allow_node_testing", False))
+        
+        # 1. Check workflow node instance level if workflow_id and agent_node_id are passed
+        workflow_id = payload.get("workflow_id")
+        agent_node_id = payload.get("agent_node_id") or payload.get("node_id")
+        if workflow_id and agent_node_id:
+            from app.models.db_models import WorkflowNodePropertyDB
+            wf_prop_res = await db.execute(
+                select(WorkflowNodePropertyDB).where(
+                    WorkflowNodePropertyDB.workflow_id == str(workflow_id),
+                    WorkflowNodePropertyDB.agent_node_id == str(agent_node_id)
+                )
+            )
+            wf_prop_row = wf_prop_res.scalars().first()
+            if wf_prop_row:
+                if wf_prop_row.allow_node_testing is not None:
+                    allow_testing = bool(wf_prop_row.allow_node_testing)
+                elif wf_prop_row.properties and isinstance(wf_prop_row.properties, dict) and "allow_node_testing" in wf_prop_row.properties:
+                    allow_testing = bool(wf_prop_row.properties["allow_node_testing"])
+
+        # 2. Check tenant CustomerNodeDB if not determined at workflow level
+        if not allow_testing:
+            stmt = select(CustomerNodeDB).where(
+                CustomerNodeDB.customer_id == current_user.customer_id,
+                CustomerNodeDB.node_name == target_node_name
+            )
+            res = await db.execute(stmt)
+            cust_node_row = res.scalars().first()
+            if cust_node_row and cust_node_row.properties and isinstance(cust_node_row.properties, dict):
+                if "allow_node_testing" in cust_node_row.properties:
+                    allow_testing = bool(cust_node_row.properties.get("allow_node_testing", False))
 
         if not allow_testing:
             raise HTTPException(
@@ -1000,7 +1024,11 @@ async def test_node_directly(
     # If node has test method on BaseNode, run isolated test
     if hasattr(node, "test") and callable(node.test) and isinstance(data_val, dict):
         try:
-            test_result = await node.test(test_input=data_val, override_properties=config_override)
+            test_result = await node.test(
+                test_input=data_val,
+                override_properties=config_override,
+                context=context
+            )
             return test_result
         except Exception as e:
             logger.exception("isolated_node_test_method_failed", node_name=target_node_name)

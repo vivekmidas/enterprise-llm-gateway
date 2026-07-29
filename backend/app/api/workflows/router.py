@@ -100,6 +100,7 @@ async def get_node_properties(
                 )
             )
             cust_node = result.scalars().first()
+            tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
             if current_user.role != "system_admin" and workflow.customer_id is not None:
                 if not cust_node or not cust_node.is_enabled:
                     raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
@@ -131,8 +132,11 @@ async def get_node_properties(
             resolved_system = dict(global_system_defaults)
             
             # User properties resolved with correct precedence (instance > tenant > global)
+            global_user_defaults.pop("allow_node_testing", None)
             resolved_user = {}
             for k, v in global_user_defaults.items():
+                if k == "allow_node_testing":
+                    continue
                 if k in workflow_overrides:
                     resolved_user[k] = workflow_overrides[k]
                 elif k in tenant_overrides:
@@ -140,12 +144,18 @@ async def get_node_properties(
                 else:
                     resolved_user[k] = v
 
+            # Resolve allow_node_testing into system properties
+            if "allow_node_testing" in workflow_overrides:
+                resolved_system["allow_node_testing"] = bool(workflow_overrides["allow_node_testing"])
+            elif "allow_node_testing" in tenant_overrides:
+                resolved_system["allow_node_testing"] = bool(tenant_overrides["allow_node_testing"])
+
             # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
             for k, v in workflow_overrides.items():
-                if k not in resolved_user and k not in resolved_system:
+                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
                     resolved_user[k] = v
             for k, v in tenant_overrides.items():
-                if k not in resolved_user and k not in resolved_system:
+                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
                     resolved_user[k] = v
 
 
@@ -192,10 +202,11 @@ async def update_node_properties(
     if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
         raise HTTPException(status_code=403, detail="Access denied to this workflow")
         
-    # Pop out label, input_contract and output_contract to store separately under their own database fields
+    # Pop out label, input_contract, output_contract and allow_node_testing to store separately under their own database fields
     label = properties.pop("label", None)
     input_contract = properties.pop("input_contract", None)
     output_contract = properties.pop("output_contract", None)
+    allow_node_testing = properties.pop("allow_node_testing", None)
 
     # Prevent standard users and customer admins from modifying system properties or updating disabled nodes
     if current_user.role != "system_admin":
@@ -231,7 +242,8 @@ async def update_node_properties(
 
     return await update_workflow_node_properties(
         workflow_id, agent_node_id, properties,
-        label=label, input_contract=input_contract, output_contract=output_contract
+        label=label, input_contract=input_contract, output_contract=output_contract,
+        allow_node_testing=allow_node_testing
     )
 
 @router.patch("/{workflow_id}/toggle", response_model=dict)

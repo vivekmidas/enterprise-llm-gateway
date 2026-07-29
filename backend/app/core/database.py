@@ -41,6 +41,8 @@ def _refresh_workflow_node_properties_table(sync_conn):
             sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN input_contract JSON")
         if "output_contract" not in columns:
             sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN output_contract JSON")
+        if "allow_node_testing" not in columns:
+            sync_conn.exec_driver_sql("ALTER TABLE workflow_node_properties ADD COLUMN allow_node_testing BOOLEAN")
         return
 
     Base.metadata.tables["workflow_node_properties"].drop(sync_conn, checkfirst=True)
