@@ -89,7 +89,7 @@ async def create_user(
 
 @router.delete("/{user_id}", status_code=204)
 async def delete_user(
-    user_id: int,
+    user_id: str,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)

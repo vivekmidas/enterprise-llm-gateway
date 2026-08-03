@@ -19,8 +19,7 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = None
 
 class CategoryResponse(CategoryBase):
-    id: int
-
+    id: str
     model_config = ConfigDict(from_attributes=True)
 
 class CategoryListResponse(BaseModel):

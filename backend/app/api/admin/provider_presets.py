@@ -90,7 +90,7 @@ async def create_provider_preset(
 
 @router.put("/api/admin/provider-presets/{preset_id}", response_model=ProviderPresetResponse)
 async def update_provider_preset(
-    preset_id: int,
+    preset_id: str,
     payload: ProviderPresetUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -122,7 +122,7 @@ async def update_provider_preset(
 
 @router.delete("/api/admin/provider-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_provider_preset(
-    preset_id: int,
+    preset_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

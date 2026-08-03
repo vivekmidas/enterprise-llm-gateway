@@ -447,7 +447,7 @@ class OllamaNode(GenericLLMAgent):
 
                 req = RetrievalRequest(
                     customer_id=int(customer_id),
-                    user_id=int(user_id) if user_id else None,
+                    user_id= user_id if user_id else None,
                     query=user_query,
                     knowledge_base_ids=kb_ids,
                     top_k=top_k,

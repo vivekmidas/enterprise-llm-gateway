@@ -28,4 +28,4 @@ class WorkflowDefinition(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     model_config = ConfigDict(extra='allow')
     user_id: str
-    customer_id: Optional[int] = None
+    customer_id: Optional[str] = None

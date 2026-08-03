@@ -1,101 +1,62 @@
 from __future__ import annotations
+from dataclasses import dataclass
+import re
+from .source import SourceDocument
 
-from dataclasses import dataclass, asdict
-from .source_spans import SourceSpan
-
-
-@dataclass(frozen=True)
-class EvidenceLink:
+@dataclass
+class EvidenceRecord:
     evidence_id: str
     document_id: int
-    span_ids: tuple[str, ...]
+    block_id: str
+    page: int
+    quote: str
     evidence_type: str
-    claim: str
-    support_status: str = "NEEDS_REVIEW"
-    confidence: float = 0.0
+    support_status: str
+    confidence: float
 
-    def as_dict(self) -> dict:
-        d = asdict(self)
-        d["span_ids"] = list(self.span_ids)
-        return d
+def _tokens(text):
+    return re.findall(r"[A-Za-z0-9]+", text.lower())
 
+def _support(claim, source):
+    a, b = set(_tokens(claim)), set(_tokens(source))
+    return len(a & b) / len(a) if a else 0.0
 
-def resolve_evidence(
-    *, evidence_id: str, document_id: int, span_ids: list[str],
-    evidence_type: str, claim: str, spans: list[SourceSpan],
-) -> EvidenceLink:
-    index = {s.span_id: s for s in spans}
-    valid = []
-    seen = set()
-    for sid in span_ids or []:
-        if sid in seen:
+def build_evidence(*, document: SourceDocument, candidates: list[dict]):
+    block_map = document.block_map()
+    evidence, rejected = [], []
+
+    for idx, item in enumerate(candidates, 1):
+        claim = str(item.get("text") or item.get("value") or "").strip()
+        ids = item.get("evidence_block_ids") or []
+        if not claim:
+            rejected.append({"reason": "EMPTY_CLAIM", "item": item}); continue
+        if not isinstance(ids, list) or not ids:
+            rejected.append({"reason": "NO_EVIDENCE_BLOCK_ID", "item": item}); continue
+
+        block = block_map.get(str(ids[0]))
+        if block is None:
+            rejected.append({"reason": "UNKNOWN_EVIDENCE_BLOCK_ID", "block_id": ids[0], "item": item})
             continue
-        seen.add(sid)
-        span = index.get(sid)
-        if span and span.document_id == document_id:
-            valid.append(sid)
-    return EvidenceLink(
-        evidence_id=evidence_id,
-        document_id=document_id,
-        span_ids=tuple(valid),
-        evidence_type=evidence_type,
-        claim=claim,
-        support_status="NEEDS_REVIEW" if valid else "UNSUPPORTED",
-        confidence=0.5 if valid else 0.0,
-    )
 
+        claim_n = " ".join(claim.lower().split())
+        source_n = " ".join(block.text.lower().split())
+        score = _support(claim, block.text)
 
-def evidence_text(evidence: EvidenceLink, spans: list[SourceSpan]) -> str:
-    index = {s.span_id: s for s in spans}
-    return "\n\n".join(index[sid].text for sid in evidence.span_ids if sid in index)
+        if claim_n and claim_n in source_n:
+            status, confidence = "EXACT", 0.99
+        elif score >= 0.70:
+            status, confidence = "LEXICAL", round(min(0.90, 0.55 + score * 0.40), 3)
+        else:
+            status, confidence = "NEEDS_REVIEW", round(max(0.20, score), 3)
 
-
-def _iter_material_items(value, path=()):
-    """Yield dicts that contain a substantive `text` field.
-
-    This is deliberately schema-light so the evidence layer remains domain
-    neutral. It handles legal facts/issues/relief today and medical claims,
-    findings, observations, etc. later.
-    """
-    if isinstance(value, dict):
-        if isinstance(value.get("text"), str) and value["text"].strip():
-            yield path, value
-        for key, child in value.items():
-            if key not in {"_evidence", "source_spans", "extraction"}:
-                yield from _iter_material_items(child, path + (key,))
-    elif isinstance(value, list):
-        for idx, child in enumerate(value):
-            yield from _iter_material_items(child, path + (idx,))
-
-
-def attach_evidence_links(
-    *, canonical: dict, document_id: int, spans: list[SourceSpan],
-) -> list[dict]:
-    """Resolve all LLM-selected evidence_span_ids into application-owned links."""
-    links: list[dict] = []
-    counter = 1
-    for path, item in _iter_material_items(canonical):
-        raw_ids = item.get("evidence_span_ids") or []
-        if not isinstance(raw_ids, list):
-            raw_ids = []
-        evidence_type = str(item.get("evidence_type") or "CLAIM").upper()
-        claim = str(item.get("text") or "")
-        link = resolve_evidence(
-            evidence_id=f"ev-{document_id}-{counter:05d}",
-            document_id=document_id,
-            span_ids=[str(x) for x in raw_ids],
-            evidence_type=evidence_type,
-            claim=claim,
-            spans=spans,
-        )
-        item["evidence_span_ids"] = list(link.span_ids)
-        links.append({
-            **link.as_dict(),
-            "path": list(path),
-            "source_spans": [
-                next(s.as_dict() for s in spans if s.span_id == sid)
-                for sid in link.span_ids
-            ],
-        })
-        counter += 1
-    return links
+        evidence.append(EvidenceRecord(
+            evidence_id=f"ev-{document.document_id}-{idx:05d}",
+            document_id=document.document_id,
+            block_id=block.block_id,
+            page=block.page,
+            quote=block.text,
+            evidence_type=str(item.get("evidence_type") or "UNCLASSIFIED"),
+            support_status=status,
+            confidence=confidence,
+        ))
+    return evidence, rejected

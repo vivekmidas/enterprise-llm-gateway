@@ -241,3 +241,77 @@ async def test_ollama_node_embedding_execution():
         assert res_data["data"]["embedding"] == [0.1, 0.2, 0.3, 0.4]
         assert result.metadata["model_type"] == "embedding"
 
+
+@pytest.mark.asyncio
+async def test_llm_router_get_llm():
+    from app.core.llm_router import LLMRouter
+    from langchain_openai import ChatOpenAI, AzureChatOpenAI
+
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError:
+        try:
+            from langchain_community.chat_models import ChatOllama
+        except ImportError:
+            ChatOllama = None
+
+    router = LLMRouter()
+
+    # 1. Ollama provider returns ChatOllama (or raises ImportError if package missing)
+    if ChatOllama is not None:
+        ollama_llm = await router.get_llm(
+            llm_config={
+                "provider": "ollama",
+                "url": "http://localhost:11434/v1",
+                "model": "llama3.2",
+                "temperature": 0.5,
+                "max_tokens": 512,
+            }
+        )
+        assert isinstance(ollama_llm, ChatOllama)
+        assert ollama_llm.model == "llama3.2"
+        assert ollama_llm.base_url == "http://localhost:11434"
+    else:
+        with pytest.raises(ImportError):
+            await router.get_llm(
+                llm_config={
+                    "provider": "ollama",
+                    "url": "http://localhost:11434/v1",
+                }
+            )
+
+    # 2. Azure provider returns AzureChatOpenAI
+    azure_llm = await router.get_llm(
+        llm_config={
+            "provider": "azure",
+            "url": "https://my-azure.openai.azure.com",
+            "model": "gpt-4o",
+            "api_key": "test-key",
+        }
+    )
+    assert isinstance(azure_llm, AzureChatOpenAI)
+
+    # 3. Azure provider missing url raises ValueError
+    with pytest.raises(ValueError):
+        await router.get_llm(llm_config={"provider": "azure"})
+
+    # 4. OpenAI provider returns ChatOpenAI
+    openai_llm = await router.get_llm(
+        llm_config={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-test",
+        }
+    )
+    assert isinstance(openai_llm, ChatOpenAI)
+    assert openai_llm.model_name == "gpt-4o-mini"
+
+    # 5. Unsupported provider raises ValueError
+    with pytest.raises(ValueError):
+        await router.get_llm(
+            llm_config={
+                "provider": "unsupported_llm_provider",
+            }
+        )
+
+

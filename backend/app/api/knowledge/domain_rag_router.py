@@ -3,6 +3,7 @@
 Register this router from app/api/knowledge/router.py when ready.
 No existing routes need to be replaced.
 """
+import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,8 @@ from app.core.database import get_db
 from app.core.types.users import User
 from app.models.db_models import KnowledgeBaseDB, KnowledgeDocumentDB
 from app.knowledge.domain_rag_v1.service import DomainRAGService
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 service = DomainRAGService()
@@ -55,6 +58,14 @@ async def direct_domain_rag_ingest(
     domain parser, and leaves the document in review_required status.
     """
     customer_id = require_tenant(current_user)
+
+    logger.info(
+        "domain_rag_api_ingest_received",
+        customer_id=customer_id,
+        kb_id=kb_id,
+        filename=file.filename,
+        domain=domain,
+    )
 
     kb_stmt = select(KnowledgeBaseDB).where(
         KnowledgeBaseDB.id == kb_id,

@@ -134,7 +134,7 @@ async def list_llm_profiles(
     type: Optional[str] = Query(
         None, description="Filter profiles by model type (e.g. embedding, search, reranking, generation) and return matching section"
     ),
-    customer_id: Optional[int] = Query(
+    customer_id: Optional[str] = Query(
         None, description="Filter profiles by customer_id (system_admin only)"
     ),
     current_user: User = Depends(get_current_user),
@@ -179,7 +179,7 @@ async def list_llm_profiles(
 # ==============================================================================
 @router.get("/{profile_id}", response_model=Union[LLMProfileResponse, Dict[str, Any]])
 async def get_llm_profile(
-    profile_id: int,
+    profile_id: str,
     fields: Optional[str] = Query(
         None, description="Comma-separated fields to include e.g. id,name,url,model_name,provider"
     ),
@@ -255,7 +255,7 @@ async def create_llm_profile(
         description=payload.description,
         is_default=payload.is_default,
         customer_id=customer_id,
-        created_by=int(current_user.get("id")),
+        created_by=str(current_user.get("id")),
         settings=settings_val,
     )
     db.add(profile)
@@ -278,7 +278,7 @@ async def create_llm_profile(
 
 @router.get("/{profile_id}", response_model=LLMProfileResponse)
 async def get_llm_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -298,7 +298,7 @@ async def get_llm_profile(
 
 @router.put("/{profile_id}", response_model=LLMProfileResponse)
 async def update_llm_profile(
-    profile_id: int,
+    profile_id: str,
     payload: LLMProfileUpdate,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
@@ -341,7 +341,7 @@ async def update_llm_profile(
 
 @router.delete("/{profile_id}/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_llm_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -364,7 +364,7 @@ async def delete_llm_profile(
 
 @router.post("/{profile_id}/set-default", response_model=LLMProfileResponse)
 async def set_default_llm_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
 ):

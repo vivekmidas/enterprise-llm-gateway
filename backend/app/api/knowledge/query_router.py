@@ -15,7 +15,7 @@ Debug/admin endpoints kept for diagnostics:
   POST /api/knowledge/retrieve  (admin only — retrieval without generation)
   POST /api/knowledge/generate  (admin only — generation from provided context)
 """
-import logging
+import structlog
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -40,7 +40,7 @@ from app.nodes.built_in.kb.response_generation_service import ResponseGeneration
 from app.nodes.built_in.kb.rag_service import RAGService
 from app.core.dependencies.retrieval import get_rag_service
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -96,11 +96,26 @@ async def rag_query(
     """
     customer_id = current_user.customer_id
 
+    logger.info(
+        "query_router_rag_started",
+        customer_id=customer_id,
+        user_id=current_user.id,
+        knowledge_base_ids=payload.knowledge_base_ids,
+        profile_id=payload.profile_id,
+    )
+
     # Resolve profile settings
     resolver = ProfileResolver(db=db)
     profile = await resolver.resolve(
         profile_id=payload.profile_id,
         customer_id=customer_id,
+    )
+
+    logger.info(
+        "query_router_profile_resolved",
+        customer_id=customer_id,
+        resolved_profile_id=profile.id if profile else None,
+        top_k=payload.top_k or profile.search.top_k,
     )
 
     top_k = payload.top_k or profile.search.top_k

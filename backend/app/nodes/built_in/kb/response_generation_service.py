@@ -108,6 +108,13 @@ class ResponseGenerationService:
             HumanMessage(content=user_prompt),
         ]
 
+        logger.info(
+            "response_generation_profile_resolved",
+            customer_id=request.customer_id,
+            llm_config_id=llm_config_id,
+            max_tokens=max_tokens_to_use,
+        )
+
         logger.info("response_generation_calling_llm", provider=self.llm_router.provider)
 
         try:
@@ -133,6 +140,7 @@ class ResponseGenerationService:
                 or "dont know" in normalized_answer
                 or "don t know" in normalized_answer
             ):
+                logger.info("response_generation_answer_normalized", raw_answer=answer[:100], mapped_to="no answer")
                 answer = "no answer"
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)

@@ -17,12 +17,12 @@ class KnowledgeBaseUpdate(BaseModel):
 
 
 class KnowledgeBaseResponse(BaseModel):
-    id: int
+    id: str
     name: str
     description: Optional[str]
     status: str
-    customer_id: int
-    created_by: int
+    customer_id: str
+    created_by: str
     settings: Optional[Dict[str, Any]]
     created_at: str
     updated_at: str
@@ -44,10 +44,10 @@ class KnowledgeDocumentUpdate(BaseModel):
 
 
 class KnowledgeDocumentResponse(BaseModel):
-    id: int
-    knowledge_base_id: int
-    customer_id: int
-    created_by: int
+    id: str
+    knowledge_base_id: str
+    customer_id: str
+    created_by: str
 
     name: str
     source_type: str
@@ -69,7 +69,7 @@ class KnowledgeDocumentResponse(BaseModel):
 
 class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)
-    knowledge_base_ids: list[int]
+    knowledge_base_ids: list[str]
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     enable_reranking: Optional[bool] = None
@@ -81,17 +81,17 @@ class RetrievalRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 class Citation(BaseModel):
-    document_id: int
+    document_id: str
     document_name: str
     chunk_index: int
 
 
 class RetrievalResult(BaseModel):
     rank: int
-    chunk_id: int
-    document_id: int
+    chunk_id: str
+    document_id: str
     document_name: str
-    knowledge_base_id: int
+    knowledge_base_id: str
     content: str
 
     score: float
@@ -106,14 +106,14 @@ class ResponseGenerationRequest(BaseModel):
     context: Any  # Should map to RetrievalContext
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
-    customer_id: Optional[int] = None
+    customer_id: Optional[str] = None
     llm_config: Optional[Dict[str, Any]] = None
-    llm_config_id: Optional[int] = None
+    llm_config_id: Optional[str] = None
 
 
 class RAGRequest(BaseModel):
     query: str = Field(min_length=1)
-    knowledge_base_ids: list[int]
+    knowledge_base_ids: list[str]
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     max_context_tokens: int = Field(default=6000, ge=500)
@@ -121,5 +121,5 @@ class RAGRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
     llm_config: Optional[Dict[str, Any]] = None
-    llm_config_id: Optional[int] = None
+    llm_config_id: Optional[str] = None
 

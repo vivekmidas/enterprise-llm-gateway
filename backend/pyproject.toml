@@ -36,6 +36,9 @@ dependencies = [
     "google-auth-oauthlib",
     "msai",
     "aiosqlite",
+    # Added for MySQL AsyncEngine connection support
+    "aiomysql",
+    "pymysql",
     "sqlalchemy",
     "langchain-openai",
     "presidio_anonymizer",

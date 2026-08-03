@@ -19,7 +19,7 @@ class LLMProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = Field(default=None)
     is_default: bool = Field(default=False)
-    customer_id: Optional[int] = Field(default=None)
+    customer_id: Optional[str] = Field(default=None)
     settings: Union[ProfileSettings, Dict[str, Any]] = Field(default_factory=ProfileSettings)
 
 
@@ -31,11 +31,11 @@ class LLMProfileUpdate(BaseModel):
 
 
 class LLMProfileResponse(BaseModel):
-    id: int
+    id: str
     name: str
     description: Optional[str]
-    customer_id: int
-    created_by: int
+    customer_id: str
+    created_by: str
     is_default: bool
     settings: Dict[str, Any]
     created_at: str
@@ -49,8 +49,8 @@ class LLMProfileResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PlaygroundTestRequest(BaseModel):
-    profile_id: Optional[int] = Field(default=None)
-    knowledge_base_ids: List[int] = Field(default_factory=list)
+    profile_id: Optional[str] = Field(default=None)
+    knowledge_base_ids: List[str] = Field(default_factory=list)
     query: str = Field(min_length=1)
     chat_history: Optional[List[Dict[str, Any]]] = Field(default=None)
 

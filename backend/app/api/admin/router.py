@@ -219,7 +219,7 @@ async def create_customer(
 
 @router.put("/customers/{customer_id}", response_model=dict)
 async def update_customer(
-    customer_id: int,
+    customer_id: str,
     customer_data: dict,
     current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -272,12 +272,12 @@ async def update_customer(
 
 @router.delete("/customers/{customer_id}", status_code=204)
 async def delete_customer(
-    customer_id: int,
+    customer_id: str,
     current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Deletes a customer tenant (System Admin only)."""
-    if customer_id == 0:
+    if customer_id == "":
         raise HTTPException(status_code=400, detail="System customer/account cannot be deleted")
 
     result = await db.execute(select(CustomerDB).where(CustomerDB.id == customer_id))
@@ -303,7 +303,7 @@ async def delete_customer(
 
 @router.post("/customers/{customer_id}/users", response_model=dict, status_code=201)
 async def create_customer_user(
-    customer_id: int,
+    customer_id: str,
     user_data: dict,
     current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -391,7 +391,7 @@ async def get_customer_nodes(
 
 @router.put("/customers/{customer_id}/nodes", response_model=dict)
 async def configure_customer_nodes_bulk(
-    customer_id: int,
+    customer_id: str,
     payload: dict,
     current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)

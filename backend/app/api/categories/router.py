@@ -37,7 +37,7 @@ async def create_category(category_in: CategoryCreate, db: AsyncSession = Depend
     return db_category
 
 @router.get("/{category_id}", response_model=CategoryResponse)
-async def get_category(category_id: int, db: AsyncSession = Depends(get_db)):
+async def get_category(category_id: str, db: AsyncSession = Depends(get_db)):
     """Fetches a single category by ID."""
     result = await db.execute(select(CategoryDB).where(CategoryDB.id == category_id))
     category = result.scalar_one_or_none()
@@ -47,7 +47,7 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db)):
     return category
 
 @router.put("/{category_id}", response_model=CategoryResponse)
-async def update_category(category_id: int, category_in: CategoryUpdate, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
+async def update_category(category_id: str, category_in: CategoryUpdate, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
     """Updates an existing category."""
     result = await db.execute(select(CategoryDB).where(CategoryDB.id == category_id))
     db_category = result.scalar_one_or_none()
@@ -65,7 +65,7 @@ async def update_category(category_id: int, category_in: CategoryUpdate, db: Asy
     return db_category
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_category(category_id: int, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
+async def delete_category(category_id: str, db: AsyncSession = Depends(get_db), user=Depends(require_system_admin)):
     """Deletes a category."""
     logger.info("delete_category_request", category_id=category_id)
     result = await db.execute(select(CategoryDB).where(CategoryDB.id == category_id))

@@ -86,7 +86,7 @@ class ProviderPresetUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 class ProviderPresetResponse(ProviderPresetBase):
-    id: int
+    id: str
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

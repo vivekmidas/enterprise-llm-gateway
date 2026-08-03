@@ -34,7 +34,7 @@ router = APIRouter()
 @router.post("/bases", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
-    customer_id: Optional[int] = Query(None),
+    customer_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -57,7 +57,7 @@ async def create_knowledge_base(
             description=payload.description,
             status="active",
             customer_id=target_customer_id,
-            created_by=int(current_user.id),
+            created_by=str(current_user.id),
             settings=payload.settings or {},
         )
         db.add(db_kb)
@@ -102,7 +102,7 @@ async def create_knowledge_base(
 
 @router.get("/bases", response_model=list[KnowledgeBaseResponse])
 async def list_knowledge_bases(
-    customer_id: Optional[int] = Query(None),
+    customer_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -120,7 +120,7 @@ async def list_knowledge_bases(
 
 @router.put("/bases/{kb_id}", response_model=KnowledgeBaseResponse)
 async def update_knowledge_base(
-    kb_id: int,
+    kb_id: str,
     payload: KnowledgeBaseUpdate,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
@@ -159,7 +159,7 @@ async def update_knowledge_base(
 
 @router.delete("/bases/{kb_id}", status_code=status.HTTP_200_OK)
 async def delete_knowledge_base(
-    kb_id: int,
+    kb_id: str,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):

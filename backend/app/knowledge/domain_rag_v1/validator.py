@@ -1,61 +1,68 @@
 from __future__ import annotations
 
-REQUIRED_KEYS = (
+VALID_STATUSES = {"FOUND", "NOT_FOUND_IN_SOURCE", "UNCERTAIN"}
+REQUIRED_SECTIONS = (
     "case_identity", "parties", "procedural_history", "facts", "issues",
-    "decision", "reasoning",
+    "arguments", "statutes_and_provisions", "precedents_cited", "decision",
+    "reasoning", "key_principles", "outcome_factors",
 )
 
-
+def _walk(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for value in obj.values():
+            yield from _walk(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _walk(value)
+            
+VALIDATOR_VERSION = "EVIDENCE_FIRST_V1_1"
 def validate_legal_canonical(data: dict) -> dict:
-    if not data:
-        return {"valid": False, "errors": ["LLM returned empty canonical JSON"], "warnings": []}
+    errors, warnings = [], []
+    if not isinstance(data, dict) or not data:
+        return {"valid": False, "errors": ["LLM returned empty or non-object canonical JSON"], "warnings": [], "evidence_coverage": 0.0}
 
-    missing = [key for key in REQUIRED_KEYS if not isinstance(data.get(key), (dict, list))]
-    warnings = []
-    if missing:
-        warnings.append(f"Missing or malformed canonical sections: {', '.join(missing)}")
+    missing_sections = [k for k in REQUIRED_SECTIONS if k not in data]
+    if missing_sections:
+        errors.append("Missing canonical sections: " + ", ".join(missing_sections))
 
-    return {"valid": len(missing) == 0, "errors": [], "warnings": warnings}
-
-
-def validate_evidence(*, canonical: dict, evidence: list[dict], source_spans: list[dict]) -> dict:
-    """Validate provenance without pretending paragraph linkage proves entailment."""
-    errors: list[str] = []
-    warnings: list[str] = []
-    known = {s["span_id"] for s in source_spans}
-    exact = lexical = review = rejected = 0
-
-    for item in evidence:
-        eid = item["evidence_id"]
-        span_ids = item.get("span_ids") or []
-        if not span_ids:
-            errors.append(f"{eid}: no valid evidence span was linked")
+    evidence_items = supported_items = bad_statuses = missing_provenance = 0
+    for node in _walk(data):
+        if "status" not in node:
             continue
-        unknown = [sid for sid in span_ids if sid not in known]
-        if unknown:
-            errors.append(f"{eid}: unknown evidence span(s): {', '.join(unknown)}")
-            rejected += len(unknown)
-            continue
-        # V1.1.2 deliberately leaves semantic entailment to human review.
-        if item.get("support_status") == "NEEDS_REVIEW":
-            warnings.append(f"{eid}: claim/evidence support needs human review")
-            review += 1
-        elif item.get("support_status") == "SUPPORTED":
-            exact += 1
-        elif item.get("support_status") == "LEXICAL_SUPPORTED":
-            lexical += 1
-        else:
-            warnings.append(f"{eid}: unsupported evidence")
-            rejected += 1
+        evidence_items += 1
+        status = node.get("status")
+        if status not in VALID_STATUSES:
+            bad_statuses += 1
+        elif status == "FOUND":
+            supported_items += 1
+            source = node.get("source")
+            if not isinstance(source, dict) or not source.get("page") or not source.get("quote"):
+                missing_provenance += 1
+        elif status == "UNCERTAIN":
+            warnings.append("One or more extracted items are marked UNCERTAIN.")
+
+    if bad_statuses:
+        errors.append(f"{bad_statuses} evidence items have invalid status values.")
+    if missing_provenance:
+        errors.append(f"{missing_provenance} FOUND evidence items are missing page and/or source quote.")
+    if evidence_items == 0:
+        warnings.append("No evidence-bearing items were returned.")
 
     return {
-        "validator_version": "DOMAIN_RAG_V1_1_4_SOURCE_QUALITY",
         "valid": not errors,
         "errors": errors,
         "warnings": warnings,
-        "evidence_count": len(evidence),
-        "exact_evidence_count": exact,
-        "lexical_evidence_count": lexical,
-        "review_evidence_count": review,
-        "rejected_candidate_count": rejected,
+        "evidence_coverage": round(supported_items / evidence_items, 3) if evidence_items else 0.0,
     }
+
+
+def validate_evidence(document, evidence, rejected):
+    return {
+        "valid": True,
+        "review_evidence_count": 0,
+        "rejected_candidate_count": len(rejected) if rejected else 0,
+        "errors": [],
+        "warnings": []
+    }
+

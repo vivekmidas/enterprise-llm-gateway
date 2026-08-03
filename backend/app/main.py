@@ -72,11 +72,17 @@ async def startup_event():
     await workflow_auto_discover()
     logger.info("workflows_registered")
 
-   
+    # Start EKP V3 Independent Background Worker Cron Loop
+    import asyncio
+    from app.knowledge.ekp_v3.worker import start_background_cron_loop
+    asyncio.create_task(start_background_cron_loop(30))
+    logger.info("ekp_v3_background_worker_started")
 from app.api.llm_profiles import router as llm_profiles_router
 from app.api.profiles.router import router as profiles_router
 from app.api.playground import router as playground_router
 from app.api.admin.provider_presets import router as provider_presets_router
+
+from app.api.knowledge.ekp_router import router as ekp_router
 
 app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
@@ -92,12 +98,14 @@ app.include_router(email_webhooks.router)
 app.include_router(run_webhooks.router)
 app.include_router(users.router)
 app.include_router(knowledge_router)
+app.include_router(ekp_router)
 app.include_router(jobs_router)
 app.include_router(company_router)
 app.include_router(llm_profiles_router)   # customer specific LLM profiles router with role projection
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
 app.include_router(provider_presets_router)
+
 
 
 

@@ -6,7 +6,7 @@ class User (BaseModel):
     id: str
     role: str
     email: str
-    customer_id: Optional[int] = None
+    customer_id: Optional[str] = None
     domain: Optional[str] = None
     name: Optional[str] = None
 

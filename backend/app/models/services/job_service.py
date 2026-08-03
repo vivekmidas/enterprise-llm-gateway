@@ -15,11 +15,11 @@ class JobService:
     async def create_job(
         self,
         *,
-        customer_id: int,
+        customer_id: str,
         job_type,
         entity_type,
-        entity_id: int | None = None,
-        created_by: int | None = None,
+        entity_id: str | None = None,
+        created_by: str | None = None,
         metadata: dict | None = None,
     ) -> JobDB:
 
@@ -79,7 +79,7 @@ class JobService:
 
     async def update_progress(
         self,
-        job_id: int,
+        job_id: str,
         progress: int,
         message: str | None = None,
     ):

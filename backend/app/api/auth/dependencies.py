@@ -38,7 +38,7 @@ async def get_current_user(
     stmt = (
         select(UserDB, CustomerDB.domain)
         .outerjoin(CustomerDB, UserDB.customer_id == CustomerDB.id)
-        .where(UserDB.id == int(user_id))
+        .where(UserDB.id == user_id)
     )
     result = await db.execute(stmt)
     row = result.first()

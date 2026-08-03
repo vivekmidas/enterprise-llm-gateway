@@ -1,6 +1,6 @@
 import asyncio
 import hashlib
-import logging
+import structlog
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,7 +19,7 @@ from app.utils.text_splitter import chunk_text
 from app.knowledge.embeddings import get_embedding_provider_for_model, get_embedding_provider
 from app.knowledge.vector_store import vector_store
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 settings = get_settings()
 
 
@@ -40,6 +40,8 @@ class DocumentIngestionService:
         # Read content and validate size
         content = await upload_file.read()
         self._validate_size(content)
+
+        logger.info("ingestion_size_validated", filename=upload_file.filename, size_bytes=len(content))
 
         # Compute checksum
         checksum = hashlib.sha256(content).hexdigest()
@@ -67,7 +69,7 @@ class DocumentIngestionService:
             job_type=JobType.DOCUMENT_INDEX,
             entity_type=EntityType.DOCUMENT,
             entity_id=None,
-            created_by=int(current_user.id),
+            created_by=current_user.id,
         )
 
         # Resolve or create the mapped KnowledgeCollectionDB
@@ -90,6 +92,9 @@ class DocumentIngestionService:
             db.add(collection)
             await db.commit()
             await db.refresh(collection)
+            logger.info("ingestion_collection_created", collection_name=collection.name, knowledge_base_id=knowledge_base_id)
+        else:
+            logger.info("ingestion_collection_resolved", collection_name=collection.name, knowledge_base_id=knowledge_base_id)
 
         # Get embedding provider settings for document metadata
         provider_name = settings.EMBEDDING_PROVIDER
@@ -115,12 +120,11 @@ class DocumentIngestionService:
         document = KnowledgeDocumentDB(
             knowledge_base_id=knowledge_base_id,
             customer_id=target_customer_id,
-            created_by=int(current_user.id),
+            created_by=current_user.id,
             name=upload_file.filename or "unnamed-document",
             source_type="upload",
             mime_type=upload_file.content_type,
             status="pending",
-# END BLOCK
             file_path=str(file_path),
             file_size=len(content),
             checksum=checksum,
@@ -140,6 +144,8 @@ class DocumentIngestionService:
         job.entity_id = document.id
         await db.commit()
         await db.refresh(job)
+
+        logger.info("ingestion_job_dispatched", job_id=job.id, document_id=document.id, customer_id=target_customer_id)
 
         # Launch background task
         asyncio.create_task(
@@ -286,7 +292,7 @@ class DocumentIngestionService:
                 )
                 document = res.scalar_one_or_none()
                 if document:
-                    document.status = "failed"
+                    document.status = "Error"
                     document.error_message = str(exc)[:2000]
                     await db.commit()
 

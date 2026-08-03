@@ -37,7 +37,7 @@ _MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    kb_id: int,
+    kb_id: str,
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
@@ -126,7 +126,7 @@ async def upload_document(
 
 @router.get("/bases/{kb_id}/documents", response_model=List[KnowledgeDocumentResponse])
 async def list_documents(
-    kb_id: int,
+    kb_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -154,8 +154,8 @@ async def list_documents(
 
 @router.get("/bases/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)
 async def get_document(
-    kb_id: int,
-    doc_id: int,
+    kb_id: str,
+    doc_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -181,8 +181,8 @@ async def get_document(
 
 @router.put("/bases/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)
 async def update_document(
-    kb_id: int,
-    doc_id: int,
+    kb_id: str,
+    doc_id: str,
     payload: KnowledgeDocumentUpdate,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
@@ -221,14 +221,20 @@ async def update_document(
         raise HTTPException(status_code=500, detail=f"Failed to update document: {exc}")
 
 
+from pydantic import BaseModel
+
+class BulkDeleteRequest(BaseModel):
+    document_ids: List[str]
+
+
 @router.delete("/bases/{kb_id}/documents/{doc_id}", status_code=status.HTTP_200_OK)
 async def delete_document(
-    kb_id: int,
-    doc_id: int,
+    kb_id: str,
+    doc_id: str,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a specific document and its vector embeddings."""
+    """Delete a specific document and perform cascading cleanup across disk storage, EKP tables, chunks, and vector embeddings."""
     if current_user.role == "system_admin":
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.id == doc_id,
@@ -247,6 +253,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found.")
 
     try:
+        # 1. Delete Qdrant Vector DB embeddings
         if doc.collection_name:
             try:
                 from app.knowledge.vector_store import vector_store
@@ -257,6 +264,31 @@ async def delete_document(
             except Exception as e:
                 logger.error("failed_to_delete_qdrant_points", extra={"doc_id": doc.id, "error": str(e)})
 
+        # 2. Delete file on disk library if exists
+        if doc.file_path and os.path.exists(doc.file_path):
+            try:
+                os.remove(doc.file_path)
+            except Exception as fe:
+                logger.error("failed_to_delete_stored_file", extra={"file_path": doc.file_path, "error": str(fe)})
+
+        # 3. Cascading cleanup of matching EKP records
+        try:
+            from app.models.db_models import EKPDocumentDB, EKPParagraphDB, EKPEntityDB, EKPRelationshipDB, EKPJobDB
+            ekp_stmt = select(EKPDocumentDB).where(
+                EKPDocumentDB.knowledge_base_id == str(kb_id),
+                EKPDocumentDB.filename == doc.name
+            )
+            ekp_docs = (await db.execute(ekp_stmt)).scalars().all()
+            for ekp_doc in ekp_docs:
+                await db.execute(delete(EKPRelationshipDB).where(EKPRelationshipDB.document_id == ekp_doc.id))
+                await db.execute(delete(EKPEntityDB).where(EKPEntityDB.document_id == ekp_doc.id))
+                await db.execute(delete(EKPParagraphDB).where(EKPParagraphDB.document_id == ekp_doc.id))
+                await db.execute(delete(EKPJobDB).where(EKPJobDB.document_id == ekp_doc.id))
+                await db.execute(delete(EKPDocumentDB).where(EKPDocumentDB.id == ekp_doc.id))
+        except Exception as ekp_err:
+            logger.error("failed_to_delete_ekp_records", extra={"doc_id": doc.id, "error": str(ekp_err)})
+
+        # 4. Delete chunks and KnowledgeDocumentDB row
         await db.execute(delete(KnowledgeChunkDB).where(KnowledgeChunkDB.document_id == doc_id))
         await db.execute(delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == doc_id))
         await db.commit()
@@ -266,6 +298,88 @@ async def delete_document(
         logger.exception("delete_document_failed")
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {exc}")
+
+
+@router.post("/bases/{kb_id}/documents/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_documents(
+    kb_id: int,
+    payload: BulkDeleteRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk delete multiple documents with cascading cleanup across lib storage, EKP documents, EKP paragraphs, entities, and Vector DB."""
+    deleted_count = 0
+    errors = []
+
+    for doc_id in payload.document_ids:
+        if current_user.role == "system_admin":
+            doc_stmt = select(KnowledgeDocumentDB).where(
+                KnowledgeDocumentDB.id == doc_id,
+                KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            )
+        else:
+            customer_id = require_tenant(current_user)
+            doc_stmt = select(KnowledgeDocumentDB).where(
+                KnowledgeDocumentDB.id == doc_id,
+                KnowledgeDocumentDB.knowledge_base_id == kb_id,
+                KnowledgeDocumentDB.customer_id == customer_id,
+            )
+
+        doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+        if not doc:
+            continue
+
+        try:
+            # 1. Delete vector embeddings
+            if doc.collection_name:
+                try:
+                    from app.knowledge.vector_store import vector_store
+                    await vector_store.delete_document_points(
+                        collection_name=doc.collection_name,
+                        document_id=doc.id,
+                    )
+                except Exception as e:
+                    logger.error("failed_to_delete_qdrant_points", extra={"doc_id": doc.id, "error": str(e)})
+
+            # 2. Delete file from disk library
+            if doc.file_path and os.path.exists(doc.file_path):
+                try:
+                    os.remove(doc.file_path)
+                except Exception as fe:
+                    logger.error("failed_to_delete_stored_file", extra={"file_path": doc.file_path, "error": str(fe)})
+
+            # 3. Cascading cleanup of matching EKP records
+            try:
+                from app.models.db_models import EKPDocumentDB, EKPParagraphDB, EKPEntityDB, EKPRelationshipDB, EKPJobDB
+                ekp_stmt = select(EKPDocumentDB).where(
+                    EKPDocumentDB.knowledge_base_id == str(kb_id),
+                    EKPDocumentDB.filename == doc.name
+                )
+                ekp_docs = (await db.execute(ekp_stmt)).scalars().all()
+                for ekp_doc in ekp_docs:
+                    await db.execute(delete(EKPRelationshipDB).where(EKPRelationshipDB.document_id == ekp_doc.id))
+                    await db.execute(delete(EKPEntityDB).where(EKPEntityDB.document_id == ekp_doc.id))
+                    await db.execute(delete(EKPParagraphDB).where(EKPParagraphDB.document_id == ekp_doc.id))
+                    await db.execute(delete(EKPJobDB).where(EKPJobDB.document_id == ekp_doc.id))
+                    await db.execute(delete(EKPDocumentDB).where(EKPDocumentDB.id == ekp_doc.id))
+            except Exception as ekp_err:
+                logger.error("failed_to_delete_ekp_records", extra={"doc_id": doc.id, "error": str(ekp_err)})
+
+            # 4. Delete chunks and doc DB record
+            await db.execute(delete(KnowledgeChunkDB).where(KnowledgeChunkDB.document_id == doc_id))
+            await db.execute(delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == doc_id))
+            await db.commit()
+            deleted_count += 1
+        except Exception as exc:
+            logger.exception("bulk_delete_document_single_failed", extra={"doc_id": doc_id})
+            await db.rollback()
+            errors.append(f"Doc {doc_id}: {exc}")
+
+    return {
+        "message": f"Successfully deleted {deleted_count} document(s).",
+        "deleted_count": deleted_count,
+        "errors": errors
+    }
 
 
 # ---------------------------------------------------------------------------

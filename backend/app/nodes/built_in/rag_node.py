@@ -256,6 +256,7 @@ class RAGNode(BaseNode):
 
             customer_id = self._resolve_customer_id(inp)
             if customer_id is None:
+                self.logger.error("rag_node_missing_tenant_scope", trace_id=inp.trace_id)
                 return NodeOutput(
                     trace_id=inp.trace_id,
                     data=inp.data,
@@ -264,6 +265,16 @@ class RAGNode(BaseNode):
                     error_message="customer_id is required for knowledge retrieval.",
                     violations=["tenant_scope_missing"],
                 )
+
+            self.logger.info(
+                "rag_node_parameters_resolved",
+                trace_id=inp.trace_id,
+                customer_id=customer_id,
+                model=model_name,
+                temperature=temperature,
+                top_k=top_k,
+                score_threshold=score_threshold,
+            )
 
             # Determine Knowledge Bases to query
             kb_ids = self._parse_kb_ids(kb_input)
@@ -281,6 +292,13 @@ class RAGNode(BaseNode):
                     )
                     kb_res = await db.execute(kb_stmt)
                     kb_ids = list(kb_res.scalars().all())
+
+                if not kb_ids:
+                    self.logger.warning(
+                        "rag_node_no_kbs_found",
+                        trace_id=inp.trace_id,
+                        customer_id=customer_id,
+                    )
 
             # Perform retrieval if there are KBs to query
             chunks = []

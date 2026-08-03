@@ -161,6 +161,7 @@ class RetrievalService:
                 "model": request.rerank_model or tenant_settings.get("rerank_model") or settings.RERANK_MODEL,
                 "candidate_limit": request.rerank_limit or tenant_settings.get("rerank_limit") or tenant_settings.get("rerank_candidate_limit") or settings.RERANK_CANDIDATE_LIMIT,
             }
+        logger.info("retrieval_step_rerank_config_resolved", should_rerank=should_rerank, rerank_info=rerank_info)
 
         response = RetrievalResponse(
             context=context_obj,

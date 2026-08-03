@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str | None = None
     REDIS_CACHE_TTL: int = 3600 * 6  # 6 hours for compiled graphs
     ENVIRONMENT: str = "development"
-    DATABASE_URL: str = "sqlite+aiosqlite:///./enterprise_gateway.db"
+    # Changed default DATABASE_URL from SQLite to MySQL async connection string
+    DATABASE_URL: str = "mysql+aiomysql://root:password@localhost:3306/enterprise_gateway"
     SECRET_KEY: str = "super-secret-change-this-in-production"
     ISSUER: str = "http://localhost.com"
     AUDIENCE: str = "enterprise"    

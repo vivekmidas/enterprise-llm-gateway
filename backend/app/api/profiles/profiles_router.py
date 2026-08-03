@@ -18,13 +18,58 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth.dependencies import get_current_user, require_tenant, require_admin_or_system_admin
 from app.core.database import get_db
 from app.core.types.users import User
-from app.models.db_models import CustomerDB, LLMProfileDB
+from app.models.db_models import CustomerDB, LLMProfileDB, ProviderPresetDB
 from app.schemas.llm_profile_schemas import LLMProfileCreate, LLMProfileResponse, LLMProfileUpdate
 from app.api.llm_profiles import project_profile_fields
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ==============================================================================
+# BLOCK COMMENT: GET /api/profiles/catalog
+# Returns available providers and models for tenant profile creation.
+# Sourced from active ProviderPresetDB entries defined by System Admin.
+# ==============================================================================
+@router.get("/catalog")
+async def get_catalog(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return available LLM providers and models for tenant profile creation."""
+    result = await db.execute(
+        select(ProviderPresetDB).where(ProviderPresetDB.is_active.is_(True))
+    )
+    presets = result.scalars().all()
+
+    providers = []
+    for p in presets:
+        providers.append({
+            "key": p.provider_key,
+            "name": p.name or p.provider_key,
+            "display_name": p.display_name or p.name or p.provider_key,
+            "description": p.description,
+            "base_url": p.base_url,
+            "chat_models": p.chat_models or [],
+            "default_chat_model": p.default_chat_model,
+            "embedding_models": p.embedding_models or [],
+            "default_embedding_model": p.default_embedding_model,
+            "default_embedding_dimension": p.default_embedding_dimension,
+            "rerank_models": p.rerank_models or [],
+            "default_rerank_model": p.default_rerank_model,
+            "endpoints": {
+                "chat": p.search_endpoint or "/api/chat",
+                "embedding": p.embedding_endpoint or "/api/embeddings",
+                "rerank": p.rerank_endpoint or "/api/chat",
+            },
+            "defaults": {
+                "temperature": p.default_temperature or 0.7,
+                "max_tokens": p.default_max_tokens or 1024,
+            },
+        })
+
+    return {"providers": providers}
 
 
 # ==============================================================================

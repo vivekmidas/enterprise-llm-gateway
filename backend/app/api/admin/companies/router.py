@@ -23,26 +23,26 @@ logger = logger.bind(module=__name__)
 async def _resolve_target_customer_id(
     db: AsyncSession,
     current_user: User,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
-    payload_customer_id: Optional[int] = None,
-) -> int:
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    payload_customer_id: Optional[str] = None,
+) -> str:
     target = customer_id or tenant_id or payload_customer_id
     if current_user.role != "system_admin":
         if current_user.customer_id is not None:
-            return current_user.customer_id
+            return str(current_user.customer_id)
         raise HTTPException(status_code=400, detail="User is not associated with a customer tenant")
 
     if target is not None:
-        return target
+        return str(target)
     if current_user.customer_id is not None:
-        return current_user.customer_id
+        return str(current_user.customer_id)
 
     # Default to first customer tenant for system_admin if none specified
     res = await db.execute(select(CustomerDB.id).order_by(CustomerDB.id.asc()).limit(1))
     first_id = res.scalar_one_or_none()
     if first_id is not None:
-        return first_id
+        return str(first_id)
 
     raise HTTPException(status_code=400, detail="No customer tenants exist in system")
 
@@ -144,8 +144,8 @@ async def update_company_settings(
 
 @router.get("/llm-profiles", response_model=List[dict])
 async def get_llm_profiles(
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -187,8 +187,8 @@ async def get_llm_profiles(
 @router.post("/llm-profiles", response_model=dict)
 async def create_llm_profile(
     payload: dict,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)

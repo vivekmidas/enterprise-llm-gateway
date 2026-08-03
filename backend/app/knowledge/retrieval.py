@@ -148,7 +148,7 @@ async def retrieve(
             if cache_key not in embedding_cache:
                 try:
                     # Step 5: Generate query embedding
-                    logger.info("retrieval_step_5_generate_embedding_started", provider=provider_name, model=model_name, collection=coll.name)
+                    logger.info("retrieval_step_5_embedding_cache_miss", provider=provider_name, model=model_name, collection=coll.name)
                     from app.knowledge.embeddings import get_embedding_provider_for_model
                     provider = get_embedding_provider_for_model(
                         provider_name=provider_name,
@@ -166,6 +166,8 @@ async def retrieve(
                         error=str(e),
                     )
                     return []
+            else:
+                logger.info("retrieval_step_5_embedding_cache_hit", provider=provider_name, model=model_name, collection=coll.name)
 
             query_vector = embedding_cache[cache_key]
 
@@ -215,6 +217,8 @@ async def retrieve(
                         vector_score_map[chunk_id] = float(point.score)
                 if coll_chunk_ids:
                     ranked_lists.append(coll_chunk_ids)
+        else:
+            logger.info("retrieval_step_6_vector_search_skipped", approach=active_approach)
 
         # Keyword Search (MySQL) - hybrid search part of Step 6
         keyword_chunk_ids = []
@@ -244,17 +248,21 @@ async def retrieve(
                 )
                 allowed_ids = set(filtered_result.scalars().all())
                 keyword_chunk_ids = [cid for cid in keyword_chunk_ids if cid in allowed_ids]
+                logger.info("retrieval_step_6_keyword_document_filter_applied", allowed_count=len(keyword_chunk_ids))
 
             if keyword_chunk_ids:
                 ranked_lists.append(keyword_chunk_ids)
+        else:
+            logger.info("retrieval_step_6_keyword_search_skipped", approach=active_approach)
 
         # =========================================================
         # Step 7: Merge results
         # =========================================================
-        logger.info("retrieval_step_7_merge_results_started", lists_count=len(ranked_lists))
+        logger.info("retrieval_step_7_merge_results_started", lists_count=len(ranked_lists), enable_rrf=active_enable_rrf)
         if active_enable_rrf:
             fused_results = reciprocal_rank_fusion(ranked_lists)
         else:
+            logger.info("retrieval_step_7_fusion_rrf_bypassed", approach=active_approach)
             # Bypass RRF. Merge results prioritizing vector, then keyword
             fused_results = []
             seen = set()
@@ -307,6 +315,13 @@ async def retrieve(
                 len(fused_results),
                 top_k,
             )
+
+        logger.info(
+            "retrieval_step_selection_limit_calculated",
+            should_rerank=should_rerank,
+            selection_limit=selection_limit,
+            top_k=top_k,
+        )
 
         # Resolve more candidates (e.g. up to 50) for raw candidates list in diagnostics
         resolved_limit = min(len(fused_results), max(selection_limit, 50))
@@ -386,7 +401,11 @@ async def retrieve(
             seen_contents.add(normalized_content)
 
             candidates.append(item)
-        logger.info("retrieval_step_8_remove_duplicates_success", final_count=len(candidates))
+        logger.info(
+            "retrieval_step_8_remove_duplicates_success",
+            final_count=len(candidates),
+            discarded_duplicate_count=len(discarded_duplicates_list),
+        )
 
         # =========================================================
         # 7. Optional Reranking
@@ -398,6 +417,7 @@ async def retrieve(
 
         discarded_reranked_list = []
         if reranker and candidates:
+            logger.info("retrieval_step_reranker_executing", candidate_count=len(candidates[:selection_limit]), top_k=top_k)
             candidates_to_rerank = candidates[:selection_limit]
             candidates_reranked = await reranker.rerank(
                 query=query,
@@ -411,7 +431,9 @@ async def retrieve(
                 item for item in candidates_to_rerank if item["chunk_id"] not in final_ids
             ]
             discarded_reranked_list.extend(candidates[selection_limit:])
+            logger.info("retrieval_step_reranker_success", final_count=len(final_candidates), discarded_count=len(discarded_reranked_list))
         else:
+            logger.info("retrieval_step_reranker_bypassed", should_rerank=should_rerank, has_reranker=bool(reranker))
             final_candidates = candidates[:top_k]
             discarded_reranked_list = candidates[top_k:]
 

@@ -144,6 +144,7 @@ class KnowledgeRetrievalNode(BaseNode):
             customer_id = self._resolve_customer_id(inp)
 
             if customer_id is None:
+                self.logger.error("knowledge_retrieval_missing_tenant_scope", trace_id=inp.trace_id)
                 return NodeOutput(
                     trace_id=inp.trace_id,
                     data=inp.data,
@@ -170,6 +171,13 @@ class KnowledgeRetrievalNode(BaseNode):
                     profile_id=profile_id,
                     customer_id=customer_id,
                 )
+
+            self.logger.info(
+                "knowledge_retrieval_profile_resolved",
+                trace_id=inp.trace_id,
+                profile_id=profile.id if profile else None,
+                customer_id=customer_id,
+            )
 
             # Runtime input can override profile search settings
             knowledge_base_ids = self._normalise_int_list(
@@ -220,6 +228,11 @@ class KnowledgeRetrievalNode(BaseNode):
                     knowledge_base_ids = list(kb_res.scalars().all())
 
                 if not knowledge_base_ids:
+                    self.logger.warning(
+                        "knowledge_retrieval_no_active_kbs_found",
+                        trace_id=inp.trace_id,
+                        customer_id=customer_id,
+                    )
                     output_data = {
                         "answer": "no answer",
                         "chunks": [],

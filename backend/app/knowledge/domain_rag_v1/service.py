@@ -1,146 +1,99 @@
-from __future__ import annotations
-
-from .chunker import LegalChunker
+import structlog
+from .chunker import EvidenceLinkedChunker
 from .config import DomainRAGConfig
-from .extractor import PDFExtractor
-from .source_spans import build_paragraph_spans
-from .evidence import attach_evidence_links
-from .validator import validate_legal_canonical, validate_evidence
+from .evidence import build_evidence
+from .source import PDFSourceExtractor
+from .validator import validate_evidence
 from .domains.legal.llm import DomainLLM
 from .domains.legal.parser import LegalDomainParser
 
-
-PIPELINE_VERSION = "DOMAIN_RAG_V1_1_4_SOURCE_QUALITY"
-
-
-def _remove_empty_material_claims(value):
-    """Remove empty `text` claims while preserving empty sections/lists.
-
-    Domain-neutral cleanup: structured metadata such as `name`, `role`,
-    `court`, etc. is not affected.
-    """
-    if isinstance(value, list):
-        cleaned = []
-        for item in value:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and not text.strip():
-                    continue
-            cleaned.append(_remove_empty_material_claims(item))
-        return cleaned
-
-    if isinstance(value, dict):
-        return {
-            key: _remove_empty_material_claims(child)
-            for key, child in value.items()
-        }
-
-    return value
+logger = structlog.get_logger(__name__)
 
 
 class DomainRAGService:
-    """Domain parsing with paragraph-first, application-owned provenance."""
+    SERVICE_VERSION = "DOMAIN_RAG_V1_1_1_EVIDENCE_LINKED"
 
-    def __init__(self, config: DomainRAGConfig | None = None):
+    def __init__(self, config=None):
         self.config = config or DomainRAGConfig()
-        self.extractor = PDFExtractor(self.config.max_text_chars_per_page)
-        self.chunker = LegalChunker(self.config.chunk_size, self.config.chunk_overlap)
+        self.extractor = PDFSourceExtractor(self.config.max_text_chars_per_page)
+        self.chunker = EvidenceLinkedChunker(self.config.chunk_size, self.config.chunk_overlap)
         self.llm = DomainLLM(self.config.llm_model)
 
-    async def process_pdf(
-        self,
-        *,
-        document_id: int,
-        file_path: str,
-        filename: str,
-        domain: str = "legal",
-    ) -> dict:
+    async def process_pdf(self, *, document_id, file_path, filename, domain="legal"):
         if domain.lower() != "legal":
-            raise ValueError(f"Unsupported domain in V1: {domain}")
+            logger.error("domain_rag_unsupported_domain", domain=domain, document_id=document_id)
+            raise ValueError(f"Unsupported domain in V1.1.1: {domain}")
 
-        extraction = self.extractor.extract(file_path)
-        if not extraction.full_text.strip():
+        logger.info("domain_rag_pdf_processing_started", document_id=document_id, filename=filename, domain=domain)
+
+        source = self.extractor.extract(
+            document_id=document_id, file_path=file_path, filename=filename
+        )
+        if not any(x.strip() for x in source.pages.values()):
+            raise ValueError("No extractable text was found in the PDF. OCR processing is required.")
+        if source.page_count > self.config.max_pages_for_llm:
             raise ValueError(
-                "No extractable text was found in the PDF. OCR processing is required for this document."
-            )
-        if len(extraction.pages) > self.config.max_pages_for_llm:
-            raise ValueError(
-                f"Document has {len(extraction.pages)} pages, exceeding "
+                f"Document has {source.page_count} pages, exceeding "
                 f"DOMAIN_RAG_MAX_PAGES_FOR_LLM={self.config.max_pages_for_llm}."
             )
 
-        source_spans = []
-        for page in extraction.pages:
-            source_spans.extend(build_paragraph_spans(
-                document_id=document_id,
-                page=page.page_number,
-                blocks=page.blocks,
-            ))
-        if not source_spans:
-            raise ValueError("No paragraph source spans could be constructed from the PDF.")
+        blocks = [{"block_id": b.block_id, "page": b.page, "text": b.text} for b in source.blocks]
 
-        source_span_dicts = [s.as_dict() for s in source_spans]
-
-        # The source spans are the cleaned, deterministic representation of
-        # the PDF. Use them as the document text supplied to the LLM rather
-        # than page.get_text("text"), which may contain duplicated PDF-layer
-        # artifacts.
-        normalized_document = "\n\n".join(
-            f"[PAGE {s.page}]\n{s.text}"
-            for s in source_spans
+        canonical, candidates = await LegalDomainParser(self.llm).parse(
+            document_id=document_id, filename=filename, blocks=blocks
         )
 
-        parser = LegalDomainParser(self.llm)
-        canonical = await parser.parse(normalized_document, source_span_dicts)
-
-        # Never retain empty material claims such as an argument object with
-        # only an evidence_span_id. Empty sections are valid; empty claims
-        # are not.
-        canonical = _remove_empty_material_claims(canonical)
-
-        # Application-owned provenance: resolve only IDs actually present in
-        # source_spans. The LLM never controls quote/page/coordinates.
-        evidence = attach_evidence_links(
-            canonical=canonical,
-            document_id=document_id,
-            spans=source_spans,
+        evidence, rejected = build_evidence(document=source, candidates=candidates)
+        validation = validate_evidence(
+            document=source, evidence=evidence, rejected=rejected
         )
+        logger.info("domain_rag_evidence_built", document_id=document_id, evidence_count=len(evidence), rejected_count=len(rejected))
 
-        canonical["_evidence"] = evidence
+        evidence_json = [{
+            "evidence_id": e.evidence_id,
+            "document_id": e.document_id,
+            "block_id": e.block_id,
+            "page": e.page,
+            "quote": e.quote,
+            "evidence_type": e.evidence_type,
+            "support_status": e.support_status,
+            "confidence": e.confidence,
+        } for e in evidence]
+
+        canonical["_evidence"] = evidence_json
+        canonical["_rejected_evidence_candidates"] = rejected
         canonical["extraction"] = {
             "document_id": document_id,
             "filename": filename,
-            "page_count": len(extraction.pages),
-            "ocr_used": extraction.ocr_used,
+            "page_count": source.page_count,
+            "ocr_used": source.ocr_used,
             "extractor": "PyMuPDF",
-            "version": PIPELINE_VERSION,
-            "source_block_count": sum(len(p.blocks) for p in extraction.pages),
-            "source_span_count": len(source_spans),
+            "version": self.SERVICE_VERSION,
+            "source_block_count": len(source.blocks),
         }
 
-        validation = validate_legal_canonical(canonical)
-        evidence_validation = validate_evidence(
-            canonical=canonical,
-            evidence=evidence,
-            source_spans=source_span_dicts,
+        review_required = (
+            not validation["valid"]
+            or validation["review_evidence_count"] > 0
+            or validation["rejected_candidate_count"] > 0
         )
-        validation["validator_version"] = PIPELINE_VERSION
-        validation["warnings"] = validation.get("warnings", []) + evidence_validation["warnings"]
-        validation["errors"] = validation.get("errors", []) + evidence_validation["errors"]
-        validation.update({
-            k: evidence_validation[k]
-            for k in (
-                "evidence_count", "exact_evidence_count", "lexical_evidence_count",
-                "review_evidence_count", "rejected_candidate_count",
-            )
-        })
-        validation["valid"] = bool(validation["valid"] and evidence_validation["valid"])
-
-        chunks = self.chunker.chunk(extraction.full_text, source_spans)
+        logger.info("domain_rag_review_status_calculated", document_id=document_id, review_required=review_required)
 
         return {
             "canonical": canonical,
             "validation": validation,
-            "chunks": chunks,
-            "source_spans": source_span_dicts,
+            "chunks": self.chunker.chunk(source),
+            "source_blocks": [{
+                "block_id": b.block_id,
+                "document_id": b.document_id,
+                "page": b.page,
+                "ordinal": b.ordinal,
+                "text": b.text,
+                "text_hash": b.text_hash,
+                "bbox": b.bbox,
+            } for b in source.blocks],
+            "evidence": evidence_json,
+            "rejected_evidence_candidates": rejected,
+            "status": "REVIEW_REQUIRED" if review_required else "READY_FOR_REVIEW",
+            "service_version": self.SERVICE_VERSION,
         }

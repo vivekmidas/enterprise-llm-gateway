@@ -906,7 +906,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None,
             )
 
 
-async def list_workflows_from_store(customer_id: Optional[int] = None) -> list: 
+async def list_workflows_from_store(customer_id: Optional[str] = None) -> list: 
     """List all available workflows."""
     with tracer.start_as_current_span("list_workflows_from_store"):
         try:

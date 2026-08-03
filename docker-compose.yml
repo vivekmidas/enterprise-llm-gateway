@@ -42,11 +42,21 @@ services:
     restart: unless-stopped
 
   mysql:
-    image: alpine/mysql:latest
+    # Updated MySQL container with root credentials and database initialization
+    image: mysql:8.0
     container_name: gateway-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: enterprise_gateway
     ports:
       - "3306:3306"
     volumes:
       - ./mysql_data:/var/lib/mysql
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
     
