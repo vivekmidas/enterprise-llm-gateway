@@ -140,7 +140,7 @@ def test_llm_profile_selection_policy(in_memory_db):
 
     # Create dummy LLM Profile
     profile = LLMProfileDB(
-        id=99,
+        id="99",
         name="GPT-4o Production Profile",
         is_default=True,
         customer_id=1,
@@ -155,7 +155,7 @@ def test_llm_profile_selection_policy(in_memory_db):
         temp_path = f.name
 
     try:
-        # Phase 1: Registration specifying tenant_id="1" and explicit llm_profile_id=99
+        # Phase 1: Registration specifying tenant_id="1" and explicit llm_profile_id="99"
         doc = pipeline.register_document(
             in_memory_db,
             tenant_id="1",
@@ -163,16 +163,16 @@ def test_llm_profile_selection_policy(in_memory_db):
             filename="acme_contract.txt",
             file_path=temp_path,
             mime_type="text/plain",
-            llm_profile_id=99
+            llm_profile_id="99"
         )
-        assert doc.llm_profile_id == 99
+        assert str(doc.llm_profile_id) == "99"
 
         from app.knowledge.ekp_v3.job_manager import EKPJobManager
         job = EKPJobManager.create_job(in_memory_db, document_id=doc.id)
 
-        # Phase 2: Execution resolves LLM profile 99 and extracts entities
+        # Phase 2: Execution resolves LLM profile "99" and extracts entities
         processed_doc = pipeline.process_document_job(in_memory_db, job_id=job.id)
-        assert processed_doc.llm_profile_id == 99
+        assert str(processed_doc.llm_profile_id) == "99"
         assert processed_doc.processing_stage == "INDEXED"
 
         # Verify Extracted Entities
@@ -245,7 +245,7 @@ def test_kb_settings_profile_inheritance(in_memory_db):
     in_memory_db.commit()
 
     profile = LLMProfileDB(
-        id=88,
+        id="88",
         name="Custom KB Profile",
         is_default=False,
         customer_id=2,
@@ -257,7 +257,7 @@ def test_kb_settings_profile_inheritance(in_memory_db):
         name="Tech Docs KB",
         customer_id=2,
         created_by=20,
-        settings={"llm_profile_id": 88, "embedding_model": "nomic-embed-text"}
+        settings={"llm_profile_id": "88", "embedding_model": "nomic-embed-text"}
     )
     in_memory_db.add_all([profile, kb])
     in_memory_db.commit()
@@ -279,8 +279,8 @@ def test_kb_settings_profile_inheritance(in_memory_db):
 
         resolved = pipeline._resolve_llm_profile(in_memory_db, doc)
         assert resolved is not None
-        assert resolved.id == 88
-        assert doc.llm_profile_id == 88
+        assert str(resolved.id) == "88"
+        assert str(doc.llm_profile_id) == "88"
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -297,8 +297,8 @@ async def test_async_resolve_llm_profile_multiple_profiles(in_memory_db):
     in_memory_db.add_all([user, cust])
     in_memory_db.commit()
 
-    prof1 = LLMProfileDB(id=101, name="Profile 1", is_default=False, customer_id=5, created_by=30, settings={"llm_provider": "openai"})
-    prof2 = LLMProfileDB(id=102, name="Profile 2", is_default=False, customer_id=5, created_by=30, settings={"llm_provider": "anthropic"})
+    prof1 = LLMProfileDB(id="101", name="Profile 1", is_default=False, customer_id=5, created_by=30, settings={"llm_provider": "openai"})
+    prof2 = LLMProfileDB(id="102", name="Profile 2", is_default=False, customer_id=5, created_by=30, settings={"llm_provider": "anthropic"})
     in_memory_db.add_all([prof1, prof2])
     in_memory_db.commit()
 
@@ -306,7 +306,7 @@ async def test_async_resolve_llm_profile_multiple_profiles(in_memory_db):
     res = in_memory_db.execute(select(LLMProfileDB).where(LLMProfileDB.customer_id == cust.id))
     profile = res.scalars().first()
     assert profile is not None
-    assert profile.id in (101, 102)
+    assert str(profile.id) in ("101", "102")
 
 
 def test_paragraph_idempotency_reprocess(in_memory_db):
