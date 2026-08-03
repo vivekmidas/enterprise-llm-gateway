@@ -154,9 +154,14 @@ class EKPProcessingPipeline:
             if not profile:
                 # Query any active profile for customer
                 profile = db.query(LLMProfileDB).filter(LLMProfileDB.customer_id == cust_id).first()
-            return profile
+            if profile:
+                return profile
 
-        return None
+        # Fallback to system default or any available LLM profile
+        profile = db.query(LLMProfileDB).filter(LLMProfileDB.is_default == True).first()
+        if not profile:
+            profile = db.query(LLMProfileDB).first()
+        return profile
 
     def process_document_job(self, db: Session, *, job_id: str) -> EKPDocumentDB:
         """Phase 2: Asynchronous processing pipeline execution."""
@@ -291,9 +296,16 @@ class EKPProcessingPipeline:
             if not profile:
                 res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.customer_id == cust_id))
                 profile = res.scalars().first()
-            return profile
+            if profile:
+                return profile
 
-        return None
+        # Fallback to system default or any available LLM profile
+        res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.is_default == True))
+        profile = res.scalars().first()
+        if not profile:
+            res = await db.execute(select(LLMProfileDB))
+            profile = res.scalars().first()
+        return profile
 
     async def process_document_job_async(self, job_id: str):
         """Phase 2 async background task execution with AsyncSession."""

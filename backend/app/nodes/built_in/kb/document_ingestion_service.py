@@ -279,6 +279,44 @@ class DocumentIngestionService:
                 await db.commit()
                 await db.refresh(document)
 
+                # Trigger EKP V3 Pipeline (CDM Paragraph Store & LLM Entity Extraction)
+                try:
+                    from app.knowledge.ekp_v3.pipeline_v3 import EKPProcessingPipeline
+                    from app.knowledge.ekp_v3.job_manager import EKPJobManager
+                    from app.models.db_models import EKPDocumentDB
+
+                    doc_id_str = str(document.id)
+                    ekp_pipeline = EKPProcessingPipeline()
+
+                    res_ekp_doc = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == doc_id_str))
+                    ekp_doc = res_ekp_doc.scalar_one_or_none()
+
+                    if not ekp_doc:
+                        ekp_doc = EKPDocumentDB(
+                            id=doc_id_str,
+                            tenant_id=str(document.customer_id),
+                            knowledge_base_id=str(document.knowledge_base_id),
+                            filename=document.name,
+                            file_path=file_path,
+                            mime_type=document.mime_type or "text/plain",
+                            domain_id=None,
+                            cdm_payload={"document_id": doc_id_str, "status": "PENDING_PARSING"},
+                            processing_stage="UPLOADED",
+                            approval_status="PENDING",
+                            current_stage_order=1,
+                            current_review_version=1
+                        )
+                        db.add(ekp_doc)
+                        await db.commit()
+                        await db.refresh(ekp_doc)
+
+                    ekp_job = await EKPJobManager.async_create_job(db, document_id=doc_id_str, job_type="INGESTION_PARSING")
+                    await ekp_pipeline.process_document_job_async(ekp_job.id)
+
+                    logger.info("ekp_v3_ingestion_completed", document_id=doc_id_str)
+                except Exception as ekp_err:
+                    logger.error("ekp_v3_ingestion_pipeline_failed", document_id=document.id, error=str(ekp_err))
+
                 # Complete Job
                 await job_service.complete(job_id, message="Document ingestion completed successfully")
 
