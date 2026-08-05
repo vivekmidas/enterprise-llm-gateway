@@ -214,7 +214,7 @@ async def get_saved_queries(
 ):
     """Fetch Private Queries for current user and Public Queries across tenant."""
     user_id = str(current_user.id)
-    tenant_id = current_user.get("customer_id")
+    tenant_id = current_user.customer_id
 
     # Fetch private queries
     priv_stmt = select(SavedQueryDB).where(

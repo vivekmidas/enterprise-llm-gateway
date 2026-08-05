@@ -306,6 +306,13 @@ async def delete_customer(
 
     # 1. Qdrant Vector DB Cleanup
     try:
+        from app.models.db_models import RoleDB, RolePermissionDB
+        role_ids = (await db.execute(select(RoleDB.id).where(RoleDB.customer_id == customer_id))).scalars().all()
+        if role_ids:
+            from sqlalchemy import delete
+            await db.execute(delete(RolePermissionDB).where(RolePermissionDB.role_id.in_(role_ids)))
+            await db.execute(delete(RoleDB).where(RoleDB.id.in_(role_ids)))
+
         logger.info(f"Deleting customer {customer_id} from Qdrant")
         col_res = await db.execute(
             select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == customer_id)

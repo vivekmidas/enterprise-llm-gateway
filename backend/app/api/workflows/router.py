@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_user_customer_id
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user, require_resource_access
+from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -26,7 +26,7 @@ def _mask_sensitive_properties(properties: dict) -> dict:
     # Do not mask sensitive properties on read to prevent auth issues on save
     return properties
 
-@router.get("", response_model=List[WorkflowDefinition])
+@router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflow:view"))])
 async def get_workflows(current_user: User = Depends(get_current_user)):
     logger.info("get_workflows_request", tenant_id=current_user.customer_id)
     if current_user.role == "system_admin":

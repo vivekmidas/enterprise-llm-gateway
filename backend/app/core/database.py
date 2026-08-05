@@ -154,14 +154,26 @@ def _refresh_knowledge_bases_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN domain_id VARCHAR(36)")
 
 
+def _refresh_users_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("users"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "role_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id VARCHAR(36)")
+
+
 async def init_db():
     """Initializes the database schema."""
+    await engine.dispose()
     # Ensure all models are imported so Base metadata knows about them
     from app.models import db_models  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(_refresh_workflow_node_properties_table)
         await conn.run_sync(_refresh_customer_nodes_table)
         await conn.run_sync(_refresh_customers_table)
+        await conn.run_sync(_refresh_users_table)
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)
         await conn.run_sync(_refresh_knowledge_documents_table)

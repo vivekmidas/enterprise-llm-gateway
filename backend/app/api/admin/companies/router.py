@@ -49,8 +49,8 @@ async def _resolve_target_customer_id(
 
 @router.get("/settings", response_model=dict)
 async def get_company_settings(
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -91,8 +91,8 @@ async def get_company_settings(
 @router.put("/settings", response_model=dict)
 async def update_company_settings(
     payload: dict,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)

@@ -34,7 +34,7 @@ async def get_current_user(
             detail="Token missing user information",
         )
     
-    from app.models.db_models import CustomerDB
+    from app.models.db_models import CustomerDB, RoleDB, RolePermissionDB
     stmt = (
         select(UserDB, CustomerDB.domain)
         .outerjoin(CustomerDB, UserDB.customer_id == CustomerDB.id)
@@ -57,6 +57,35 @@ async def get_current_user(
             detail="User account is deactivated or suspended",
         )
         
+    # Resolve Granular Role & Permissions
+    role_obj = None
+    if db_user.role_id:
+        role_stmt = select(RoleDB).where(RoleDB.id == db_user.role_id)
+        role_res = await db.execute(role_stmt)
+        role_obj = role_res.scalar_one_or_none()
+
+    if not role_obj:
+        # Fallback to system preset role based on legacy db_user.role string
+        role_type_fallback = "system_admin" if db_user.role == "system_admin" else ("tenant_admin" if db_user.role == "admin" else "tenant_user")
+        role_stmt = select(RoleDB).where(RoleDB.role_type == role_type_fallback, RoleDB.customer_id.is_(None))
+        role_res = await db.execute(role_stmt)
+        role_obj = role_res.scalar_one_or_none()
+
+    permissions_list = []
+    role_id_val = None
+    role_name_val = None
+    role_type_val = db_user.role
+
+    if role_obj:
+        role_id_val = str(role_obj.id)
+        role_name_val = role_obj.role_name
+        role_type_val = role_obj.role_type
+        
+        # Fetch permissions assigned to role
+        perm_stmt = select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id)
+        perm_res = await db.execute(perm_stmt)
+        permissions_list = [p for p in perm_res.scalars().all()]
+
     return User(
         id=str(db_user.id),
         role=db_user.role,
@@ -64,19 +93,36 @@ async def get_current_user(
         customer_id=db_user.customer_id,
         domain=domain,
         name=db_user.name,
-        status=db_user.status
+        status=db_user.status,
+        role_id=role_id_val,
+        role_name=role_name_val,
+        role_type=role_type_val,
+        permissions=permissions_list
     )
 
 @staticmethod
 async def get_current_admin(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    if current_user.role not in ["system_admin", "admin"]:
+    if current_user.role not in ["system_admin", "admin"] and current_user.role_type not in ["system_admin", "tenant_admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
         )
     return current_user
+
+def require_permission(permission_id: str):
+    async def dependency(
+        current_user: User = Depends(get_current_user)
+    ) -> User:
+        if not current_user.has_permission(permission_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: Permission '{permission_id}' required."
+            )
+        return current_user
+    return dependency
+
 
 def require_resource(resource_type: str, resource_id: Any = None):
 

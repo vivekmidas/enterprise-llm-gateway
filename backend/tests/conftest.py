@@ -21,13 +21,15 @@ from sqlalchemy import select
 from app.core.security.hash import get_password_hash
 from app.core.security.jwt import create_access_token
 
-@pytest.fixture(scope="module")
+import pytest_asyncio
+
+@pytest_asyncio.fixture(scope="module")
 async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module")
 async def system_admin_token() -> str:
     from app.core.database import init_db
     from app.nodes.registry import NodesRegistry

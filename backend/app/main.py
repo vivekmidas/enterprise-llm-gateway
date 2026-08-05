@@ -63,9 +63,11 @@ async def startup_event():
     from app.workflows.service import sync_workflows_runnability
     # Seed default provider presets if missing
     from app.core.seed_provider_presets import seed_provider_presets
+    from app.db.seed_rbac import seed_rbac
     async with AsyncSessionLocal() as session:
         await sync_workflows_runnability(session)
         await seed_provider_presets(session)
+        await seed_rbac(session)
     
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).
@@ -83,6 +85,8 @@ from app.api.playground import router as playground_router
 from app.api.admin.provider_presets import router as provider_presets_router
 
 from app.api.knowledge.ekp_router import router as ekp_router
+
+from app.api.roles.router import router as roles_router
 
 app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
@@ -105,6 +109,7 @@ app.include_router(llm_profiles_router)   # customer specific LLM profiles route
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
 app.include_router(provider_presets_router)
+app.include_router(roles_router)
 
 
 

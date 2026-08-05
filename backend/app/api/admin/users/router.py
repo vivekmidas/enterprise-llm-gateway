@@ -114,3 +114,62 @@ async def delete_user(
     await db.execute(delete(usersDb).where(usersDb.id == user_id))
     await db.commit()
     return Response(status_code=204)
+
+
+@router.put("/{user_id}", response_model=dict)
+async def update_user_role(
+    user_id: str,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Updates user role and role_id mapping."""
+    stmt = select(usersDb).where(usersDb.id == user_id)
+    res = await db.execute(stmt)
+    user = res.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if current_user.role == "admin" and str(user.customer_id) != str(current_user.customer_id):
+        raise HTTPException(status_code=403, detail="Not authorized to edit users outside your tenant")
+
+    new_role = payload.get("role")
+    new_role_id = payload.get("role_id")
+
+    if new_role:
+        user.role = new_role
+        from app.models.db_models import RoleDB
+        role_res = await db.execute(
+            select(RoleDB).where(
+                (RoleDB.role_type == new_role) | (RoleDB.id == new_role)
+            )
+        )
+        matched_role = role_res.scalars().first()
+        if matched_role:
+            user.role_id = matched_role.id
+            user.role = matched_role.role_type
+
+    if new_role_id:
+        from app.models.db_models import RoleDB
+        role_res = await db.execute(select(RoleDB).where(RoleDB.id == new_role_id))
+        matched_role = role_res.scalar_one_or_none()
+        if matched_role:
+            user.role_id = matched_role.id
+            user.role = matched_role.role_type
+
+    if "name" in payload and payload["name"]:
+        user.name = payload["name"]
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "id": user.id,
+        "email": user.email_id,
+        "name": user.name,
+        "role": user.role,
+        "role_id": user.role_id,
+        "customer_id": user.customer_id
+    }

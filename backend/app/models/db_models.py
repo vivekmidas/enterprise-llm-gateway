@@ -47,10 +47,48 @@ class UserDB(Base):
     password = Column(String(255), nullable=False)  # Store bcrypt hashed password
     name = Column(String(255), nullable=True)
     customer_id = Column(String(36), ForeignKey("customers.id"), nullable=True)
+    role_id = Column(String(36), ForeignKey("roles.id"), nullable=True)
     status = Column(String(50), default="active")  # active, deactivated, suspended
-    role = Column(String(50), default="user")     # admin, user
+    role = Column(String(50), default="user")     # legacy: admin, user, system_admin
     created_at = Column(String(100), default=lambda: datetime.utcnow().isoformat())
     updated_at = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
+class RoleDB(Base):
+    __tablename__ = "roles"
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+    role_name = Column(String(100), nullable=False)
+    role_type = Column(String(50), nullable=False)  # system_admin, tenant_admin, para_legal, legal_analyst, tenant_user, custom
+    description = Column(Text, nullable=True)
+    is_system_preset = Column(Boolean, default=False)
+    created_at = Column(String(100), default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
+class PermissionDB(Base):
+    __tablename__ = "permissions"
+    id = Column(String(100), primary_key=True, index=True)  # e.g., legal:research:query
+    module = Column(String(50), nullable=False)            # legal, knowledge, workflows, nodes, admin
+    target_layer = Column(String(20), default="both")       # ui, api, both
+    label = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+
+
+class RolePermissionDB(Base):
+    __tablename__ = "role_permissions"
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    role_id = Column(String(36), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False, index=True)
+
+
+class RoutePermissionDB(Base):
+    __tablename__ = "route_permissions"
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    pattern = Column(String(150), nullable=False, unique=True, index=True)
+    permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
+    description = Column(Text, nullable=True)
+
 
 
 class CategoryDB(Base):
