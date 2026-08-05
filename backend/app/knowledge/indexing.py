@@ -42,6 +42,12 @@ async def index_document(
     col_res = await db.execute(col_stmt)
     collection = col_res.scalar_one_or_none()
 
+    from app.knowledge.embeddings import get_embedding_provider_for_model, resolve_kb_embedding_config
+
+    provider_name, model_name, dimension = await resolve_kb_embedding_config(
+        db, document.knowledge_base_id, document.customer_id
+    )
+
     if not collection:
         logger.info(
             "auto_creating_default_collection_for_kb",
@@ -51,31 +57,28 @@ async def index_document(
             name=f"kb_collection_{document.knowledge_base_id}",
             knowledge_base_id=document.knowledge_base_id,
             customer_id=document.customer_id,
-            embedding_model=settings.EMBEDDING_MODEL,
-            vector_dimension=settings.EMBEDDING_DIMENSION,
+            embedding_model=model_name,
+            vector_dimension=dimension,
             distance_metric="COSINE",
             status="active",
         )
         db.add(collection)
         await db.commit()
         await db.refresh(collection)
+    elif not collection.embedding_model:
+        collection.embedding_model = model_name
+        collection.vector_dimension = dimension
+        await db.commit()
 
     # Link document to the collection
     document.collection_id = collection.id
     document.collection_name = collection.name
     await db.commit()
 
-    # Resolve the embedding provider dynamically
-    provider_name = settings.EMBEDDING_PROVIDER
-    model_name = collection.embedding_model or settings.EMBEDDING_MODEL
-
-    if model_name.startswith("text-embedding") or provider_name == "openai":
-        provider_name = "openai"
-
     provider = get_embedding_provider_for_model(
         provider_name=provider_name,
         model_name=model_name,
-        dimension=collection.vector_dimension,
+        dimension=dimension,
     )
 
     # Ensure collection exists in Qdrant

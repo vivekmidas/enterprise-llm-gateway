@@ -129,3 +129,67 @@ def get_embedding_provider_for_model(
     if provider == "openai":
         return OpenAIEmbeddingProvider(model_name=model_name, dimension=dimension)
     raise ValueError(f"Unsupported embedding provider: {provider_name}")
+
+
+async def resolve_kb_embedding_config(
+    db,
+    knowledge_base_id: int | str,
+    customer_id: int | str | None = None,
+) -> tuple[str, str, int]:
+    """
+    Resolves (provider_name, embedding_model_name, dimension) for a given Knowledge Base
+    by inspecting KnowledgeBaseDB -> linked LLMProfileDB -> tenant LLMProfileDB -> system defaults.
+    """
+    from sqlalchemy import select
+    from app.models.db_models import KnowledgeBaseDB, LLMProfileDB
+
+    kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(knowledge_base_id))
+    kb_res = await db.execute(kb_stmt)
+    kb = kb_res.scalar_one_or_none()
+
+    target_profile = None
+    if kb:
+        if customer_id is None:
+            customer_id = kb.customer_id
+        kb_settings = kb.settings if isinstance(kb.settings, dict) else {}
+        prof_id = kb_settings.get("llm_profile_id")
+        if prof_id:
+            prof_res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str(prof_id)))
+            target_profile = prof_res.scalar_one_or_none()
+
+    if not target_profile and customer_id:
+        prof_res = await db.execute(
+            select(LLMProfileDB).where(
+                LLMProfileDB.customer_id == str(customer_id),
+                LLMProfileDB.is_default.is_(True)
+            ).limit(1)
+        )
+        target_profile = prof_res.scalar_one_or_none()
+        if not target_profile:
+            prof_res = await db.execute(
+                select(LLMProfileDB).where(LLMProfileDB.customer_id == str(customer_id)).limit(1)
+            )
+            target_profile = prof_res.scalar_one_or_none()
+
+    provider_name = settings.EMBEDDING_PROVIDER
+    model_name = settings.EMBEDDING_MODEL
+    dimension = settings.EMBEDDING_DIMENSION
+
+    if target_profile and isinstance(target_profile.settings, dict):
+        p_set = target_profile.settings
+        emb_sec = p_set.get("embedding") if isinstance(p_set.get("embedding"), dict) else {}
+        p_provider = p_set.get("embedding_provider") or p_set.get("provider") or emb_sec.get("provider")
+        p_model = p_set.get("embedding_model") or emb_sec.get("model") or p_set.get("model_name")
+        p_dim = p_set.get("vector_dimension") or emb_sec.get("dimension")
+
+        if p_provider:
+            provider_name = p_provider
+        if p_model:
+            model_name = p_model
+        if p_dim:
+            dimension = int(p_dim)
+
+    if model_name and (model_name.startswith("text-embedding") or provider_name == "openai"):
+        provider_name = "openai"
+
+    return provider_name, model_name, int(dimension)

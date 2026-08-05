@@ -66,8 +66,35 @@ async def create_knowledge_base(
         await db.flush()
 
         kb_settings = payload.settings or {}
-        embedding_model = kb_settings.get("embedding_model") or settings.EMBEDDING_MODEL
-        vector_dimension = kb_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
+        prof_id = kb_settings.get("llm_profile_id")
+        target_profile = None
+        if prof_id:
+            prof_res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str(prof_id)))
+            target_profile = prof_res.scalar_one_or_none()
+        if not target_profile:
+            prof_res = await db.execute(
+                select(LLMProfileDB).where(
+                    LLMProfileDB.customer_id == target_customer_id,
+                    LLMProfileDB.is_default.is_(True)
+                ).limit(1)
+            )
+            target_profile = prof_res.scalar_one_or_none()
+        if not target_profile:
+            prof_res = await db.execute(
+                select(LLMProfileDB).where(LLMProfileDB.customer_id == target_customer_id).limit(1)
+            )
+            target_profile = prof_res.scalar_one_or_none()
+
+        prof_embedding_model = None
+        prof_vector_dimension = None
+        if target_profile and isinstance(target_profile.settings, dict):
+            p_set = target_profile.settings
+            emb_sec = p_set.get("embedding") if isinstance(p_set.get("embedding"), dict) else {}
+            prof_embedding_model = p_set.get("embedding_model") or emb_sec.get("model")
+            prof_vector_dimension = p_set.get("vector_dimension") or emb_sec.get("dimension")
+
+        embedding_model = kb_settings.get("embedding_model") or prof_embedding_model or settings.EMBEDDING_MODEL
+        vector_dimension = kb_settings.get("vector_dimension") or prof_vector_dimension or settings.EMBEDDING_DIMENSION
 
         db_coll = KnowledgeCollectionDB(
             name=f"kb_collection_{db_kb.id}",
@@ -174,6 +201,20 @@ async def update_knowledge_base(
     try:
         await db.commit()
         await db.refresh(kb)
+
+        # Sync collection embedding model & dimension based on profile
+        from app.knowledge.embeddings import resolve_kb_embedding_config
+        from app.models.db_models import KnowledgeCollectionDB
+        _, model_name, dimension = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
+        coll_res = await db.execute(
+            select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb.id)
+        )
+        coll = coll_res.scalar_one_or_none()
+        if coll:
+            coll.embedding_model = model_name
+            coll.vector_dimension = dimension
+            await db.commit()
+
         return kb
     except Exception as exc:
         logger.exception("update_knowledge_base_failed")

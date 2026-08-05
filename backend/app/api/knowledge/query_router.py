@@ -104,10 +104,19 @@ async def rag_query(
         profile_id=payload.profile_id,
     )
 
-    # Resolve profile settings
+    # Resolve profile settings (derive from KB if profile_id omitted)
+    target_profile_id = payload.profile_id
+    if not target_profile_id and payload.knowledge_base_ids:
+        from sqlalchemy import select
+        from app.models.db_models import KnowledgeBaseDB
+        kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(payload.knowledge_base_ids[0])))
+        kb = kb_res.scalar_one_or_none()
+        if kb and kb.settings and isinstance(kb.settings, dict):
+            target_profile_id = kb.settings.get("llm_profile_id")
+
     resolver = ProfileResolver(db=db)
     profile = await resolver.resolve(
-        profile_id=payload.profile_id,
+        profile_id=target_profile_id,
         customer_id=customer_id,
     )
 
@@ -154,9 +163,19 @@ async def debug_retrieve(
     """
     customer_id = current_user.customer_id
 
+    # Resolve profile settings (derive from KB if profile_id omitted)
+    target_profile_id = payload.profile_id
+    if not target_profile_id and payload.knowledge_base_ids:
+        from sqlalchemy import select
+        from app.models.db_models import KnowledgeBaseDB
+        kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(payload.knowledge_base_ids[0])))
+        kb = kb_res.scalar_one_or_none()
+        if kb and kb.settings and isinstance(kb.settings, dict):
+            target_profile_id = kb.settings.get("llm_profile_id")
+
     resolver = ProfileResolver(db=db)
     profile = await resolver.resolve(
-        profile_id=payload.profile_id,
+        profile_id=target_profile_id,
         customer_id=customer_id,
     )
 
