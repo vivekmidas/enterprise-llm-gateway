@@ -20,12 +20,14 @@ from sqlalchemy import select, delete
 
 import structlog
 from app.models.db_models import (
-    EKPDocumentDB, EKPParagraphDB, EKPJobDB, LLMProfileDB, EKPEntityDB, EKPRelationshipDB
+    EKPDocumentDB, EKPParagraphDB, EKPJobDB, LLMProfileDB, EKPEntityDB, EKPRelationshipDB, EKPDomainDB
 )
 from app.knowledge.ekp_v3.cdm import CDMGenerator, CDMDocument
 from app.knowledge.ekp_v3.chunker import CDMParagraphChunker, EKPChunk
 from app.knowledge.ekp_v3.job_manager import EKPJobManager
-from app.knowledge.ekp_v3.extractor import EKPDomainExtractor
+from app.knowledge.ekp_v3.extractor import (
+    EKPDomainExtractor, ensure_domain_exists_sync, ensure_domain_exists_async
+)
 from app.core.database import AsyncSessionLocal
 
 logger = structlog.get_logger(__name__)
@@ -52,6 +54,8 @@ class EKPProcessingPipeline:
         llm_profile_id: Optional[int] = None
     ) -> EKPDocumentDB:
         """Phase 1: Fast synchronous document registration."""
+        if domain_id:
+            ensure_domain_exists_sync(db, domain_id)
         doc_id = f"doc-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
         doc = EKPDocumentDB(
             id=doc_id,
@@ -87,6 +91,8 @@ class EKPProcessingPipeline:
     ) -> EKPDocumentDB:
         """Phase 1: Fast asynchronous document registration."""
         import uuid
+        if domain_id:
+            await ensure_domain_exists_async(db, domain_id)
         doc_id = f"doc-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
         doc = EKPDocumentDB(
             id=doc_id,
@@ -409,9 +415,13 @@ class EKPProcessingPipeline:
                     logger.info("ekp_domain_extraction_completed", document_id=doc.id)
                 except Exception as ext_err:
                     logger.error("ekp_domain_extraction_failed", document_id=doc.id, error=str(ext_err))
-                    doc.processing_stage = "ERROR_EXTRACTION"
-                    doc.processing_error = f"Entity Extraction Error: {str(ext_err)}"
-                    await db.commit()
+                    await db.rollback()
+                    res_err = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == doc.id))
+                    err_doc = res_err.scalars().first()
+                    if err_doc:
+                        err_doc.processing_stage = "ERROR_EXTRACTION"
+                        err_doc.processing_error = f"Entity Extraction Error: {str(ext_err)}"
+                        await db.commit()
                     await EKPJobManager.async_mark_failed(db, job_id, str(ext_err))
                     return
 
@@ -427,9 +437,13 @@ class EKPProcessingPipeline:
             except Exception as e:
                 error_msg = str(e)
                 logger.error("ekp_job_failed", job_id=job_id, document_id=doc.id, error=error_msg)
-                doc.processing_stage = "ERROR"
-                doc.processing_error = error_msg
-                await db.commit()
+                await db.rollback()
+                res_err = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == doc.id))
+                err_doc = res_err.scalars().first()
+                if err_doc:
+                    err_doc.processing_stage = "ERROR"
+                    err_doc.processing_error = error_msg
+                    await db.commit()
                 await EKPJobManager.async_mark_failed(db, job_id, error_msg)
 
     async def reprocess_extraction_async(self, document_id: str):
@@ -469,9 +483,13 @@ class EKPProcessingPipeline:
                 logger.info("ekp_extraction_reprocessed_successfully", document_id=doc.id)
             except Exception as ext_err:
                 logger.error("ekp_extraction_reprocess_failed", document_id=doc.id, error=str(ext_err))
-                doc.processing_stage = "ERROR_EXTRACTION"
-                doc.processing_error = f"Entity Extraction Error: {str(ext_err)}"
-                await db.commit()
+                await db.rollback()
+                res_err = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == document_id))
+                err_doc = res_err.scalars().first()
+                if err_doc:
+                    err_doc.processing_stage = "ERROR_EXTRACTION"
+                    err_doc.processing_error = f"Entity Extraction Error: {str(ext_err)}"
+                    await db.commit()
                 raise ext_err
 
 

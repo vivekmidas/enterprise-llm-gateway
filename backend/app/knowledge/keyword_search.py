@@ -13,10 +13,10 @@ async def keyword_search(
     db: AsyncSession,
     query: str,
     customer_id: int,
-    knowledge_base_ids: list[int],
+    knowledge_base_ids: list[str],
     limit: int = 20,
     metadata: dict | None = None,
-) -> list[int]:
+) -> list[str]:
     """Return chunk IDs matching significant query terms."""
 
     try:

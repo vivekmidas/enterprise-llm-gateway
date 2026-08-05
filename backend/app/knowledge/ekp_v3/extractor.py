@@ -20,10 +20,11 @@ import asyncio
 import structlog
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db_models import EKPEntityDB, EKPDocumentDB, LLMProfileDB, EKPParagraphDB
+from app.models.db_models import EKPEntityDB, EKPDocumentDB, LLMProfileDB, EKPParagraphDB, EKPDomainDB
 from app.knowledge.ekp_v3.cdm import CDMDocument, CDMParagraph
 
 logger = structlog.get_logger(__name__)
@@ -111,9 +112,23 @@ def map_provenance_to_cdm_spans(
     domain_id: str,
     enable_provenance: bool = False
 ) -> List[EKPEntityDB]:
-    """Stage 2: Deterministic provenance linker (Provenance searching disabled for now)."""
+    """Stage 2: Deterministic provenance linker & text-grounding filter."""
     all_paras = cdm_doc.get_all_paragraphs() if cdm_doc else []
     valid_span_ids = {p.span_id for p in all_paras}
+    full_doc_text = "\n".join(p.text_content for p in all_paras).lower() if all_paras else ""
+
+    def is_grounded(search_term: str) -> bool:
+        if not full_doc_text or not search_term:
+            return True
+        st_lower = str(search_term).strip().lower()
+        if st_lower in full_doc_text:
+            return True
+        tokens = [t for t in re.split(r'\W+', st_lower) if len(t) >= 3 and t not in {
+            "the", "and", "court", "high", "state", "case", "suit", "judge", "order"
+        }]
+        if not tokens:
+            return True
+        return sum(1 for t in tokens if t in full_doc_text) >= 1
 
     def search_span(search_term: str) -> tuple[Optional[str], str, float]:
         if not enable_provenance:
@@ -154,6 +169,9 @@ def map_provenance_to_cdm_spans(
             val = item.get("value")
             if not val or str(val).strip() == "" or str(val).lower() == "null":
                 continue
+            if not is_grounded(str(val)):
+                logger.info("ekp_rejecting_ungrounded_entity", value=str(val)[:100])
+                continue
             prov_span = item.get("provenance_span_id") if enable_provenance else None
             basis_str = item.get("basis", "FACT").upper()
             conf = float(item.get("confidence") or 1.0)
@@ -188,7 +206,7 @@ def map_provenance_to_cdm_spans(
                     for idx, el in enumerate(v):
                         if isinstance(el, dict):
                             traverse_dict(el, f"{curr_key}[{idx}]")
-                        elif el:
+                        elif el and is_grounded(str(el)):
                             matched_span, match_basis, match_conf = search_span(str(el))
                             candidates.append(EKPEntityDB(
                                 id=f"ent-{uuid.uuid4().hex[:12]}",
@@ -204,7 +222,7 @@ def map_provenance_to_cdm_spans(
                                 review_version=1,
                                 is_deleted=False
                             ))
-                elif v:
+                elif v and is_grounded(str(v)):
                     matched_span, match_basis, match_conf = search_span(str(v))
                     candidates.append(EKPEntityDB(
                         id=f"ent-{uuid.uuid4().hex[:12]}",
@@ -225,6 +243,53 @@ def map_provenance_to_cdm_spans(
     return candidates
 
 
+def ensure_domain_exists_sync(db: Session, domain_id: Optional[str]) -> Optional[str]:
+    """Ensures domain_id exists in ekp_domains table before FK insertion."""
+    if not domain_id:
+        return None
+    d_id = str(domain_id)[:64]
+    domain = db.query(EKPDomainDB).filter(EKPDomainDB.id == d_id).first()
+    if not domain:
+        domain = EKPDomainDB(
+            id=d_id,
+            name=d_id.replace("_", " ").title(),
+            version="1.0",
+            schema_definition={"domain_id": d_id},
+            is_active=True
+        )
+        db.add(domain)
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("Failed to auto-seed domain in ekp_domains (sync)", domain_id=d_id, error=str(e))
+    return d_id
+
+
+async def ensure_domain_exists_async(db: AsyncSession, domain_id: Optional[str]) -> Optional[str]:
+    """Ensures domain_id exists in ekp_domains table before FK insertion."""
+    if not domain_id:
+        return None
+    d_id = str(domain_id)[:64]
+    res = await db.execute(select(EKPDomainDB).where(EKPDomainDB.id == d_id))
+    domain = res.scalars().first()
+    if not domain:
+        domain = EKPDomainDB(
+            id=d_id,
+            name=d_id.replace("_", " ").title(),
+            version="1.0",
+            schema_definition={"domain_id": d_id},
+            is_active=True
+        )
+        db.add(domain)
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.warning("Failed to auto-seed domain in ekp_domains (async)", domain_id=d_id, error=str(e))
+    return d_id
+
+
 class EKPDomainExtractor:
     """100% Dynamic, Schema & LLM-Driven Domain Entity Extractor for EKP V3."""
 
@@ -238,9 +303,16 @@ class EKPDomainExtractor:
     ) -> List[EKPEntityDB]:
         """Extract domain entities and persist to ekp_entities table (Sync)."""
         entities = self._extract_entities_sync(doc, cdm_doc, llm_profile, db=db)
-        for ent in entities:
-            db.add(ent)
-        db.commit()
+        if entities:
+            target_domain_id = entities[0].domain_id or doc.domain_id or "legal"
+            ensure_domain_exists_sync(db, target_domain_id)
+        try:
+            for ent in entities:
+                db.add(ent)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise e
         return entities
 
     async def async_extract_and_persist(
@@ -253,9 +325,16 @@ class EKPDomainExtractor:
     ) -> List[EKPEntityDB]:
         """Extract domain entities and persist to ekp_entities table (Async)."""
         entities = await self._extract_entities_async(doc, cdm_doc, llm_profile, async_db=db)
-        for ent in entities:
-            db.add(ent)
-        await db.commit()
+        if entities:
+            target_domain_id = entities[0].domain_id or doc.domain_id or "legal"
+            await ensure_domain_exists_async(db, target_domain_id)
+        try:
+            for ent in entities:
+                db.add(ent)
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            raise e
         return entities
 
     async def _extract_entities_async(

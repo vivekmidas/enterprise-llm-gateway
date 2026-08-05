@@ -6,12 +6,14 @@ from pydantic import BaseModel, Field
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
+    domain_id: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
 
 
 class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
+    domain_id: Optional[str] = None
     status: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
 
@@ -20,12 +22,14 @@ class KnowledgeBaseResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
+    domain_id: Optional[str] = None
     status: str
     customer_id: str
     created_by: str
     settings: Optional[Dict[str, Any]]
     created_at: str
     updated_at: str
+    llm_profile_warning: Optional[str] = None  # Populated when no LLM profile configured for tenant
     model_config = {"from_attributes": True}
 
 

@@ -1,4 +1,5 @@
 import time
+import re
 import structlog
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -9,6 +10,30 @@ from app.knowledge.retrieval_models import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _verify_answer_grounding(answer: str, context_text: str) -> bool:
+    """
+    Verify that generated answer is grounded in retrieved context text.
+    If answer contains proper nouns or key terms absent from context_text, returns False.
+    """
+    if not answer or not context_text or answer.lower() in {"no answer", "information is not available in the provided document."}:
+        return True
+
+    ctx_lower = context_text.lower()
+
+    # Extract proper nouns or key tokens (length >= 3)
+    words = re.findall(r"\b[A-Z][a-z0-9]+\b", answer)
+    stop_words = {"The", "This", "That", "There", "Here", "Court", "Judge", "State", "According", "In", "Based", "From", "Yes", "No", "Section", "Act", "Rule"}
+    proper_nouns = [w.lower() for w in words if w not in stop_words and len(w) >= 3]
+
+    if proper_nouns:
+        missing_nouns = [w for w in proper_nouns if w not in ctx_lower]
+        if len(missing_nouns) >= 2 and len(missing_nouns) > len(proper_nouns) * 0.4:
+            logger.warning("rejecting_hallucinated_inference_answer", missing_nouns=missing_nouns[:5])
+            return False
+
+    return True
 
 
 class ResponseGenerationService:
@@ -47,11 +72,34 @@ class ResponseGenerationService:
         else:
             user_prompt = request.query
 
+        # System prompt resolution with strict grounding default
         from app.core.config import get_settings
-        system_prompt = get_settings().SYSTEM_PROMPT
+        system_prompt = (
+            "You are an enterprise knowledge assistant strictly bound to the provided context.\n"
+            "1. Answer ONLY using facts explicitly stated in the provided Context.\n"
+            "2. Do NOT use prior training data or external assumptions.\n"
+            "3. If the context does not contain the answer, state clearly: 'Information is not available in the provided document.'"
+        )
 
         if request.system_prompt:
             system_prompt = request.system_prompt
+        elif has_context and request.context.chunks and db:
+            try:
+                for chunk in request.context.chunks:
+                    meta = getattr(chunk, "metadata", {}) or {}
+                    domain_info = meta.get("domain_info") or {}
+                    domain_id = domain_info.get("domain_id")
+                    if domain_id:
+                        from app.models.db_models import DomainSchemaDB
+                        from sqlalchemy import select
+                        dom_res = await db.execute(select(DomainSchemaDB).where(DomainSchemaDB.id == domain_id))
+                        dom_obj = dom_res.scalar_one_or_none()
+                        if dom_obj and dom_obj.system_prompt:
+                            system_prompt = dom_obj.system_prompt
+                            logger.info("using_domain_level_system_prompt", domain_id=domain_id, domain_name=dom_obj.name)
+                            break
+            except Exception as ex:
+                logger.warning("failed_to_fetch_domain_system_prompt", error=str(ex))
 
         if llm_profile:
             if hasattr(llm_profile, "generation"):
@@ -108,15 +156,6 @@ class ResponseGenerationService:
             HumanMessage(content=user_prompt),
         ]
 
-        logger.info(
-            "response_generation_profile_resolved",
-            customer_id=request.customer_id,
-            llm_config_id=llm_config_id,
-            max_tokens=max_tokens_to_use,
-        )
-
-        logger.info("response_generation_calling_llm", provider=self.llm_router.provider)
-
         try:
             # Call model
             response = await llm.ainvoke(messages)
@@ -131,6 +170,12 @@ class ResponseGenerationService:
                 logger.error("response_generation_empty_string")
                 raise ValueError("LLM generation returned an empty string")
 
+            # Check for hallucinated training data via text grounding verifier
+            if has_context and request.context and request.context.context:
+                if not _verify_answer_grounding(answer, request.context.context):
+                    logger.warning("response_grounding_failed_overriding_to_no_answer")
+                    answer = "no answer"
+
             # Check if output indicates no answer
             normalized_answer = "".join(c for c in answer.lower() if c.isalnum() or c.isspace()).strip()
             if (
@@ -140,13 +185,11 @@ class ResponseGenerationService:
                 or "dont know" in normalized_answer
                 or "don t know" in normalized_answer
             ):
-                logger.info("response_generation_answer_normalized", raw_answer=answer[:100], mapped_to="no answer")
                 answer = "no answer"
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             logger.info("response_generation_success", elapsed_ms=elapsed_ms, answer_length=len(answer))
 
-            # Try to estimate tokens used (approximate)
             from app.knowledge.context_builder import estimate_tokens
             system_tokens = estimate_tokens(system_prompt)
             user_tokens = estimate_tokens(user_prompt)

@@ -40,12 +40,13 @@ _SECTION_MODELS = {
 
 
 async def _patch_section(
-    profile_id: int,
+    profile_id: str,
     section_name: str,
     section_data: Dict[str, Any],
     current_user: User,
     db: AsyncSession,
 ) -> LLMProfileDB:
+
     role = current_user.get("role")
     if role == "system_admin":
         stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
@@ -85,7 +86,7 @@ async def _patch_section(
 
 @router.patch("/{profile_id}/embedding", response_model=LLMProfileResponse)
 async def patch_embedding(
-    profile_id: int,
+    profile_id: str,
     payload: EmbeddingSection,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
@@ -102,7 +103,7 @@ async def patch_embedding(
 
 @router.patch("/{profile_id}/search", response_model=LLMProfileResponse)
 async def patch_search(
-    profile_id: int,
+    profile_id: str,
     payload: SearchSection,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
@@ -119,7 +120,7 @@ async def patch_search(
 
 @router.patch("/{profile_id}/reranking", response_model=LLMProfileResponse)
 async def patch_reranking(
-    profile_id: int,
+    profile_id: str,
     payload: RerankSection,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
@@ -136,7 +137,7 @@ async def patch_reranking(
 
 @router.patch("/{profile_id}/generation", response_model=LLMProfileResponse)
 async def patch_generation(
-    profile_id: int,
+    profile_id: str,
     payload: GenerationSection,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),

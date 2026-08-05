@@ -27,7 +27,7 @@ async def retrieve(
     db: AsyncSession,
     query: str,
     customer_id: int,
-    knowledge_base_ids: list[int],
+    knowledge_base_ids: list[str],
     top_k: int = 5,
     document_ids: list[int] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -212,7 +212,7 @@ async def retrieve(
                 coll_chunk_ids = []
                 for point in coll_points:
                     if point.payload and "chunk_id" in point.payload:
-                        chunk_id = int(point.payload["chunk_id"])
+                        chunk_id = (point.payload["chunk_id"])
                         coll_chunk_ids.append(chunk_id)
                         vector_score_map[chunk_id] = float(point.score)
                 if coll_chunk_ids:
@@ -401,6 +401,38 @@ async def retrieve(
             seen_contents.add(normalized_content)
 
             candidates.append(item)
+
+        # =====================================================================
+        # BLOCK: DOMAIN-WEIGHTED FIELD SCORE BOOSTING
+        # Purpose: Inspects extracted domain fields & extra fields in candidate chunk payload.
+        # Matches query terms against domain keys and values, multiplying vector similarity
+        # score by configured schema field importance weights: Score_final = Score_vec * (1 + sum(Field_Weights)).
+        # Re-sorts candidate chunks by domain-boosted relevance before final reranking/top_k.
+        # =====================================================================
+        query_lower = query.lower()
+        for item in candidates:
+            domain_info = (item.get("metadata") or {}).get("domain_info") or {}
+            extracted_fields = domain_info.get("extracted_fields") or {}
+            extra_fields = domain_info.get("extra_fields") or {}
+            field_weights = domain_info.get("field_weights") or {}
+
+            field_boost = 0.0
+
+            all_fields = {**extracted_fields, **extra_fields}
+            for f_key, f_val in all_fields.items():
+                w = float(field_weights.get(f_key, 1.0))
+                if f_key.lower() in query_lower:
+                    field_boost += w * 0.15
+                if f_val and str(f_val).lower() in query_lower:
+                    field_boost += w * 0.25
+
+            if field_boost > 0:
+                item["score"] = item["score"] * (1.0 + field_boost)
+                item["metadata"]["domain_score_boost"] = round(field_boost, 4)
+
+        # Re-sort candidates by domain-weighted score
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+
         logger.info(
             "retrieval_step_8_remove_duplicates_success",
             final_count=len(candidates),

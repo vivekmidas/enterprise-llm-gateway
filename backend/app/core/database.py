@@ -144,6 +144,16 @@ def _refresh_ekp_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE ekp_documents ADD COLUMN llm_profile_id VARCHAR(36)")
 
 
+def _refresh_knowledge_bases_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_bases"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("knowledge_bases")}
+    if "domain_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN domain_id VARCHAR(36)")
+
+
 async def init_db():
     """Initializes the database schema."""
     # Ensure all models are imported so Base metadata knows about them
@@ -155,6 +165,7 @@ async def init_db():
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)
         await conn.run_sync(_refresh_knowledge_documents_table)
+        await conn.run_sync(_refresh_knowledge_bases_table)
         await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(_refresh_ekp_documents_table)
         await conn.run_sync(Base.metadata.create_all)

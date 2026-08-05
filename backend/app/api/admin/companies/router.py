@@ -71,7 +71,7 @@ async def get_company_settings(
         from app.models.db_models import LLMProfileDB
         cfg_res = await db.execute(
             select(LLMProfileDB).where(
-                LLMProfileDB.id == int(active_config_id),
+                LLMProfileDB.id == (active_config_id),
                 LLMProfileDB.customer_id == target_customer_id
             )
         )
@@ -251,10 +251,10 @@ async def create_llm_profile(
 
 @router.put("/llm-profiles/{profile_id}", response_model=dict)
 async def update_llm_profile(
-    profile_id: int,
+    profile_id: str,
     payload: dict,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -271,7 +271,7 @@ async def update_llm_profile(
 
     settings = dict(customer.settings or {})
     profiles = list(settings.get("llm_profiles") or [])
-    idx = next((i for i, p in enumerate(profiles) if int(p.get("id")) == profile_id), None)
+    idx = next((i for i, p in enumerate(profiles) if str(p.get("id")) == str(profile_id)), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="LLM profile not found")
 
@@ -306,9 +306,9 @@ async def update_llm_profile(
 
 @router.delete("/llm-profiles/{profile_id}")
 async def delete_llm_profile(
-    profile_id: int,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    profile_id: str,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
@@ -323,7 +323,7 @@ async def delete_llm_profile(
 
     settings = dict(customer.settings or {})
     profiles = list(settings.get("llm_profiles") or [])
-    new_profiles = [p for p in profiles if int(p.get("id")) != profile_id]
+    new_profiles = [p for p in profiles if str(p.get("id")) != str(profile_id)]
 
     # If active profile was deleted and remaining profiles exist, set first as active
     if len(new_profiles) > 0 and not any(p.get("is_active") for p in new_profiles):
@@ -343,9 +343,9 @@ async def delete_llm_profile(
 
 @router.post("/llm-profiles/{profile_id}/activate")
 async def activate_llm_profile(
-    profile_id: int,
-    customer_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
+    profile_id: str,
+    customer_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)

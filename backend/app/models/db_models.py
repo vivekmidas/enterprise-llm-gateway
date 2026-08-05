@@ -197,6 +197,34 @@ class JobDB(Base):
         super().__init__(**kwargs)
         self.job_metadata = metadata or {}
                         
+class DomainSchemaDB(Base):
+    __tablename__ = "domain_schemas"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    domain_key = Column(String(100), nullable=False, index=True)
+    scope = Column(String(50), default="TENANT", index=True)  # SYSTEM or TENANT
+    customer_id = Column(
+        String(36), ForeignKey("customers.id"), nullable=True, index=True
+    )
+    schema_json = Column(JSON, nullable=True)
+    system_prompt = Column(Text, nullable=True)
+    user_prompt = Column(Text, nullable=True)
+    created_by = Column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
+
+    created_at = Column(
+        String(100), default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String(100),
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+
+
 class KnowledgeBaseDB(Base):
     __tablename__ = "knowledge_bases"
 
@@ -206,6 +234,9 @@ class KnowledgeBaseDB(Base):
     status = Column(String(50), default="active", index=True)
     customer_id = Column(
         String(36), ForeignKey("customers.id"), nullable=False, index=True
+    )
+    domain_id = Column(
+        String(36), ForeignKey("domain_schemas.id"), nullable=True, index=True
     )
     created_by = Column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
@@ -601,4 +632,33 @@ class EKPAuditLogDB(Base):
     old_value = Column(JSON, nullable=True)
     new_value = Column(JSON, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class SavedQueryDB(Base):
+    __tablename__ = "saved_queries"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    customer_id = Column(String(36), nullable=True, index=True)
+    domain = Column(String(50), default="legal", index=True)
+    title = Column(String(255), nullable=False)
+    query_text = Column(Text, nullable=True)
+    filters_json = Column(JSON, nullable=True, default=dict)
+    is_public = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class LegalAuditLogDB(Base):
+    __tablename__ = "legal_audit_logs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    customer_id = Column(String(36), nullable=True, index=True)
+    role = Column(String(50), nullable=True)
+    action = Column(String(64), nullable=False, index=True)  # SEARCH, EXPORT_BRIEF, SAVE_QUERY, EDIT_CASE
+    query_text = Column(Text, nullable=True)
+    results_count = Column(Integer, default=0)
+    details_json = Column(JSON, nullable=True, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 

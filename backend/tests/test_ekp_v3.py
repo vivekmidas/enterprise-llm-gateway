@@ -426,6 +426,23 @@ async def test_llm_entity_extractor_direct(in_memory_db, monkeypatch):
             os.remove(temp_path)
 
 
+def test_ekp_domain_auto_seeding(in_memory_db):
+    from app.models.db_models import EKPDomainDB
+    from app.knowledge.ekp_v3.extractor import ensure_domain_exists_sync
+
+    domain_id = "custom_finance_domain"
+    existing = in_memory_db.query(EKPDomainDB).filter(EKPDomainDB.id == domain_id).first()
+    assert existing is None
+
+    result = ensure_domain_exists_sync(in_memory_db, domain_id)
+    assert result == domain_id
+
+    seeded = in_memory_db.query(EKPDomainDB).filter(EKPDomainDB.id == domain_id).first()
+    assert seeded is not None
+    assert seeded.id == "custom_finance_domain"
+    assert seeded.name == "Custom Finance Domain"
+
+
 
 
 

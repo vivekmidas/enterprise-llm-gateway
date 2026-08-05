@@ -362,7 +362,7 @@ class KnowledgeRetrievalNode(BaseNode):
         db: AsyncSession,
         query: str,
         customer_id: int,
-        knowledge_base_ids: list[int],
+        knowledge_base_ids: list[str],
         top_k: int,
         document_ids: list[int] | None,
         metadata: dict[str, Any] | None,

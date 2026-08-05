@@ -52,16 +52,16 @@ router = APIRouter()
 class QueryRequest(BaseModel):
     """Public RAG request — profile-driven, no inline infra params."""
     query: str = Field(min_length=1)
-    knowledge_base_ids: List[int]
-    profile_id: Optional[int] = Field(default=None, description="LLM profile to use. Defaults to tenant active profile.")
+    knowledge_base_ids: List[str]
+    profile_id: Optional[str] = Field(default=None, description="LLM profile to use. Defaults to tenant active profile.")
     top_k: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 class DebugRetrievalRequest(BaseModel):
     """Admin debug — retrieval only, accepts explicit profile or overrides."""
     query: str = Field(min_length=1)
-    knowledge_base_ids: List[int]
-    profile_id: Optional[int] = None
+    knowledge_base_ids: List[str]
+    profile_id: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     enable_reranking: Optional[bool] = None
@@ -73,7 +73,7 @@ class DebugGenerateRequest(BaseModel):
     """Admin debug — generation from pre-built context."""
     query: str = Field(min_length=1)
     context: Any
-    profile_id: Optional[int] = None
+    profile_id: Optional[str] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
     llm_config: Optional[Dict[str, Any]] = None
@@ -122,7 +122,7 @@ async def rag_query(
 
     request = RAGServiceRequest(
         customer_id=customer_id,
-        user_id=int(current_user.id) if current_user.id else None,
+        user_id=(current_user.id) if current_user.id else None,
         query=payload.query,
         knowledge_base_ids=payload.knowledge_base_ids,
         top_k=top_k,
@@ -162,7 +162,7 @@ async def debug_retrieve(
 
     request = RetrievalServiceRequest(
         customer_id=customer_id,
-        user_id=int(current_user.id) if current_user.id else None,
+        user_id=(current_user.id) if current_user.id else None,
         query=payload.query,
         knowledge_base_ids=payload.knowledge_base_ids,
         top_k=payload.top_k,

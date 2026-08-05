@@ -33,7 +33,7 @@ async def get_default_profile(
 
 @router.get("/{profile_id}/resolved", response_model=ProfileSettings)
 async def get_resolved_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

@@ -44,6 +44,7 @@ class IngestJobTriggerResponse(BaseModel):
     job_ids: List[str]
     status: str
     enqueued_count: int
+    warnings: Optional[List[str]] = None  # LLM profile or config warnings surfaced at job trigger
 
 
 class ParagraphResponse(BaseModel):

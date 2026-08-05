@@ -38,7 +38,7 @@ class DocumentRepository(BaseRepository[KnowledgeDocumentDB]):
         self,
         *,
         customer_id: int,
-        knowledge_base_ids: list[int],
+        knowledge_base_ids: list[str],
     ) -> Sequence[KnowledgeDocumentDB]:
         """
         Returns all completed documents belonging to the

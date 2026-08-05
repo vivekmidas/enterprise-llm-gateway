@@ -172,7 +172,7 @@ class ProfileResolver:
             if active_id:
                 result = await self.db.execute(
                     select(LLMProfileDB).where(
-                        LLMProfileDB.id == int(active_id),
+                        LLMProfileDB.id == (active_id),
                         LLMProfileDB.customer_id == customer_id,
                     )
                 )

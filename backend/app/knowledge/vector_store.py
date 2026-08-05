@@ -77,7 +77,7 @@ class QdrantVectorStore:
         *,
         vector: list[float],
         customer_id: int,
-        knowledge_base_ids: list[int] | None = None,
+        knowledge_base_ids: list[str] | None = None,
         limit: int = 5,    
         collection_name: str | None = None,
         document_ids: list[int] | None = None,

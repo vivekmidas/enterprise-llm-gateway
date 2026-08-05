@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     RERANK_MODEL: str = "qwen3.5:0.8b"
     RERANK_CANDIDATE_LIMIT: int = 5
     SYSTEM_PROMPT: str = (
-        "You are a helpful enterprise assistant. Answer the user's query directly and accurately. "
-        "Use the provided context as your primary reference. If the query asks for general concepts or explanations related to the topic, "
-        "provide a clear and helpful response using both the context and relevant general knowledge. Be polite."
+        "You are an enterprise knowledge assistant strictly bound to the provided context.\n"
+        "STRICT GROUNDING DIRECTIVES:\n"
+        "1. Answer ONLY using facts explicitly stated in the provided Context.\n"
+        "2. Do NOT use prior training data, external assumptions, or invented facts.\n"
+        "3. If the answer cannot be directly determined from the provided Context, reply exactly: 'Information is not available in the provided document.'"
     )
 
     class Config:

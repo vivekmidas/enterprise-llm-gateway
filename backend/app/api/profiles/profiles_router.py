@@ -139,7 +139,7 @@ async def create_profile(
         description=payload.description,
         is_default=payload.is_default,
         customer_id=customer_id,
-        created_by=int(current_user.get("id")),
+        created_by=(current_user.get("id")),
         settings=settings_val,
     )
     db.add(profile)
@@ -161,7 +161,7 @@ async def create_profile(
 
 @router.get("/{profile_id}", response_model=LLMProfileResponse)
 async def get_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -183,7 +183,7 @@ async def get_profile(
 
 @router.put("/{profile_id}", response_model=LLMProfileResponse)
 async def update_profile(
-    profile_id: int,
+    profile_id: str,
     payload: LLMProfileUpdate,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
@@ -230,7 +230,7 @@ async def update_profile(
 
 @router.delete("/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -255,7 +255,7 @@ async def delete_profile(
 
 @router.post("/{profile_id}/set-default", response_model=LLMProfileResponse)
 async def set_default_profile(
-    profile_id: int,
+    profile_id: str,
     current_user: User = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db),
 ):

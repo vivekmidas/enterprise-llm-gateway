@@ -83,12 +83,41 @@ async def trigger_ingest_job(
     """Phase 2: Trigger async ingestion background jobs."""
     logger.info("ekp_api_ingest_job_triggered", document_count=len(payload.document_ids))
     job_ids = []
+    llm_profile_warnings = []
+
     for doc_id in payload.document_ids:
         res = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == doc_id))
         doc = res.scalar_one_or_none()
         if not doc:
             logger.error("ekp_api_ingest_document_not_found", document_id=doc_id)
             raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+        # Pre-check: verify LLM profile is resolvable for this document's tenant.
+        # If missing, warn now instead of silently skipping during background processing.
+        try:
+            tenant_id_int = int(doc.tenant_id) if doc.tenant_id and doc.tenant_id.isdigit() else None
+            if tenant_id_int:
+                prof_res = await db.execute(
+                    select(LLMProfileDB).where(LLMProfileDB.customer_id == tenant_id_int)
+                )
+            else:
+                prof_res = await db.execute(
+                    select(LLMProfileDB).where(LLMProfileDB.is_default == True)
+                )
+            profile = prof_res.scalars().first()
+            if not profile:
+                llm_profile_warnings.append(
+                    f"Document {doc_id} ({doc.filename}): No LLM profile configured for "
+                    f"tenant {doc.tenant_id}. Entity extraction will be skipped. "
+                    "Configure an LLM profile in Settings → LLM Profiles."
+                )
+                logger.warning(
+                    "ekp_ingest_job_no_llm_profile",
+                    document_id=doc_id,
+                    tenant_id=doc.tenant_id,
+                )
+        except Exception as profile_check_err:
+            logger.warning("ekp_ingest_profile_check_error", error=str(profile_check_err))
 
         job = await EKPJobManager.async_create_job(db, document_id=doc_id, job_type="INGESTION_PARSING")
         job_ids.append(job.id)
@@ -99,8 +128,10 @@ async def trigger_ingest_job(
     return IngestJobTriggerResponse(
         job_ids=job_ids,
         status="ENQUEUED",
-        enqueued_count=len(job_ids)
+        enqueued_count=len(job_ids),
+        warnings=llm_profile_warnings if llm_profile_warnings else None,
     )
+
 
 
 @router.get("/documents")

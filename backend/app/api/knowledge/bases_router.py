@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+import asyncio
 from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant
 from app.api.knowledge.schemas import KnowledgeBaseCreate, KnowledgeBaseResponse, KnowledgeBaseUpdate
 from app.core.config import get_settings
@@ -23,6 +23,7 @@ from app.models.db_models import (
     KnowledgeChunkDB,
     KnowledgeCollectionDB,
     KnowledgeDocumentDB,
+    LLMProfileDB,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ async def create_knowledge_base(
         db_kb = KnowledgeBaseDB(
             name=payload.name,
             description=payload.description,
+            domain_id=payload.domain_id,
             status="active",
             customer_id=target_customer_id,
             created_by=str(current_user.id),
@@ -89,7 +91,32 @@ async def create_knowledge_base(
         except Exception as e:
             logger.error("qdrant_collection_provision_failed", extra={"kb_id": db_kb.id, "error": str(e)})
 
-        return db_kb
+        # Check if tenant has an LLM profile configured — surface warning if not.
+        # Without a profile, document extraction will be silently skipped.
+        llm_profile_warning = None
+        try:
+            prof_stmt = select(LLMProfileDB).where(
+                LLMProfileDB.customer_id == target_customer_id
+            ).limit(1)
+            prof_res = await db.execute(prof_stmt)
+            existing_profile = prof_res.scalar_one_or_none()
+            if not existing_profile:
+                llm_profile_warning = (
+                    "No LLM profile is configured for this tenant. "
+                    "Document extraction will be skipped until an LLM profile is created and linked. "
+                    "Go to Settings → LLM Profiles to configure one."
+                )
+                logger.warning(
+                    "kb_created_no_llm_profile",
+                    kb_id=db_kb.id,
+                    tenant_id=target_customer_id,
+                )
+        except Exception:
+            pass
+
+        response = db_kb.__dict__.copy()
+        response["llm_profile_warning"] = llm_profile_warning
+        return KnowledgeBaseResponse(**response)
 
     except Exception as exc:
         logger.exception("create_knowledge_base_failed")
@@ -212,4 +239,96 @@ async def delete_knowledge_base(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete knowledge base: {exc}",
         )
+
+
+@router.post("/bases/{kb_id}/documents/{doc_id}/reprocess", status_code=status.HTTP_202_ACCEPTED)
+async def reprocess_document(
+    kb_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-queues a document for background reprocessing (domain knowledge re-extraction and re-embedding)."""
+    if current_user.role == "system_admin":
+        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
+    else:
+        customer_id = require_tenant(current_user)
+        kb_stmt = select(KnowledgeBaseDB).where(
+            KnowledgeBaseDB.id == kb_id,
+            KnowledgeBaseDB.customer_id == customer_id,
+        )
+    kb_res = await db.execute(kb_stmt)
+    kb = kb_res.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found.")
+
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+    )
+    doc_res = await db.execute(doc_stmt)
+    doc = doc_res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    doc.status = "processing"
+    doc.metadata_json = {**(doc.metadata_json or {}), "reprocess_requested": True}
+    await db.commit()
+
+    # Create background indexing Job in DB
+    from app.repositories.job_repository import JobRepository
+    from app.models.services.job_service import JobService
+    from app.jobs.enums import EntityType, JobType
+    from app.nodes.built_in.kb.document_ingestion_service import DocumentIngestionService
+
+    job_repo = JobRepository(db)
+    job_service = JobService(job_repo)
+    job = await job_service.create_job(
+        customer_id=kb.customer_id,
+        job_type=JobType.DOCUMENT_INDEX,
+        entity_type=EntityType.DOCUMENT,
+        entity_id=(doc.id),
+        created_by=current_user.id,
+    )
+
+    # Dispatch background ingestion & domain extraction job
+    service = DocumentIngestionService()
+    asyncio.create_task(
+        service._run_ingestion(
+            job_id=job.id,
+            document_id=(doc.id),
+            file_path=str(doc.file_path),
+            customer_id=(kb.customer_id),
+            knowledge_base_id=(kb.id),
+        )
+    )
+
+    return {"message": "Document queued for reprocessing.", "document_id": doc_id, "status": "processing"}
+
+
+@router.get("/configured-profiles")
+async def get_configured_llm_profiles(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns list of configured LLM profiles available for the tenant."""
+    if current_user.role == "system_admin":
+        stmt = select(LLMProfileDB)
+    else:
+        customer_id = require_tenant(current_user)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id)
+
+    res = await db.execute(stmt)
+    profiles = res.scalars().all()
+
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "settings": p.settings or {},
+        }
+        for p in profiles
+    ]
 # END BLOCK
+
