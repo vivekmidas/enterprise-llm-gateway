@@ -195,6 +195,27 @@ class QdrantVectorStore:
             logger.error("qdrant_document_points_delete_failed", extra={"collection": col_name, "document_id": document_id, "error": str(e)})
             raise
 
+    async def delete_customer_points(self, customer_id: str, collection_name: str | None = None) -> None:
+        """Delete points associated with a specific customer_id from a Qdrant collection."""
+        try:
+            col_name = collection_name or self.collection
+            if await self.client.collection_exists(col_name):
+                await self.client.delete(
+                    collection_name=col_name,
+                    points_selector=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="customer_id",
+                                match=models.MatchValue(value=customer_id),
+                            )
+                        ]
+                    ),
+                )
+                logger.info("qdrant_customer_points_deleted", extra={"collection": col_name, "customer_id": customer_id})
+        except Exception as e:
+            logger.error("qdrant_customer_points_delete_failed", extra={"collection": col_name, "customer_id": customer_id, "error": str(e)})
+            raise
+
 
 vector_store = QdrantVectorStore()
 

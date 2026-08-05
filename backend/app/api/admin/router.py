@@ -6,12 +6,21 @@ from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
+import os
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
 from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
 from app.nodes.built_in.webhook.base.scheduler_node import SchedulerAgent
 from app.core.database import get_db
-from app.models.db_models import CustomerDB, UserDB, AuditLogDB
+from app.models.db_models import (
+    CustomerDB, UserDB, AuditLogDB, NodeDB, CustomerNodeDB, WorkflowDB,
+    WorkflowNodeDB, WorkflowNodePropertyDB, JobDB, DomainSchemaDB,
+    KnowledgeBaseDB, KnowledgeCollectionDB, KnowledgeDocumentDB, KnowledgeChunkDB,
+    LLMProfileDB, RetrievalConfigDB, EKPDocumentDB, EKPJobDB, EKPParagraphDB,
+    EKPEntityDB, EKPRelationshipDB, EKPApprovalHistoryDB, EKPDocumentReviewDB,
+    SavedQueryDB
+)
+from app.knowledge.vector_store import vector_store
 from app.core.security.hash import get_password_hash
 from app.api.auth.dependencies import  require_system_admin, get_current_user, require_admin_or_system_admin
 from app.core.types.users import User
@@ -295,7 +304,100 @@ async def delete_customer(
     if sys_admin_check.scalars().first():
         raise HTTPException(status_code=400, detail="Customers with system admin users cannot be deleted")
 
+    # 1. Qdrant Vector DB Cleanup
+    try:
+        logger.info(f"Deleting customer {customer_id} from Qdrant")
+        col_res = await db.execute(
+            select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == customer_id)
+        )
+        collections = col_res.scalars().all()
+        for coll in collections:
+            if coll.name:
+                try:
+                    await vector_store.delete_collection(coll.name)
+                except Exception as e:
+                    logger.error("qdrant_collection_delete_failed", extra={"collection": coll.name, "error": str(e)})
+
+        try:
+            await vector_store.delete_customer_points(customer_id)
+        except Exception as e:
+            logger.error("qdrant_customer_points_delete_failed", extra={"customer_id": customer_id, "error": str(e)})
+    except Exception as e:
+        logger.error("qdrant_cleanup_error", extra={"customer_id": customer_id, "error": str(e)})
+
+    # 2. File system cleanup for stored documents
+    try:
+        logger.info(f"Deleting customer {customer_id} files from KB ")
+        kb_docs_res = await db.execute(
+            select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.customer_id == customer_id)
+        )
+        for kb_doc in kb_docs_res.scalars().all():
+            if kb_doc.file_path and os.path.exists(kb_doc.file_path):
+                try:
+                    os.remove(kb_doc.file_path)
+                except Exception as fe:
+                    logger.error("failed_to_delete_kb_file", extra={"file_path": kb_doc.file_path, "error": str(fe)})
+
+        ekp_docs_res = await db.execute(
+            select(EKPDocumentDB).where(EKPDocumentDB.tenant_id == customer_id)
+        )
+        ekp_docs = ekp_docs_res.scalars().all()
+        ekp_doc_ids = [d.id for d in ekp_docs]
+        for ekp_doc in ekp_docs:
+            if ekp_doc.file_path and os.path.exists(ekp_doc.file_path):
+                try:
+                    os.remove(ekp_doc.file_path)
+                except Exception as fe:
+                    logger.error("failed_to_delete_ekp_file", extra={"file_path": ekp_doc.file_path, "error": str(fe)})
+    except Exception as e:
+        logger.error("file_cleanup_error", extra={"customer_id": customer_id, "error": str(e)})
+
+    # 3. EKP data cleanup (retaining EKPAuditLogDB for forensic compliance)
+    if ekp_doc_ids:
+        logger.info(f"Deleting customer {customer_id} data from EKP")
+        await db.execute(delete(EKPRelationshipDB).where(EKPRelationshipDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPEntityDB).where(EKPEntityDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPParagraphDB).where(EKPParagraphDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPJobDB).where(EKPJobDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPApprovalHistoryDB).where(EKPApprovalHistoryDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPDocumentReviewDB).where(EKPDocumentReviewDB.document_id.in_(ekp_doc_ids)))
+    await db.execute(delete(EKPDocumentDB).where(EKPDocumentDB.tenant_id == customer_id))
+
+    # 4. Knowledge Base & RAG data cleanup
+    logger.info(f"Deleting customer KB data for customer id {customer_id}")
+    await db.execute(delete(KnowledgeChunkDB).where(KnowledgeChunkDB.customer_id == customer_id))
+    await db.execute(delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.customer_id == customer_id))
+    await db.execute(delete(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == customer_id))
+    await db.execute(delete(KnowledgeBaseDB).where(KnowledgeBaseDB.customer_id == customer_id))
+
+    # 5. Workflows & Nodes cleanup
+    wf_res = await db.execute(select(WorkflowDB.id).where(WorkflowDB.customer_id == customer_id))
+    wf_ids = wf_res.scalars().all()
+    if wf_ids:
+        logger.info(f"Deleting customer workflows nodes and properties for customer id {customer_id}")
+        await db.execute(delete(WorkflowNodeDB).where(WorkflowNodeDB.workflow_id.in_(wf_ids)))
+        await db.execute(delete(WorkflowNodePropertyDB).where(WorkflowNodePropertyDB.workflow_id.in_(wf_ids)))
+    logger.info(f"Deleting customer workflows for customer id {customer_id}")
+    await db.execute(delete(WorkflowDB).where(WorkflowDB.customer_id == customer_id))
+    logger.info(f"Deleting customer nodes and customer nodes properties for customer id {customer_id}")
+    await db.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == customer_id))
+    await db.execute(delete(NodeDB).where(NodeDB.customer_id == customer_id))
+
+    # 6. LLM Profiles & Retrieval Configs cleanup
+    logger.info(f"Deleting customer LLM profiles and retrieval configs for customer id {customer_id}")
+    await db.execute(delete(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id))
+    await db.execute(delete(RetrievalConfigDB).where(RetrievalConfigDB.customer_id == customer_id))
+    await db.execute(delete(DomainSchemaDB).where(DomainSchemaDB.customer_id == customer_id))
+
+    # 7. Jobs & Saved Queries cleanup (retaining AuditLogDB & LegalAuditLogDB for forensic compliance)
+    logger.info(f"Deleting customer jobs and saved queries for customer id {customer_id}")
+    await db.execute(delete(JobDB).where(JobDB.customer_id == customer_id))
+    await db.execute(delete(SavedQueryDB).where(SavedQueryDB.customer_id == customer_id))
+
+    # 8. Users & Customer record deletion
+    logger.info(f"Deleting customer users for customer id {customer_id}")
     await db.execute(delete(UserDB).where(UserDB.customer_id == customer_id))
+    logger.info(f"Deleting customer record for customer id {customer_id}")
     await db.execute(delete(CustomerDB).where(CustomerDB.id == customer_id))
     await db.commit()
     return Response(status_code=204)
