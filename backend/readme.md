@@ -20,10 +20,24 @@ curl -X POST "http://localhost:8000/api/knowledge/bases" \
     "description": "Test knowledge base for Enterprise LLM Gateway"
   }'
 
-curl -X POST "http://localhost:8000/api/knowledge/bases/${KB_ID}/upload" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Accept: application/json" \
-  -F "file=@./sample.txt"
+curl -X POST "http://localhost:8000/api/knowledge/bases/<KB_ID>/upload" \
+  -H "Authorization: Bearer <YOUR_AUTH_TOKEN>" \
+  -F "file=@sample_document.txt" \
+  -F "description=Test document for LLM Profile ingestion" \
+  -F "doc_type=general"
+
+curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR_AUTH_TOKEN>" \
+  -d '{
+    "query": "What are the key terms in the document?",
+    "knowledge_base_ids": ["<KB_ID>"],
+    "top_k": 5
+  }'
+
+
+curl -X DELETE "http://localhost:8000/admin/customers/<CUSTOMER_ID>" \
+  -H "Authorization: Bearer $TOKEN"
 
 cat > sample.txt <<'EOF'
 Enterprise LLM Gateway allows businesses to create AI agents that automate workflows.
