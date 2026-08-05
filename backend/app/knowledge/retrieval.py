@@ -89,7 +89,7 @@ async def retrieve(
         validated_kb_ids = [kb.id for kb in validated_kbs]
 
         if not validated_kb_ids:
-            logger.warning(
+            logger.error(
                 "retrieval_step_3_no_valid_knowledge_bases_found",
                 requested_kbs=knowledge_base_ids,
                 customer_id=customer_id,
@@ -137,23 +137,27 @@ async def retrieve(
         embedding_cache = {}
 
         async def search_single_collection(coll: KnowledgeCollectionDB) -> list:
-            provider_name = tenant_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
-            model_name = coll.embedding_model or tenant_settings.get("embedding_model") or settings.EMBEDDING_MODEL
-            
-            # Map embedding model to openai provider if relevant
-            if model_name.startswith("text-embedding") or provider_name == "openai":
-                provider_name = "openai"
+            from app.knowledge.embeddings import get_embedding_provider_for_model, resolve_kb_embedding_config
+            if coll.knowledge_base_id:
+                provider_name, model_name, dim = await resolve_kb_embedding_config(
+                    db, coll.knowledge_base_id, coll.customer_id
+                )
+            else:
+                provider_name = tenant_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
+                model_name = coll.embedding_model or tenant_settings.get("embedding_model") or settings.EMBEDDING_MODEL
+                dim = coll.vector_dimension or tenant_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
+                if model_name and (model_name.startswith("text-embedding") or provider_name == "openai"):
+                    provider_name = "openai"
 
             cache_key = (provider_name, model_name)
             if cache_key not in embedding_cache:
                 try:
                     # Step 5: Generate query embedding
                     logger.info("retrieval_step_5_embedding_cache_miss", provider=provider_name, model=model_name, collection=coll.name)
-                    from app.knowledge.embeddings import get_embedding_provider_for_model
                     provider = get_embedding_provider_for_model(
                         provider_name=provider_name,
                         model_name=model_name,
-                        dimension=coll.vector_dimension or tenant_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION,
+                        dimension=dim,
                     )
                     embedding_cache[cache_key] = await provider.embed_query(query)
                     logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name)

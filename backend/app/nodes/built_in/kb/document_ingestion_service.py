@@ -98,15 +98,15 @@ class DocumentIngestionService:
             logger.info("ingestion_collection_resolved", collection_name=collection.name, knowledge_base_id=knowledge_base_id)
 
         # Get embedding provider settings for document metadata
-        provider_name = settings.EMBEDDING_PROVIDER
-        model_name = collection.embedding_model or settings.EMBEDDING_MODEL
-        if model_name.startswith("text-embedding") or provider_name == "openai":
-            provider_name = "openai"
+        from app.knowledge.embeddings import resolve_kb_embedding_config
+        provider_name, model_name, dimension = await resolve_kb_embedding_config(
+            db, knowledge_base_id, target_customer_id
+        )
 
         provider = get_embedding_provider_for_model(
             provider_name=provider_name,
             model_name=model_name,
-            dimension=collection.vector_dimension,
+            dimension=dimension,
         )
 
         # Create KnowledgeDocumentDB in DB (status "pending")
@@ -163,11 +163,11 @@ class DocumentIngestionService:
 
     async def _run_ingestion(
         self,
-        job_id: int,
-        document_id: int,
+        job_id: str,
+        document_id: str,
         file_path: str,
-        customer_id: int,
-        knowledge_base_id: int,
+        customer_id: str,
+        knowledge_base_id: str,
     ) -> None:
         async with AsyncSessionLocal() as db:
             job_repo = JobRepository(db)
@@ -225,7 +225,7 @@ class DocumentIngestionService:
                                 kb_profile_id = kb_settings.get("llm_profile_id")
                                 if kb_profile_id:
                                     prof_res = await db.execute(
-                                        select(LLMProfileDB).where(LLMProfileDB.id == int(kb_profile_id))
+                                        select(LLMProfileDB).where(LLMProfileDB.id == str(kb_profile_id))
                                     )
                                     llm_profile = prof_res.scalar_one_or_none()
                                 if not llm_profile:
@@ -243,7 +243,7 @@ class DocumentIngestionService:
                                     )
                                     llm_profile = prof_res.scalars().first()
                             except Exception as prof_err:
-                                logger.warning("domain_extractor_profile_lookup_failed", error=str(prof_err))
+                                logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
 
                             extractor = DomainExtractor.from_llm_profile(llm_profile)
                             logger.info(
