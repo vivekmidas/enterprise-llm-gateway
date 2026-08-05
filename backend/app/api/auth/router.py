@@ -66,12 +66,29 @@ async def login(request: LoginRequest):
                 detail="Invalid credentials"
             )
 
+        # Resolve user permissions for JWT payload & login response
+        from app.models.db_models import RoleDB, RolePermissionDB
+        permissions_list = []
+        role_obj = None
+        if user.role_id:
+            role_res = await session.execute(select(RoleDB).where(RoleDB.id == user.role_id))
+            role_obj = role_res.scalar_one_or_none()
+        if not role_obj:
+            role_type_fallback = "system_admin" if user.role == "system_admin" else ("tenant_admin" if user.role == "admin" else "tenant_user")
+            role_res = await session.execute(select(RoleDB).where(RoleDB.role_type == role_type_fallback, RoleDB.customer_id.is_(None)))
+            role_obj = role_res.scalar_one_or_none()
+
+        if role_obj:
+            perm_res = await session.execute(select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id))
+            permissions_list = [p for p in perm_res.scalars().all()]
+
         token_data = {
             "user_id": str(user.id),
             "role": user.role,
             "status": True if user.status=="active" else False,
             "customer_id": user.customer_id,
-            "domain": domain
+            "domain": domain,
+            "permissions": permissions_list,
         }
         token = create_access_token(token_data)
 
@@ -82,7 +99,8 @@ async def login(request: LoginRequest):
             "role": user.role,
             "email": user.email_id,
             "customer_id": user.customer_id,
-            "domain": domain
+            "domain": domain,
+            "permissions": permissions_list,
         }
 
 

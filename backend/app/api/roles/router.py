@@ -11,9 +11,124 @@ from app.core.types.users import User
 from app.models.db_models import RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB
 from app.db.seed_rbac import PERMISSIONS_REGISTRY, DEFAULT_ROUTE_PERMISSIONS
 
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/roles", tags=["Roles & Permissions"])
+
+
+class PermissionCreateRequest(BaseModel):
+    id: str
+    module: str
+    label: str
+    description: Optional[str] = None
+    target_layer: Optional[str] = "both"
+
+
+class PermissionItem(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = None
+    target_layer: Optional[str] = "both"
+
+
+class ModuleBatchCreateRequest(BaseModel):
+    module_name: str
+    permissions: List[PermissionItem]
+
+
+@router.post("/modules", response_model=dict, status_code=201)
+async def create_or_update_module_permissions(
+    payload: ModuleBatchCreateRequest,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Registers a new top-level module (e.g., HealthCare, Education) along with
+    multiple granular permission scopes into PermissionDB in batch.
+    """
+    mod_name = payload.module_name.strip()
+    mod_key = mod_name.lower().replace(" ", "_")
+
+    if not mod_name or not payload.permissions:
+        raise HTTPException(status_code=400, detail="module_name and at least 1 permission are required")
+
+    created_perms = []
+    for item in payload.permissions:
+        perm_id = item.id.strip().lower()
+        if not perm_id or not item.label:
+            continue
+
+        existing = await db.execute(select(PermissionDB).where(PermissionDB.id == perm_id))
+        perm_obj = existing.scalar_one_or_none()
+
+        if not perm_obj:
+            perm_obj = PermissionDB(
+                id=perm_id,
+                module=mod_key,
+                target_layer=item.target_layer or "both",
+                label=item.label.strip(),
+                description=item.description.strip() if item.description else "",
+            )
+            db.add(perm_obj)
+        else:
+            perm_obj.module = mod_key
+            perm_obj.label = item.label.strip()
+            if item.description:
+                perm_obj.description = item.description.strip()
+
+        created_perms.append(perm_id)
+
+    await db.commit()
+
+    return {
+        "module": mod_name,
+        "module_key": mod_key,
+        "permission_count": len(created_perms),
+        "permission_ids": created_perms,
+    }
+
+
+@router.post("/permissions", response_model=dict, status_code=201)
+async def create_permission(
+    payload: PermissionCreateRequest,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Registers a new granular permission or module scope into the PermissionDB registry.
+    """
+    perm_id = payload.id.strip().lower()
+    module = payload.module.strip().lower()
+
+    if not perm_id or not module or not payload.label:
+        raise HTTPException(status_code=400, detail="id, module, and label are required")
+
+    existing = await db.execute(select(PermissionDB).where(PermissionDB.id == perm_id))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Permission ID '{perm_id}' already exists")
+
+    new_perm = PermissionDB(
+        id=perm_id,
+        module=module,
+        target_layer=payload.target_layer or "both",
+        label=payload.label,
+        description=payload.description or "",
+    )
+    db.add(new_perm)
+    await db.commit()
+    await db.refresh(new_perm)
+
+    return {
+        "id": new_perm.id,
+        "module": new_perm.module,
+        "target_layer": new_perm.target_layer,
+        "label": new_perm.label,
+        "description": new_perm.description,
+    }
 
 
 @router.get("/route-permissions", response_model=List[dict])

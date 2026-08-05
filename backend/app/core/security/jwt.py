@@ -37,6 +37,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         "tenant": data.get("customer_id"),
         "domain":data.get("domain"),
         "status":data.get("status"),
+        "permissions": data.get("permissions", []),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "jti": str(uuid.uuid4()),          # Unique token ID for revocation

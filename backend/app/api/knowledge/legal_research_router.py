@@ -293,7 +293,7 @@ async def get_audit_logs(
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch accounting & compliance audit logs for legal search & query activity."""
-    tenant_id = current_user.get("customer_id")
+    tenant_id = getattr(current_user, "customer_id", None)
     stmt = select(LegalAuditLogDB).where(
         LegalAuditLogDB.customer_id == tenant_id
     ).order_by(LegalAuditLogDB.created_at.desc()).limit(limit)
