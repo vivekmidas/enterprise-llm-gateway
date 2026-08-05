@@ -350,7 +350,7 @@ async def create_customer_user(
 
 @router.get("/customers/{customer_id}/nodes", response_model=dict)
 async def get_customer_nodes(
-    customer_id: int,
+    customer_id: str,
     current_user: User = Depends(require_system_admin),
     db: AsyncSession = Depends(get_db)
 ):

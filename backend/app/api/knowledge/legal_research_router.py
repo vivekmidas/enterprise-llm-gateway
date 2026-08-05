@@ -113,7 +113,7 @@ async def search_legal_cases(
     Auto-extracts Judge, Court, Statute, and Concept from query text, executes search,
     and logs accounting audit entry.
     """
-    user_tenant_id = current_user.get("customer_id")
+    user_tenant_id = current_user.customer_id
     intent = parse_natural_language_intent(payload.query)
 
     # Determine effective filters
@@ -179,7 +179,7 @@ async def search_legal_cases(
     audit_entry = LegalAuditLogDB(
         user_id=str(current_user.id),
         customer_id=user_tenant_id,
-        role=current_user.get("role", "user"),
+        role=current_user.role or "user",
         action="SEARCH",
         query_text=payload.query,
         results_count=len(results),
