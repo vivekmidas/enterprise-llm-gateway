@@ -443,7 +443,7 @@ async def test_llm_connection(
             from app.models.db_models import LLMProfileDB
             cfg_res = await db.execute(
                 select(LLMProfileDB).where(
-                    LLMProfileDB.id == int(config_id),
+                    LLMProfileDB.id == str(config_id),
                     LLMProfileDB.customer_id == target_customer_id
                 )
             )
