@@ -133,11 +133,11 @@ class EKPProcessingPipeline:
         if doc.knowledge_base_id:
             try:
                 from app.models.db_models import KnowledgeBaseDB
-                kb = db.query(KnowledgeBaseDB).filter(KnowledgeBaseDB.id == int(doc.knowledge_base_id)).first()
+                kb = db.query(KnowledgeBaseDB).filter(KnowledgeBaseDB.id == str(doc.knowledge_base_id)).first()
                 if kb and kb.settings and isinstance(kb.settings, dict):
                     kb_prof_id = kb.settings.get("llm_profile_id")
                     if kb_prof_id:
-                        profile = db.query(LLMProfileDB).filter(LLMProfileDB.id == int(kb_prof_id)).first()
+                        profile = db.query(LLMProfileDB).filter(LLMProfileDB.id == str(kb_prof_id)).first()
                         if profile:
                             doc.llm_profile_id = profile.id
                             return profile
@@ -272,12 +272,12 @@ class EKPProcessingPipeline:
         if doc.knowledge_base_id:
             try:
                 from app.models.db_models import KnowledgeBaseDB
-                kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == int(doc.knowledge_base_id)))
+                kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(doc.knowledge_base_id)))
                 kb = kb_res.scalars().first()
                 if kb and kb.settings and isinstance(kb.settings, dict):
                     kb_prof_id = kb.settings.get("llm_profile_id")
                     if kb_prof_id:
-                        prof_res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.id == int(kb_prof_id)))
+                        prof_res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str(kb_prof_id)))
                         profile = prof_res.scalars().first()
                         if profile:
                             doc.llm_profile_id = profile.id
