@@ -480,6 +480,13 @@ async def retrieve(
         for index, item in enumerate(final_candidates, start=1):
             metadata = dict(item.get("metadata") or {})
             metadata["document_name"] = item.get("document_name") or f"Doc {item['document_id']}"
+
+            # Calculate user-facing match percentage score
+            raw_score = float(item.get("score", 0.0))
+            # Bound percentage between 0% and 100%
+            match_pct = round(min(100.0, max(0.0, raw_score * 100.0)), 1)
+            metadata["match_percentage"] = match_pct
+
             retrieved_chunks.append(
                 RetrievedChunk(
                     chunk_id=item["chunk_id"],

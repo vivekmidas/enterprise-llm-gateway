@@ -14,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any
 from app.knowledge.ekp_v3.cdm import CDMDocument, CDMParagraph
-from app.knowledge.domain_rag_v1.chunker import EvidenceLinkedChunker
 
 
 @dataclass
@@ -37,7 +36,6 @@ class CDMParagraphChunker:
     def __init__(self, target_chunk_chars: int = 1200, overlap_chars: int = 200):
         self.target_chunk_chars = target_chunk_chars
         self.overlap_chars = overlap_chars
-        self.legacy_chunker = EvidenceLinkedChunker(chunk_size=target_chunk_chars, overlap=overlap_chars)
 
     def generate_chunks(self, cdm_doc: CDMDocument) -> List[EKPChunk]:
         chunks: List[EKPChunk] = []

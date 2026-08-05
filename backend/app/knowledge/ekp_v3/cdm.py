@@ -16,8 +16,59 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
 
-from app.knowledge.domain_rag_v1.source import PDFSourceExtractor, SourceDocument
 from app.knowledge.ekp_v3.cleaner import clean_and_deduplicate_text, smart_paragraph_assembly
+
+class PDFBlock:
+    def __init__(self, page: int, text: str, bbox: Optional[List[float]] = None):
+        self.page = page
+        self.text = text
+        self.bbox = bbox
+
+class SourceDocument:
+    def __init__(self, pages: Optional[Dict[int, str]] = None, blocks: Optional[List[PDFBlock]] = None, page_count: int = 1, ocr_used: bool = False):
+        self.pages = pages if pages is not None else {}
+        self.blocks = blocks if blocks is not None else []
+        self.page_count = page_count
+        self.ocr_used = ocr_used
+
+class PDFSourceExtractor:
+    def extract(self, document_id: int, file_path: str, filename: str) -> SourceDocument:
+        import fitz
+        path = Path(file_path)
+        ext = path.suffix.lower()
+        pages: Dict[int, str] = {}
+        blocks: List[PDFBlock] = []
+        page_count = 0
+        ocr_used = False
+
+        if ext == ".pdf":
+            try:
+                doc = fitz.open(file_path)
+                page_count = len(doc)
+                for i, page in enumerate(doc):
+                    page_no = i + 1
+                    p_text = page.get_text()
+                    pages[page_no] = p_text
+                    
+                    raw_blocks = page.get_text("blocks")
+                    for b in raw_blocks:
+                        if len(b) >= 5 and b[4].strip():
+                            blocks.append(PDFBlock(page=page_no, text=b[4].strip(), bbox=[float(b[0]), float(b[1]), float(b[2]), float(b[3])]))
+            except Exception as e:
+                pass
+        
+        if page_count == 0:
+            try:
+                full_text = path.read_text(encoding="utf-8", errors="ignore")
+                page_count = 1
+                pages[1] = full_text
+                blocks.append(PDFBlock(page=1, text=full_text))
+            except Exception:
+                page_count = 1
+                pages[1] = ""
+                blocks = []
+
+        return SourceDocument(pages=pages, blocks=blocks, page_count=page_count, ocr_used=ocr_used)
 
 
 @dataclass

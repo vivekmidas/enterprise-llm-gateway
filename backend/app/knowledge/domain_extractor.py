@@ -3,9 +3,37 @@ import re
 import structlog
 from typing import Any
 
-from app.knowledge.domain_rag_v1.domains.legal.llm import DomainLLM
+from openai import AsyncOpenAI
 
 logger = structlog.get_logger(__name__)
+
+
+class DomainLLM:
+    def __init__(self, model: str = "gpt-4o-mini", base_url: str | None = None, api_key: str | None = None):
+        self.model = model
+        kwargs = {}
+        if base_url:
+            kwargs["base_url"] = base_url
+        if api_key:
+            kwargs["api_key"] = api_key
+        else:
+            kwargs["api_key"] = "dummy"
+        self.client = AsyncOpenAI(**kwargs)
+
+    async def generate_json(self, prompt: str, system_prompt: str = "") -> dict:
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt or "Extract structured json."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"}
+            )
+            raw = resp.choices[0].message.content or "{}"
+            return json.loads(raw)
+        except Exception:
+            return {}
 
 
 def _clean_json_string(raw: str) -> str:

@@ -159,7 +159,8 @@ async def list_customers(
             "email": c.email,
             "address": c.address,
             "contact_person": c.contact_person,
-            "dateadded": c.dateadded
+            "dateadded": c.dateadded,
+            "allowed_domains": c.allowed_domains or []
         } for c in customers
     ]
 
@@ -191,6 +192,7 @@ async def create_customer(
         email=customer_data.get("email"),
         address=customer_data.get("address"),
         contact_person=customer_data.get("contact_person"),
+        allowed_domains=customer_data.get("allowed_domains", []),
         status="active"
     )
     db.add(new_cust)
@@ -221,7 +223,8 @@ async def create_customer(
         "plugin_storage_path": new_cust.plugin_storage_path,
         "email": new_cust.email,
         "address": new_cust.address,
-        "contact_person": new_cust.contact_person
+        "contact_person": new_cust.contact_person,
+        "allowed_domains": new_cust.allowed_domains or []
     }
 
 
@@ -259,6 +262,8 @@ async def update_customer(
         customer.address = customer_data["address"]
     if "contact_person" in customer_data:
         customer.contact_person = customer_data["contact_person"]
+    if "allowed_domains" in customer_data:
+        customer.allowed_domains = customer_data["allowed_domains"]
         
     customer.dateupdated = datetime.utcnow().isoformat()
     await db.commit()
@@ -275,7 +280,8 @@ async def update_customer(
         "plugin_storage_path": customer.plugin_storage_path,
         "email": customer.email,
         "address": customer.address,
-        "contact_person": customer.contact_person
+        "contact_person": customer.contact_person,
+        "allowed_domains": customer.allowed_domains or []
     }
 
 
