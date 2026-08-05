@@ -12,3 +12,4 @@ qdrant_data/*
 backend/enterprise_gateway.db
 backend/data/*
 metadata/*
+data/*
