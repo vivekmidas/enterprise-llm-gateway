@@ -1,51 +1,11 @@
-from __future__ import annotations
+"""
+# ==============================================================================
+# LEGAL DOMAIN SCHEMA (SOT RE-EXPORT)
+# Re-exports LEGAL_EXTRACTION_SCHEMA from Legal Domain SOT (app.knowledge.legal_sot)
+# ==============================================================================
+"""
 
-LEGAL_EXTRACTION_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["case_identity", "parties", "substance", "decision"],
-    "properties": {
-        "case_identity": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "court": {"type": ["string", "null"]},
-                "location": {"type": ["string", "null"]},
-                "case_number": {"type": ["string", "null"]},
-                "report_number": {"type": ["string", "null"]},
-                "case_date": {"type": ["string", "null"]},
-                "judge": {"type": ["string", "null"]},
-            },
-        },
-        "parties": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "petitioners": {"type": "array"},
-                "respondents": {"type": "array"},
-                "appellants": {"type": "array"},
-                "other_parties": {"type": "array"},
-            },
-        },
-        "substance": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "issues": {"type": "array"},
-                "facts": {"type": "array"},
-                "arguments": {"type": "array"},
-                "statutes": {"type": "array"},
-                "precedents": {"type": "array"},
-            },
-        },
-        "decision": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "disposition": {"type": ["string", "null"]},
-                "holding": {"type": ["string", "null"]},
-                "relief": {"type": ["string", "null"]},
-            },
-        },
-    },
-}
+from __future__ import annotations
+from app.knowledge.legal_sot import LEGAL_EXTRACTION_SCHEMA
+
+__all__ = ["LEGAL_EXTRACTION_SCHEMA"]

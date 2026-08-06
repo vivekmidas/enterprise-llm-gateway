@@ -4,6 +4,12 @@ import structlog
 from typing import Any
 
 from app.knowledge.domain_rag_v1.domains.legal.llm import DomainLLM
+# ==============================================================================
+# LEGAL DOMAIN SOT INTEGRATION
+# Prompts for free extraction are built using the Legal Domain SOT.
+# ==============================================================================
+from app.knowledge.legal_sot import build_free_extract_prompts
+
 
 logger = structlog.get_logger(__name__)
 
@@ -287,50 +293,8 @@ class DomainExtractor:
         The prompt adapts based on domain_key (legal = comprehensive judgment extraction).
         """
         if domain_key and "legal" in domain_key.lower():
-            free_sys_prompt = (
-                "You are a specialized legal document analyst.\n"
-                "RULE 1: Extract ONLY factual information explicitly present in the document.\n"
-                "RULE 2: Omit any field not found — do NOT write null, empty strings, or 0.\n"
-                "RULE 3: NEVER write bracketed placeholders like '[Name]', '[Judge]', '[Advocate]', or '[Title]'. Extract exact real proper names or omit.\n"
-                "RULE 4: For party names, extract actual names of people or companies, NOT generic roles like 'Plaintiffs' or 'Defendants'.\n"
-                "RULE 5: Use exact wording from the document for all values.\n"
-                "Return a single valid JSON object only."
-            )
-            free_user_prompt = (
-                f"Document Filename: {filename}\n\n"
-                f"Document Content:\n{content_snippet}\n\n"
-                "Extract a comprehensive structured JSON from the above legal document.\n"
-                "CRITICAL INSTRUCTIONS:\n"
-                "- Omit any field not found in the document.\n"
-                "- NEVER output bracketed placeholders like '[Name]', '[Advocate]', '[Judge]', or '[Date]'.\n"
-                "- For parties, extract the exact names of people/entities, NOT generic role labels.\n"
-                "- 'arguments' must contain actual legal arguments made by each side, NOT party names or facts.\n"
-                "- 'legal_principles' must be legal propositions EXPLICITLY STATED or CONFIRMED by the court in this document only — not inferred.\n"
-                "- 'number_of_connected_cases' must be an integer (number), not a string.\n\n"
-                "Structure (omit any section not present):\n"
-                "{\n"
-                '  "document_type": "...",\n'
-                '  "case_category": "...",\n'
-                '  "court": {"name": "...", "jurisdiction": "...", "bench": ["..."]},\n'
-                '  "judgment": {"type": "...", "reserved_on": "...", "pronounced_on": "...", "author": "..."},\n'
-                '  "case_numbers": ["..."],\n'
-                '  "lead_case": "...",\n'
-                '  "number_of_connected_cases": 0,\n'
-                '  "parties": {"appellant": {"name": "...", "type": "..."}, "respondents": [{"name": "...", "role": "..."}]},\n'
-                '  "advocates": {"appellant": ["..."], "respondent": ["..."]},\n'
-                '  "statutes": [{"act": "...", "sections": ["..."]}],\n'
-                '  "legal_questions": [{"id": 1, "question": "..."}],\n'
-                '  "facts": {"industry": "...", "business": "...", "assessment_issue": "..."},\n'
-                '  "arguments": {"appellant": ["actual argument 1"], "respondent": ["actual argument 1"]},\n'
-                '  "precedents_relied": [{"case": "...", "citation": "...", "principle": "..."}],\n'
-                '  "findings": [{"issue": "...", "finding": "...", "reasoning": "..."}],\n'
-                '  "questions_answered": [{"question": 1, "answered_in_favour_of": "..."}],\n'
-                '  "decision": {"result": "...", "holding": "...", "costs": "..."},\n'
-                '  "legal_principles": ["principle explicitly stated by court in this document"],\n'
-                '  "keywords": ["..."]\n'
-                "}\n"
-                "Output ONLY the JSON. Omit fields not present in the document."
-            )
+            # Use Legal SOT for prompt generation
+            free_sys_prompt, free_user_prompt = build_free_extract_prompts(filename, content_snippet)
         else:
             free_sys_prompt = sys_prompt
             free_user_prompt = (
@@ -350,14 +314,20 @@ class DomainExtractor:
             # For legal domain, the LLM returns the full object directly (not wrapped)
             if domain_key and "legal" in domain_key.lower():
                 extracted_fields = parsed if isinstance(parsed, dict) else {}
+                extra_fields = {}
             else:
                 extracted_fields = parsed.get("extracted_fields", parsed if isinstance(parsed, dict) else {})
+                extra_fields = parsed.get("extra_fields", {}) if isinstance(parsed, dict) else {}
 
             if not isinstance(extracted_fields, dict):
                 extracted_fields = {}
+            if not isinstance(extra_fields, dict):
+                extra_fields = {}
 
             # Grounding verifier — leaf-level
             extracted_fields = filter_ungrounded_fields(extracted_fields, text)
+            if extra_fields:
+                extra_fields = filter_ungrounded_fields(extra_fields, text)
 
             logger.info(
                 "domain_free_extraction_completed",
@@ -370,7 +340,7 @@ class DomainExtractor:
                 "domain_name": domain_name,
                 "domain_key": domain_key,
                 "extracted_fields": extracted_fields,
-                "extra_fields": {},
+                "extra_fields": extra_fields,
                 "field_weights": field_weights,
                 "extraction_mode": "schema_free_fallback",
                 "debug_info": {

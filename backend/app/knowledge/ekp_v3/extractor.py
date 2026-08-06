@@ -83,20 +83,27 @@ def build_dynamic_few_shot_prompt(cdm_doc: CDMDocument, schema: Dict[str, Any]) 
 
     return f"""You are a trained paralegal with deep knowledge of the judicial system, laws, constitution, statutory provisions, and legal documentation.
 
-Analyze the following legal document completely and provide a comprehensive structured legal analysis in JSON format containing the following entities:
+Analyze the following legal document completely and provide a comprehensive structured legal analysis in JSON format containing the following entities. DO NOT MISS ANY HELPFUL OR MATERIAL INFORMATION:
+- executive_case_summary (one_line_summary, case_overview describing dispute between AAA vs BBB and key statutory sections e.g. IPC/BNS/CrPC/BNSS/Acts, favoured_party in whose favour case was decided, key_sections_involved)
 - case (case number, petition/suit title, court jurisdiction)
 - court (name of High Court / Supreme Court / Tribunal)
 - judge (coram / presiding judge names)
 - date (date of judgment / order)
-- parties (list of petitioners, respondents, appellants, defendants)
-- lawyers (advocates / counsel appearing for each party)
-- court_order (impugned lower court orders, suits, or revision applications)
+- parties (structured map of petitioners, respondents, appellants, defendants/accused, prosecutor/prosecution/State, and other parties/intervenors)
+- lawyers (advocates / counsel appearing for each side: prosecution, defense, appellant, respondent)
+- arguments (structured list/map of specific legal arguments submitted by prosecutor/prosecution, defendant/defense, petitioner/appellant, respondent, and other parties)
+- timeline_events (key events, dates, FIR dates, arrest dates, lower court proceedings)
+- procedural_history (impugned lower court orders, FIR details, bail orders, or revision applications)
+- charges_or_claims (statutory sections, offences, or civil claims alleged against the defendant/accused)
+- evidence_and_witnesses (prosecution witnesses PWs, defense witnesses DWs, physical & documentary exhibits)
 - act/article (statutes, acts, sections, rules, constitutional articles cited)
+- statutory_interpretations (specific interpretations of sections/rules given by the court)
 - ruling (specific holdings, decisions, and directions of the court)
-- decision (overall final outcome, e.g. Rule made absolute, dismissed, allowed)
+- decision (overall final outcome, e.g. Rule made absolute, dismissed, allowed, acquitted, convicted)
 - observation (judicial findings, factual observations, and legal reasoning)
-- punishment (penalties, disciplinary actions, backwages, or relief modifications)
+- punishment (penalties, disciplinary actions, sentence duration, fine, backwages, or relief modifications)
 - referenced_cases (precedents or other case citations referred to in the document)
+- additional_observations_and_notes (any other material factual or legal information present in the text)
 
 SOURCE DOCUMENT:
 {full_text}
