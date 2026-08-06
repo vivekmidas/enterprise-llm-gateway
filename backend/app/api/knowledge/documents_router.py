@@ -22,8 +22,7 @@ from app.api.auth.dependencies import get_current_admin, get_current_user, requi
 from app.api.knowledge.schemas import KnowledgeDocumentResponse, KnowledgeDocumentUpdate
 from app.core.database import get_db
 from app.core.types.users import User
-from app.models.db_models import CustomerDB, KnowledgeBaseDB, KnowledgeChunkDB, KnowledgeDocumentDB
-
+from app.models.db_models import CustomerDB
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -149,7 +148,28 @@ async def list_documents(
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
 
     doc_res = await db.execute(doc_stmt)
-    return doc_res.scalars().all()
+    docs = doc_res.scalars().all()
+
+    # Query active/latest job progress and message for each doc
+    doc_ids = [d.id for d in docs]
+    job_map = {}
+    if doc_ids:
+        jobs_stmt = select(JobDB).where(JobDB.entity_id.in_(doc_ids)).order_by(JobDB.created_at.desc())
+        jobs_res = await db.execute(jobs_stmt)
+        for job in jobs_res.scalars().all():
+            if job.entity_id not in job_map:
+                job_map[job.entity_id] = job
+
+    response_docs = []
+    for doc in docs:
+        job = job_map.get(doc.id)
+        doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
+        if job:
+            doc_dict["job_progress"] = job.progress
+            doc_dict["job_message"] = job.message or (job.status.value if hasattr(job.status, "value") else str(job.status))
+        response_docs.append(KnowledgeDocumentResponse(**doc_dict))
+
+    return response_docs
 
 
 @router.get("/bases/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)
@@ -176,7 +196,16 @@ async def get_document(
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
-    return doc
+
+    doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
+    job_stmt = select(JobDB).where(JobDB.entity_id == doc.id).order_by(JobDB.created_at.desc()).limit(1)
+    job_res = await db.execute(job_stmt)
+    job = job_res.scalar_one_or_none()
+    if job:
+        doc_dict["job_progress"] = job.progress
+        doc_dict["job_message"] = job.message or (job.status.value if hasattr(job.status, "value") else str(job.status))
+
+    return KnowledgeDocumentResponse(**doc_dict)
 
 
 @router.put("/bases/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)
