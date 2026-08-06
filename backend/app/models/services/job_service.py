@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import structlog
 
 from app.models.db_models import JobDB
 from app.jobs.enums import JobStatus
 from app.repositories.job_repository import JobRepository
+
+logger = structlog.get_logger(__name__)
 
 
 class JobService:
@@ -34,7 +37,16 @@ class JobService:
             progress=0,
         )
 
-        return await self.repository.create(job)
+        created = await self.repository.create(job)
+        logger.info(
+            "job_created",
+            job_id=str(created.id),
+            customer_id=str(customer_id),
+            job_type=str(job_type),
+            entity_type=str(entity_type),
+            entity_id=str(entity_id),
+        )
+        return created
 
     async def get_job(self, job_id: int):
         return await self.repository.get(job_id)
@@ -68,6 +80,7 @@ class JobService:
         job = await self.repository.get(job_id)
 
         if job is None:
+            logger.warning("job_start_failed_not_found", job_id=str(job_id))
             return None
 
         job.status = JobStatus.RUNNING
@@ -75,7 +88,9 @@ class JobService:
         job.started_at = datetime.now(timezone.utc)
         job.message = message
 
-        return await self.repository.save(job)
+        saved = await self.repository.save(job)
+        logger.info("job_started", job_id=str(job_id), message=message)
+        return saved
 
     async def update_progress(
         self,
@@ -89,6 +104,7 @@ class JobService:
         job = await self.repository.get(job_id)
 
         if job is None:
+            logger.warning("job_progress_update_failed_not_found", job_id=str(job_id))
             return None
 
         job.progress = progress
@@ -96,7 +112,9 @@ class JobService:
         if message:
             job.message = message
 
-        return await self.repository.save(job)
+        saved = await self.repository.save(job)
+        logger.info("job_progress_updated", job_id=str(job_id), progress=progress, message=message)
+        return saved
 
     async def complete(
         self,
@@ -107,6 +125,7 @@ class JobService:
         job = await self.repository.get(job_id)
 
         if job is None:
+            logger.warning("job_complete_failed_not_found", job_id=str(job_id))
             return None
 
         job.status = JobStatus.COMPLETED
@@ -114,7 +133,9 @@ class JobService:
         job.completed_at = datetime.now(timezone.utc)
         job.message = message
 
-        return await self.repository.save(job)
+        saved = await self.repository.save(job)
+        logger.info("job_completed", job_id=str(job_id), message=message)
+        return saved
 
     async def fail(
         self,
@@ -125,13 +146,16 @@ class JobService:
         job = await self.repository.get(job_id)
 
         if job is None:
+            logger.warning("job_fail_failed_not_found", job_id=str(job_id))
             return None
 
         job.status = JobStatus.FAILED
         job.error = error
         job.completed_at = datetime.now(timezone.utc)
 
-        return await self.repository.save(job)
+        saved = await self.repository.save(job)
+        logger.error("job_failed", job_id=str(job_id), error=error)
+        return saved
 
     async def cancel(
         self,
@@ -142,16 +166,20 @@ class JobService:
         job = await self.repository.get(job_id)
 
         if job is None:
+            logger.warning("job_cancel_failed_not_found", job_id=str(job_id))
             return None
 
         job.status = JobStatus.CANCELLED
         job.completed_at = datetime.now(timezone.utc)
         job.message = message
 
-        return await self.repository.save(job)
+        saved = await self.repository.save(job)
+        logger.info("job_cancelled", job_id=str(job_id), message=message)
+        return saved
 
     async def delete(
         self,
         job_id: int,
     ):
+        logger.info("job_deleted", job_id=str(job_id))
         return await self.repository.delete(job_id)

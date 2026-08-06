@@ -71,6 +71,9 @@ class KnowledgeDocumentResponse(BaseModel):
     checksum: Optional[str]
     chunk_count: int
 
+    job_progress: Optional[int] = None
+    job_message: Optional[str] = None
+
 class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)
     knowledge_base_ids: list[str]

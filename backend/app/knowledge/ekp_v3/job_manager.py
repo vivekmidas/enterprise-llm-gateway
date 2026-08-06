@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+import structlog
 from app.models.db_models import EKPJobDB, EKPDocumentDB
+
+logger = structlog.get_logger(__name__)
 
 
 class EKPJobManager:
@@ -36,6 +39,7 @@ class EKPJobManager:
         db.add(job)
         db.commit()
         db.refresh(job)
+        logger.info("ekp_job_created", job_id=job_id, document_id=document_id, job_type=job_type)
         return job
 
     @staticmethod
@@ -51,6 +55,7 @@ class EKPJobManager:
         db.add(job)
         await db.commit()
         await db.refresh(job)
+        logger.info("ekp_job_created_async", job_id=job_id, document_id=document_id, job_type=job_type)
         return job
 
     @staticmethod
@@ -61,6 +66,9 @@ class EKPJobManager:
             job.worker_id = worker_id
             job.started_at = datetime.utcnow()
             db.commit()
+            logger.info("ekp_job_started", job_id=job_id, worker_id=worker_id)
+        else:
+            logger.warning("ekp_job_start_failed_not_found", job_id=job_id)
 
     @staticmethod
     async def async_mark_running(db: AsyncSession, job_id: str, worker_id: str = "worker-local-01"):
@@ -71,6 +79,9 @@ class EKPJobManager:
             job.worker_id = worker_id
             job.started_at = datetime.utcnow()
             await db.commit()
+            logger.info("ekp_job_started_async", job_id=job_id, worker_id=worker_id)
+        else:
+            logger.warning("ekp_job_start_failed_not_found_async", job_id=job_id)
 
     @staticmethod
     def mark_completed(db: Session, job_id: str):
@@ -79,6 +90,9 @@ class EKPJobManager:
             job.status = "COMPLETED"
             job.finished_at = datetime.utcnow()
             db.commit()
+            logger.info("ekp_job_completed", job_id=job_id)
+        else:
+            logger.warning("ekp_job_complete_failed_not_found", job_id=job_id)
 
     @staticmethod
     async def async_mark_completed(db: AsyncSession, job_id: str):
@@ -88,6 +102,9 @@ class EKPJobManager:
             job.status = "COMPLETED"
             job.finished_at = datetime.utcnow()
             await db.commit()
+            logger.info("ekp_job_completed_async", job_id=job_id)
+        else:
+            logger.warning("ekp_job_complete_failed_not_found_async", job_id=job_id)
 
     @staticmethod
     def mark_failed(db: Session, job_id: str, error_msg: str):
@@ -97,6 +114,9 @@ class EKPJobManager:
             job.error_log = error_msg
             job.finished_at = datetime.utcnow()
             db.commit()
+            logger.error("ekp_job_failed", job_id=job_id, error=error_msg)
+        else:
+            logger.warning("ekp_job_fail_failed_not_found", job_id=job_id)
 
     @staticmethod
     async def async_mark_failed(db: AsyncSession, job_id: str, error_msg: str):
@@ -107,4 +127,7 @@ class EKPJobManager:
             job.error_log = error_msg
             job.finished_at = datetime.utcnow()
             await db.commit()
+            logger.error("ekp_job_failed_async", job_id=job_id, error=error_msg)
+        else:
+            logger.warning("ekp_job_fail_failed_not_found_async", job_id=job_id)
 

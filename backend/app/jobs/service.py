@@ -1,10 +1,13 @@
 from typing import Optional
+import structlog
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.jobs.enums import EntityType, JobStatus, JobType
 from app.jobs.repository import JobRepository
 from app.models.db_models import JobDB
+
+logger = structlog.get_logger(__name__)
 
 
 class JobService:
@@ -24,7 +27,7 @@ class JobService:
         created_by: int | None = None,
     ) -> JobDB:
 
-        return await self.repo.create(
+        job = await self.repo.create(
             db,
             customer_id=customer_id,
             job_type=job_type,
@@ -33,6 +36,15 @@ class JobService:
             metadata=metadata,
             created_by=created_by,
         )
+        logger.info(
+            "job_created",
+            job_id=str(job.id),
+            customer_id=customer_id,
+            job_type=str(job_type),
+            entity_type=str(entity_type),
+            entity_id=entity_id,
+        )
+        return job
 
     async def start_job(
         self,
@@ -41,11 +53,16 @@ class JobService:
         message: str | None = None,
     ) -> JobDB | None:
 
-        return await self.repo.start(
+        job = await self.repo.start(
             db,
             job_id=job_id,
             message=message,
         )
+        if job:
+            logger.info("job_started", job_id=str(job_id), message=message)
+        else:
+            logger.warning("job_start_failed_not_found", job_id=str(job_id))
+        return job
 
     async def update_progress(
         self,
@@ -57,12 +74,17 @@ class JobService:
 
         progress = max(0, min(progress, 100))
 
-        return await self.repo.update_progress(
+        job = await self.repo.update_progress(
             db,
             job_id=job_id,
             progress=progress,
             message=message,
         )
+        if job:
+            logger.info("job_progress_updated", job_id=str(job_id), progress=progress, message=message)
+        else:
+            logger.warning("job_progress_update_failed_not_found", job_id=str(job_id))
+        return job
 
     async def complete_job(
         self,
@@ -71,11 +93,16 @@ class JobService:
         message: str | None = None,
     ) -> JobDB | None:
 
-        return await self.repo.complete(
+        job = await self.repo.complete(
             db,
             job_id=job_id,
             message=message,
         )
+        if job:
+            logger.info("job_completed", job_id=str(job_id), message=message)
+        else:
+            logger.warning("job_complete_failed_not_found", job_id=str(job_id))
+        return job
 
     async def fail_job(
         self,
@@ -84,11 +111,16 @@ class JobService:
         error: str,
     ) -> JobDB | None:
 
-        return await self.repo.fail(
+        job = await self.repo.fail(
             db,
             job_id=job_id,
             error=error,
         )
+        if job:
+            logger.error("job_failed", job_id=str(job_id), error=error)
+        else:
+            logger.warning("job_fail_failed_not_found", job_id=str(job_id))
+        return job
 
     async def cancel_job(
         self,
@@ -96,10 +128,15 @@ class JobService:
         job_id: int,
     ) -> JobDB | None:
 
-        return await self.repo.cancel(
+        job = await self.repo.cancel(
             db,
             job_id=job_id,
         )
+        if job:
+            logger.info("job_cancelled", job_id=str(job_id))
+        else:
+            logger.warning("job_cancel_failed_not_found", job_id=str(job_id))
+        return job
 
     async def get_job(
         self,
