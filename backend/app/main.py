@@ -28,14 +28,15 @@ load_dotenv()
 
 app = FastAPI(title="Enterprise LLM Gateway", version="0.2.3")
 
-# CORS
+app.add_middleware(AuthenticationMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex="https?://.*",
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    max_age=1,
+    max_age=3600,
 )
 
 app = setup_observability(app)
@@ -88,7 +89,6 @@ from app.api.knowledge.ekp_router import router as ekp_router
 
 from app.api.roles.router import router as roles_router
 
-app.add_middleware(AuthenticationMiddleware)
 app.include_router(root_router)
 app.include_router(agents_router)
 #app.include_router(chat_router)
