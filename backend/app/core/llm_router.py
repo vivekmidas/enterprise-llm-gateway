@@ -141,6 +141,8 @@ class LLMRouter:
         if provider == "ollama":
             model = resolved_model or os.getenv("OLLAMA_MODEL", "qwen:0.5b")
             raw_url = resolved_base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            if not raw_url:
+                raise ValueError("Ollama base_url must be specified in profile or configuration.")
             clean_url = _clean_base_url(raw_url) or "http://localhost:11434"
 
             try:
@@ -188,7 +190,7 @@ class LLMRouter:
             model = resolved_model or os.getenv("VLLM_MODEL", "default")
             raw_url = resolved_base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8001")
             clean_host = _clean_base_url(raw_url) or "http://localhost:8001"
-            base_url = f"{clean_host}/v1"
+            base_url = clean_host if clean_host.endswith("/v1") else f"{clean_host}/v1"
             api_key = resolved_api_key or os.getenv("VLLM_API_KEY", "EMPTY")
             return ChatOpenAI(
                 model=model,
@@ -203,8 +205,26 @@ class LLMRouter:
             model = resolved_model or os.getenv("GROK_MODEL", "grok-2-latest")
             raw_url = resolved_base_url or os.getenv("GROK_BASE_URL", "https://api.x.ai")
             clean_host = _clean_base_url(raw_url) or "https://api.x.ai"
-            base_url = f"{clean_host}/v1"
+            base_url = clean_host if clean_host.endswith("/v1") else f"{clean_host}/v1"
             api_key = resolved_api_key or os.getenv("GROK_API_KEY", os.getenv("XAI_API_KEY", "EMPTY"))
+            return ChatOpenAI(
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
+                streaming=True,
+            )
+
+        elif provider in ("gemini", "google"):
+            model = resolved_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            raw_url = resolved_base_url or os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
+            clean_host = str(raw_url).rstrip("/")
+            if "generativelanguage.googleapis.com" in clean_host and not clean_host.endswith("v1beta/openai"):
+                base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+            else:
+                base_url = clean_host if (clean_host.endswith("/v1") or clean_host.endswith("/openai")) else f"{clean_host}/v1"
+            api_key = resolved_api_key or os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "EMPTY"))
             return ChatOpenAI(
                 model=model,
                 base_url=base_url,
@@ -217,8 +237,13 @@ class LLMRouter:
         elif provider in ("openai", "custom", "openai_compatible", "generic") or resolved_base_url:
             model = resolved_model or os.getenv("OPENAI_MODEL", "gpt-4o")
             raw_url = resolved_base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+            if not raw_url and not resolved_api_key and not os.getenv("OPENAI_API_KEY"):
+                raise ValueError("OpenAI API key or base_url must be specified in profile or configuration.")
             clean_host = _clean_base_url(raw_url) or "https://api.openai.com"
-            base_url = f"{clean_host}/v1"
+            if "generativelanguage.googleapis.com" in clean_host:
+                base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+            else:
+                base_url = clean_host if (clean_host.endswith("/v1") or clean_host.endswith("/openai")) else f"{clean_host}/v1"
             api_key = resolved_api_key or os.getenv("OPENAI_API_KEY", "EMPTY")
             return ChatOpenAI(
                 model=model,

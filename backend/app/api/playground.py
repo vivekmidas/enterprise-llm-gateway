@@ -63,20 +63,34 @@ async def run_playground_test(
     #         "max_context_tokens": 4096,
     #         "enable_rrf": True,
     #     },
-    #     "rerank_config": {
-    #         "enable_reranking": False,
-    #         "candidate_limit": 30,
-    #     },
-    #     "query_settings": {
-    #         "enable_query_rewrite": False,
-    #     },
-    # }
+    settings: Dict[str, Any] = {
+        "llm_config": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "temperature": 0.7,
+            "max_tokens": 1024,
+        },
+        "retrieval_config": {
+            "approach": "hybrid",
+            "top_k": 5,
+            "min_score": 0.0,
+            "max_context_tokens": 4096,
+            "enable_rrf": True,
+        },
+        "rerank_config": {
+            "enable_reranking": False,
+            "candidate_limit": 30,
+        },
+        "query_settings": {
+            "enable_query_rewrite": False,
+        },
+    }
 
     # 1. Load base profile if profile_id provided
     if payload.profile_id:
         result = await db.execute(
             select(LLMProfileDB).where(
-                LLMProfileDB.id == payload.profile_id,
+                LLMProfileDB.id == str(payload.profile_id),
                 LLMProfileDB.customer_id == customer_id,
             )
         )
@@ -101,9 +115,10 @@ async def run_playground_test(
     start_time = time.perf_counter()
 
     # Build RAG Request
+    user_id_val = str(current_user.id) if current_user.id is not None else "1"
     rag_req = RAGRequest(
         customer_id=customer_id,
-        user_id=int(current_user.id),
+        user_id=user_id_val,
         query=payload.query,
         knowledge_base_ids=payload.knowledge_base_ids,
         top_k=ret_cfg.get("top_k", 5),

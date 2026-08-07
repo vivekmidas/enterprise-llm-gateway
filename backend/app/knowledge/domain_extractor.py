@@ -173,21 +173,23 @@ class DomainExtractor:
                 return cls()
 
             s = llm_profile.settings or {}
-            gen = s.get("generation") or {}
+            gen = s.get("generation") if isinstance(s.get("generation"), dict) else {}
 
-            raw_url = gen.get("url") or gen.get("base_url") or gen.get("endpoint")
-            api_key = gen.get("api_key") or "ollama"
-            model = gen.get("model") or llm_profile.name
+            raw_url = gen.get("url") or gen.get("base_url") or gen.get("endpoint") or s.get("base_url") or s.get("url")
+            api_key = gen.get("api_key") or s.get("api_key") or "ollama"
+            model = gen.get("model") or gen.get("model_name") or s.get("model") or llm_profile.name
 
-            # Convert Ollama native URL to OpenAI-compatible /v1 endpoint
-            # e.g. http://localhost:11434/api/chat → http://localhost:11434/v1
             base_url = None
             if raw_url:
-                for suffix in ("/api/chat", "/api/generate", "/v1/chat/completions"):
-                    if raw_url.endswith(suffix):
-                        raw_url = raw_url[: -len(suffix)].rstrip("/")
-                        break
-                base_url = raw_url.rstrip("/") + "/v1"
+                clean = str(raw_url).rstrip("/")
+                if "generativelanguage.googleapis.com" in clean:
+                    base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+                else:
+                    for suffix in ("/api/chat", "/api/generate", "/v1/chat/completions", "/chat/completions"):
+                        if clean.endswith(suffix):
+                            clean = clean[:-len(suffix)].rstrip("/")
+                            break
+                    base_url = clean if (clean.endswith("/v1") or clean.endswith("/openai")) else f"{clean}/v1"
 
             logger.info(
                 "domain_extractor_profile_resolved",

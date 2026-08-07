@@ -22,7 +22,7 @@ from app.api.auth.dependencies import get_current_admin, get_current_user, requi
 from app.api.knowledge.schemas import KnowledgeDocumentResponse, KnowledgeDocumentUpdate
 from app.core.database import get_db
 from app.core.types.users import User
-from app.models.db_models import CustomerDB
+from app.models.db_models import CustomerDB, KnowledgeBaseDB, KnowledgeDocumentDB, KnowledgeChunkDB, JobDB
 logger = logging.getLogger(__name__)
 
 router = APIRouter()

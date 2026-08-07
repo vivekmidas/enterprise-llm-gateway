@@ -144,14 +144,13 @@ class EKPProcessingPipeline:
             except Exception:
                 pass
 
-        # Attempt to find default active profile for tenant (customer_id)
-        cust_id = None
-        try:
-            cust_id = int(doc.tenant_id)
-        except ValueError:
-            pass
+        # ==============================================================================
+        # BLOCK COMMENT: STRING-SAFE TENANT ID RESOLUTION
+        # Coerce doc.tenant_id to string matching String(36) customer_id column.
+        # ==============================================================================
+        cust_id = str(doc.tenant_id) if doc.tenant_id is not None else None
 
-        if cust_id is not None:
+        if cust_id:
             # Query default profile for this customer
             profile = db.query(LLMProfileDB).filter(
                 LLMProfileDB.customer_id == cust_id,
@@ -285,13 +284,13 @@ class EKPProcessingPipeline:
             except Exception:
                 pass
 
-        cust_id = None
-        try:
-            cust_id = int(doc.tenant_id)
-        except ValueError:
-            pass
+        # ==============================================================================
+        # BLOCK COMMENT: STRING-SAFE TENANT ID RESOLUTION
+        # Coerce doc.tenant_id to string matching String(36) customer_id column.
+        # ==============================================================================
+        cust_id = str(doc.tenant_id) if doc.tenant_id is not None else None
 
-        if cust_id is not None:
+        if cust_id:
             res = await db.execute(
                 select(LLMProfileDB).where(
                     LLMProfileDB.customer_id == cust_id,

@@ -75,8 +75,15 @@ async def _patch_section(
     except Exception:
         existing = ProfileSettings()
 
+    # ==============================================================================
+    # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+    # Explicitly flag settings column as modified so SQLAlchemy issues SQL UPDATE on commit.
+    # ==============================================================================
+    from sqlalchemy.orm.attributes import flag_modified
+
     updated = existing.model_copy(update={section_name: validated})
     profile.settings = updated.model_dump()
+    flag_modified(profile, "settings")
     profile.updated_at = datetime.utcnow().isoformat()
 
     await db.commit()

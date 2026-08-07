@@ -139,26 +139,35 @@ async def retrieve(
         async def search_single_collection(coll: KnowledgeCollectionDB) -> list:
             from app.knowledge.embeddings import get_embedding_provider_for_model, resolve_kb_embedding_config
             if coll.knowledge_base_id:
-                provider_name, model_name, dim = await resolve_kb_embedding_config(
+                emb_config = await resolve_kb_embedding_config(
                     db, coll.knowledge_base_id, coll.customer_id
                 )
             else:
-                provider_name = tenant_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
-                model_name = coll.embedding_model or tenant_settings.get("embedding_model") or settings.EMBEDDING_MODEL
-                dim = coll.vector_dimension or tenant_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
-                if model_name and (model_name.startswith("text-embedding") or provider_name == "openai"):
-                    provider_name = "openai"
+                emb_sec = tenant_settings.get("embedding") if isinstance(tenant_settings.get("embedding"), dict) else {}
+                p_name = emb_sec.get("provider") or tenant_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
+                m_name = coll.embedding_model or emb_sec.get("model") or tenant_settings.get("embedding_model") or settings.EMBEDDING_MODEL
+                d_dim = coll.vector_dimension or emb_sec.get("dimension") or tenant_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
+                b_url = emb_sec.get("url") or emb_sec.get("base_url") or tenant_settings.get("embedding_url") or tenant_settings.get("base_url") or tenant_settings.get("url")
+                a_key = emb_sec.get("api_key") or tenant_settings.get("embedding_api_key") or tenant_settings.get("api_key")
+                if m_name and (m_name.startswith("text-embedding") or p_name == "openai"):
+                    p_name = "openai"
+                emb_config = {
+                    "provider_name": p_name,
+                    "model_name": m_name,
+                    "dimension": d_dim,
+                    "base_url": b_url,
+                    "api_key": a_key,
+                }
 
-            cache_key = (provider_name, model_name)
+            provider_name = emb_config["provider_name"]
+            model_name = emb_config["model_name"]
+            cache_key = (provider_name, model_name, emb_config.get("base_url"))
+
             if cache_key not in embedding_cache:
                 try:
                     # Step 5: Generate query embedding
                     logger.info("retrieval_step_5_embedding_cache_miss", provider=provider_name, model=model_name, collection=coll.name)
-                    provider = get_embedding_provider_for_model(
-                        provider_name=provider_name,
-                        model_name=model_name,
-                        dimension=dim,
-                    )
+                    provider = get_embedding_provider_for_model(**emb_config)
                     embedding_cache[cache_key] = await provider.embed_query(query)
                     logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name)
                 except Exception as e:

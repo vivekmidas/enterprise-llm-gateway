@@ -87,14 +87,28 @@ async def create_knowledge_base(
 
         prof_embedding_model = None
         prof_vector_dimension = None
+        prof_embedding_provider = None
         if target_profile and isinstance(target_profile.settings, dict):
             p_set = target_profile.settings
             emb_sec = p_set.get("embedding") if isinstance(p_set.get("embedding"), dict) else {}
-            prof_embedding_model = p_set.get("embedding_model") or emb_sec.get("model")
-            prof_vector_dimension = p_set.get("vector_dimension") or emb_sec.get("dimension")
+            prof_embedding_model = emb_sec.get("model") or p_set.get("embedding_model")
+            prof_vector_dimension = emb_sec.get("dimension") or p_set.get("vector_dimension")
+            prof_embedding_provider = emb_sec.get("provider") or p_set.get("embedding_provider")
 
-        embedding_model = kb_settings.get("embedding_model") or prof_embedding_model or settings.EMBEDDING_MODEL
-        vector_dimension = kb_settings.get("vector_dimension") or prof_vector_dimension or settings.EMBEDDING_DIMENSION
+        embedding_model = prof_embedding_model or kb_settings.get("embedding_model") or settings.EMBEDDING_MODEL
+        vector_dimension = prof_vector_dimension or kb_settings.get("vector_dimension") or settings.EMBEDDING_DIMENSION
+        embedding_provider = prof_embedding_provider or kb_settings.get("embedding_provider") or settings.EMBEDDING_PROVIDER
+
+        # ==============================================================================
+        # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+        # Explicitly flag settings column as modified so SQLAlchemy issues SQL UPDATE on commit.
+        # ==============================================================================
+        from sqlalchemy.orm.attributes import flag_modified
+        kb_settings["embedding_model"] = embedding_model
+        kb_settings["vector_dimension"] = int(vector_dimension)
+        kb_settings["embedding_provider"] = embedding_provider
+        db_kb.settings = kb_settings
+        flag_modified(db_kb, "settings")
 
         db_coll = KnowledgeCollectionDB(
             name=f"kb_collection_{db_kb.id}",
@@ -205,7 +219,21 @@ async def update_knowledge_base(
         # Sync collection embedding model & dimension based on profile
         from app.knowledge.embeddings import resolve_kb_embedding_config
         from app.models.db_models import KnowledgeCollectionDB
-        _, model_name, dimension = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
+        emb_cfg = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
+        provider_name, model_name, dimension = emb_cfg
+
+        # ==============================================================================
+        # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+        # Explicitly flag settings column as modified for KnowledgeBaseDB on update.
+        # ==============================================================================
+        from sqlalchemy.orm.attributes import flag_modified
+        curr_settings = dict(kb.settings or {})
+        curr_settings["embedding_model"] = model_name
+        curr_settings["vector_dimension"] = dimension
+        curr_settings["embedding_provider"] = provider_name
+        kb.settings = curr_settings
+        flag_modified(kb, "settings")
+
         coll_res = await db.execute(
             select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb.id)
         )
@@ -213,7 +241,8 @@ async def update_knowledge_base(
         if coll:
             coll.embedding_model = model_name
             coll.vector_dimension = dimension
-            await db.commit()
+        await db.commit()
+        await db.refresh(kb)
 
         return kb
     except Exception as exc:

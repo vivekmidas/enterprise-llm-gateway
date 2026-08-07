@@ -73,6 +73,7 @@ class KnowledgeDocumentResponse(BaseModel):
 
     job_progress: Optional[int] = None
     job_message: Optional[str] = None
+    model_config = {"from_attributes": True}
 
 class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)

@@ -44,9 +44,12 @@ async def index_document(
 
     from app.knowledge.embeddings import get_embedding_provider_for_model, resolve_kb_embedding_config
 
-    provider_name, model_name, dimension = await resolve_kb_embedding_config(
+    emb_config = await resolve_kb_embedding_config(
         db, document.knowledge_base_id, document.customer_id
     )
+    provider_name = emb_config["provider_name"]
+    model_name = emb_config["model_name"]
+    dimension = emb_config["dimension"]
 
     if not collection:
         logger.info(
@@ -75,11 +78,7 @@ async def index_document(
     document.collection_name = collection.name
     await db.commit()
 
-    provider = get_embedding_provider_for_model(
-        provider_name=provider_name,
-        model_name=model_name,
-        dimension=dimension,
-    )
+    provider = get_embedding_provider_for_model(**emb_config)
 
     # Ensure collection exists in Qdrant
     await vector_store.ensure_collection(

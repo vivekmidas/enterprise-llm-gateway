@@ -9,7 +9,7 @@ Resolution order (highest → lowest priority):
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,8 +35,8 @@ class ProfileResolver:
 
     async def resolve(
         self,
-        profile_id: Optional[int],
-        customer_id: int,
+        profile_id: Optional[Union[str, int]],
+        customer_id: Union[str, int],
     ) -> ProfileSettings:
         """
         Return a fully-typed ProfileSettings for the given profile or tenant default.
@@ -57,8 +57,8 @@ class ProfileResolver:
 
     async def resolve_section(
         self,
-        profile_id: Optional[int],
-        customer_id: int,
+        profile_id: Optional[Union[str, int]],
+        customer_id: Union[str, int],
         section: str,
     ):
         """Resolve and return a single named section from the profile."""
@@ -67,8 +67,8 @@ class ProfileResolver:
 
     async def resolve_execution_context(
         self,
-        profile_id: Optional[int],
-        customer_id: int,
+        profile_id: Optional[Union[str, int]],
+        customer_id: Union[str, int],
         model_type: str = "search",
     ) -> dict:
         """
@@ -139,62 +139,70 @@ class ProfileResolver:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    # ==============================================================================
+    # BLOCK COMMENT: STRING-SAFE PROFILE & CUSTOMER ID RESOLUTION
+    # Ensures profile_id and customer_id string coercion matches String(36) DB columns.
+    # ==============================================================================
     async def _load_raw(
         self,
-        profile_id: Optional[int],
-        customer_id: int,
+        profile_id: Optional[Union[str, int]],
+        customer_id: Union[str, int],
     ) -> dict | None:
         from app.models.db_models import CustomerDB, LLMProfileDB
 
+        str_cid = str(customer_id) if customer_id is not None else None
+
         # Try explicit profile
         if profile_id:
+            str_pid = str(profile_id)
             result = await self.db.execute(
                 select(LLMProfileDB).where(
-                    LLMProfileDB.id == profile_id,
-                    LLMProfileDB.customer_id == customer_id,
+                    LLMProfileDB.id == str_pid,
+                    LLMProfileDB.customer_id == str_cid,
                 )
             )
             profile = result.scalar_one_or_none()
             if profile and profile.settings:
-                logger.debug("profile_resolved_by_id", extra={"profile_id": profile_id})
+                logger.debug("profile_resolved_by_id", extra={"profile_id": str_pid})
                 return profile.settings
 
         # Fall back to tenant active profile
-        cust_result = await self.db.execute(
-            select(CustomerDB).where(CustomerDB.id == customer_id)
-        )
-        customer = cust_result.scalar_one_or_none()
-        if customer and customer.settings:
-            active_id = (
-                customer.settings.get("active_profile_id")
-                or customer.settings.get("active_config_id")
+        if str_cid:
+            cust_result = await self.db.execute(
+                select(CustomerDB).where(CustomerDB.id == str_cid)
             )
-            if active_id:
-                result = await self.db.execute(
-                    select(LLMProfileDB).where(
-                        LLMProfileDB.id == (active_id),
-                        LLMProfileDB.customer_id == customer_id,
-                    )
+            customer = cust_result.scalar_one_or_none()
+            if customer and customer.settings:
+                active_id = (
+                    customer.settings.get("active_profile_id")
+                    or customer.settings.get("active_config_id")
                 )
-                profile = result.scalar_one_or_none()
-                if profile and profile.settings:
-                    logger.debug(
-                        "profile_resolved_from_tenant_default",
-                        extra={"active_id": active_id},
+                if active_id:
+                    result = await self.db.execute(
+                        select(LLMProfileDB).where(
+                            LLMProfileDB.id == str(active_id),
+                            LLMProfileDB.customer_id == str_cid,
+                        )
                     )
-                    return profile.settings
+                    profile = result.scalar_one_or_none()
+                    if profile and profile.settings:
+                        logger.debug(
+                            "profile_resolved_from_tenant_default",
+                            extra={"active_id": active_id},
+                        )
+                        return profile.settings
 
-        # Try is_default flag
-        result = await self.db.execute(
-            select(LLMProfileDB).where(
-                LLMProfileDB.customer_id == customer_id,
-                LLMProfileDB.is_default.is_(True),
+            # Try is_default flag
+            result = await self.db.execute(
+                select(LLMProfileDB).where(
+                    LLMProfileDB.customer_id == str_cid,
+                    LLMProfileDB.is_default.is_(True),
+                )
             )
-        )
-        profile = result.scalar_one_or_none()
-        if profile and profile.settings:
-            logger.debug("profile_resolved_by_is_default_flag")
-            return profile.settings
+            profile = result.scalar_one_or_none()
+            if profile and profile.settings:
+                logger.debug("profile_resolved_by_is_default_flag")
+                return profile.settings
 
         logger.info("no_profile_found_using_system_defaults", extra={"customer_id": customer_id})
         return None

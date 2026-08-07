@@ -342,6 +342,61 @@ STANDARD_PRESETS = [
             "chat": {"payload_format": "anthropic_messages"}
         },
         "is_active": True
+    },
+    {
+        "provider_key": "gemini",
+        "name": "gemini",
+        "display_name": "Google Gemini",
+        "description": "Google Gemini API (gemini-2.5-flash, gemini-2.5-pro, gemini-1.5-flash, gemini-1.5-pro)",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "model_types": [
+            {
+                "name": "search",
+                "endpoint": "/v1beta/models/{model}:generateContent",
+                "models": ["gemini-3-pro", "gemini-3.5-flash", "gemini-3.5-pro"],
+                "default_model": "gemini-3.5-flash",
+                "api_key": None,
+                "payload_structure": {"payload_format": "gemini"}
+            },
+            {
+                "name": "embedding",
+                "endpoint": "/v1beta/models/{model}:embedContent",
+                "models": [
+                    {"model": "text-embedding-004", "dimension": 768}
+                ],
+                "default_model": "text-embedding-004",
+                "api_key": None,
+                "payload_structure": {"payload_format": "gemini"}
+            },
+            {
+                "name": "reranking",
+                "endpoint": "/v1beta/models/{model}:generateContent",
+                "models": ["gemini-2.5-flash", "gemini-1.5-flash"],
+                "default_model": "gemini-2.5-flash",
+                "api_key": None,
+                "payload_structure": {"payload_format": "gemini"}
+            }
+        ],
+        "chat_models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"],
+        "default_chat_model": "gemini-2.5-flash",
+        "search_endpoint": "/v1beta/models/{model}:generateContent",
+        "embedding_models": [
+            {"model": "text-embedding-004", "dimension": 768}
+        ],
+        "default_embedding_model": "text-embedding-004",
+        "default_embedding_dimension": 768,
+        "embedding_endpoint": "/v1beta/models/{model}:embedContent",
+        "rerank_models": ["gemini-2.5-flash", "gemini-1.5-flash"],
+        "default_rerank_model": "gemini-2.5-flash",
+        "rerank_endpoint": "/v1beta/models/{model}:generateContent",
+        "default_temperature": 0.7,
+        "default_max_tokens": 2048,
+        "api_key_header": "x-goog-api-key",
+        "capability_configs": {
+            "chat": {"payload_format": "gemini"},
+            "embeddings": {"payload_format": "gemini"}
+        },
+        "is_active": True
     }
 ]
 

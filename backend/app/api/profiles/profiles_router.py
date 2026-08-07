@@ -150,10 +150,16 @@ async def create_profile(
         res = await db.execute(select(CustomerDB).where(CustomerDB.id == customer_id))
         cust = res.scalar_one_or_none()
         if cust:
+            # ==============================================================================
+            # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+            # Explicitly flag settings column as modified for CustomerDB on default profile change.
+            # ==============================================================================
+            from sqlalchemy.orm.attributes import flag_modified
             settings_dict = dict(cust.settings or {})
             settings_dict["active_profile_id"] = profile.id
             settings_dict["active_config_id"] = profile.id
             cust.settings = settings_dict
+            flag_modified(cust, "settings")
             await db.commit()
 
     return profile
@@ -207,11 +213,17 @@ async def update_profile(
     if payload.description is not None:
         profile.description = payload.description
     if payload.settings is not None:
+        # ==============================================================================
+        # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+        # Explicitly flag settings column as modified so SQLAlchemy issues SQL UPDATE on commit.
+        # ==============================================================================
+        from sqlalchemy.orm.attributes import flag_modified
         profile.settings = (
             payload.settings.model_dump()
             if hasattr(payload.settings, "model_dump")
             else payload.settings
         )
+        flag_modified(profile, "settings")
     if payload.is_default is True:
         await db.execute(
             update(LLMProfileDB)
@@ -285,10 +297,16 @@ async def set_default_profile(
     res = await db.execute(select(CustomerDB).where(CustomerDB.id == target_customer_id))
     cust = res.scalar_one_or_none()
     if cust:
+        # ==============================================================================
+        # BLOCK COMMENT: ORM JSON MUTATION TRACKING
+        # Explicitly flag settings column as modified for CustomerDB on set-default.
+        # ==============================================================================
+        from sqlalchemy.orm.attributes import flag_modified
         settings_dict = dict(cust.settings or {})
         settings_dict["active_profile_id"] = profile.id
         settings_dict["active_config_id"] = profile.id
         cust.settings = settings_dict
+        flag_modified(cust, "settings")
 
     await db.commit()
     await db.refresh(profile)

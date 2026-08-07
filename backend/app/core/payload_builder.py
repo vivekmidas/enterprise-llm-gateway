@@ -67,6 +67,44 @@ def construct_provider_payload(
                 },
             }
 
+    elif payload_format == "gemini" or provider_key.lower() == "gemini":
+        if model_type == "embedding":
+            prompt = text_or_messages if isinstance(text_or_messages, str) else str(text_or_messages)
+            return {
+                "model": f"models/{model_name}",
+                "content": {
+                    "parts": [{"text": prompt}]
+                }
+            }
+        else:
+            contents = []
+            system_instruction = None
+            if system_prompt:
+                system_instruction = {"parts": [{"text": system_prompt}]}
+
+            if isinstance(text_or_messages, list):
+                for msg in text_or_messages:
+                    r = msg.get("role")
+                    c = msg.get("content", "")
+                    if r == "system":
+                        system_instruction = {"parts": [{"text": c}]}
+                    else:
+                        gem_role = "user" if r == "user" else "model"
+                        contents.append({"role": gem_role, "parts": [{"text": c}]})
+            elif isinstance(text_or_messages, str):
+                contents.append({"role": "user", "parts": [{"text": text_or_messages}]})
+
+            g_payload: Dict[str, Any] = {
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": temperature,
+                    "maxOutputTokens": max_tokens,
+                }
+            }
+            if system_instruction:
+                g_payload["systemInstruction"] = system_instruction
+            return g_payload
+
     # Standard OpenAI / vLLM / Grok / Azure / default format
     messages = []
     if system_prompt:

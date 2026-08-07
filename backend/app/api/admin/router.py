@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Response
 from typing import List, Dict, Any, Optional
 import structlog
-from sqlalchemy import select, delete, or_
+from sqlalchemy import select, delete, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
@@ -18,7 +18,7 @@ from app.models.db_models import (
     KnowledgeBaseDB, KnowledgeCollectionDB, KnowledgeDocumentDB, KnowledgeChunkDB,
     LLMProfileDB, RetrievalConfigDB, EKPDocumentDB, EKPJobDB, EKPParagraphDB,
     EKPEntityDB, EKPRelationshipDB, EKPApprovalHistoryDB, EKPDocumentReviewDB,
-    SavedQueryDB
+    EKPAuditLogDB, SavedQueryDB, RoleDB, RolePermissionDB
 )
 from app.knowledge.vector_store import vector_store
 from app.core.security.hash import get_password_hash
@@ -304,15 +304,10 @@ async def delete_customer(
     if sys_admin_check.scalars().first():
         raise HTTPException(status_code=400, detail="Customers with system admin users cannot be deleted")
 
-    # 1. Qdrant Vector DB Cleanup
+    # ==============================================================================
+    # 1. QDRANT VECTOR DB CLEANUP
+    # ==============================================================================
     try:
-        from app.models.db_models import RoleDB, RolePermissionDB
-        role_ids = (await db.execute(select(RoleDB.id).where(RoleDB.customer_id == customer_id))).scalars().all()
-        if role_ids:
-            from sqlalchemy import delete
-            await db.execute(delete(RolePermissionDB).where(RolePermissionDB.role_id.in_(role_ids)))
-            await db.execute(delete(RoleDB).where(RoleDB.id.in_(role_ids)))
-
         logger.info(f"Deleting customer {customer_id} from Qdrant")
         col_res = await db.execute(
             select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == customer_id)
@@ -332,9 +327,11 @@ async def delete_customer(
     except Exception as e:
         logger.error("qdrant_cleanup_error", extra={"customer_id": customer_id, "error": str(e)})
 
-    # 2. File system cleanup for stored documents
+    # ==============================================================================
+    # 2. FILE SYSTEM CLEANUP FOR STORED DOCUMENTS
+    # ==============================================================================
     try:
-        logger.info(f"Deleting customer {customer_id} files from KB ")
+        logger.info(f"Deleting customer {customer_id} files from KB")
         kb_docs_res = await db.execute(
             select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.customer_id == customer_id)
         )
@@ -349,7 +346,6 @@ async def delete_customer(
             select(EKPDocumentDB).where(EKPDocumentDB.tenant_id == customer_id)
         )
         ekp_docs = ekp_docs_res.scalars().all()
-        ekp_doc_ids = [d.id for d in ekp_docs]
         for ekp_doc in ekp_docs:
             if ekp_doc.file_path and os.path.exists(ekp_doc.file_path):
                 try:
@@ -359,25 +355,35 @@ async def delete_customer(
     except Exception as e:
         logger.error("file_cleanup_error", extra={"customer_id": customer_id, "error": str(e)})
 
-    # 3. EKP data cleanup (retaining EKPAuditLogDB for forensic compliance)
+    # ==============================================================================
+    # 3. EKP DATA CLEANUP (CHILD TABLES FIRST TO PRESERVE FK INTEGRITY)
+    # ==============================================================================
+    ekp_id_res = await db.execute(select(EKPDocumentDB.id).where(EKPDocumentDB.tenant_id == customer_id))
+    ekp_doc_ids = ekp_id_res.scalars().all()
     if ekp_doc_ids:
-        logger.info(f"Deleting customer {customer_id} data from EKP")
+        logger.info(f"Deleting customer {customer_id} data from EKP child tables")
         await db.execute(delete(EKPRelationshipDB).where(EKPRelationshipDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPEntityDB).where(EKPEntityDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPParagraphDB).where(EKPParagraphDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPJobDB).where(EKPJobDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPApprovalHistoryDB).where(EKPApprovalHistoryDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPDocumentReviewDB).where(EKPDocumentReviewDB.document_id.in_(ekp_doc_ids)))
+        await db.execute(delete(EKPAuditLogDB).where(EKPAuditLogDB.document_id.in_(ekp_doc_ids)))
+
     await db.execute(delete(EKPDocumentDB).where(EKPDocumentDB.tenant_id == customer_id))
 
-    # 4. Knowledge Base & RAG data cleanup
+    # ==============================================================================
+    # 4. KNOWLEDGE BASE & RAG DATA CLEANUP
+    # ==============================================================================
     logger.info(f"Deleting customer KB data for customer id {customer_id}")
     await db.execute(delete(KnowledgeChunkDB).where(KnowledgeChunkDB.customer_id == customer_id))
     await db.execute(delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.customer_id == customer_id))
     await db.execute(delete(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == customer_id))
     await db.execute(delete(KnowledgeBaseDB).where(KnowledgeBaseDB.customer_id == customer_id))
 
-    # 5. Workflows & Nodes cleanup
+    # ==============================================================================
+    # 5. WORKFLOWS & NODES CLEANUP
+    # ==============================================================================
     wf_res = await db.execute(select(WorkflowDB.id).where(WorkflowDB.customer_id == customer_id))
     wf_ids = wf_res.scalars().all()
     if wf_ids:
@@ -390,18 +396,40 @@ async def delete_customer(
     await db.execute(delete(CustomerNodeDB).where(CustomerNodeDB.customer_id == customer_id))
     await db.execute(delete(NodeDB).where(NodeDB.customer_id == customer_id))
 
-    # 6. LLM Profiles & Retrieval Configs cleanup
+    # ==============================================================================
+    # 6. LLM PROFILES & RETRIEVAL CONFIGS CLEANUP
+    # ==============================================================================
     logger.info(f"Deleting customer LLM profiles and retrieval configs for customer id {customer_id}")
     await db.execute(delete(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id))
     await db.execute(delete(RetrievalConfigDB).where(RetrievalConfigDB.customer_id == customer_id))
     await db.execute(delete(DomainSchemaDB).where(DomainSchemaDB.customer_id == customer_id))
 
-    # 7. Jobs & Saved Queries cleanup (retaining AuditLogDB & LegalAuditLogDB for forensic compliance)
+    # ==============================================================================
+    # 7. JOBS & SAVED QUERIES CLEANUP
+    # ==============================================================================
     logger.info(f"Deleting customer jobs and saved queries for customer id {customer_id}")
     await db.execute(delete(JobDB).where(JobDB.customer_id == customer_id))
     await db.execute(delete(SavedQueryDB).where(SavedQueryDB.customer_id == customer_id))
 
-    # 8. Users & Customer record deletion
+    # ==============================================================================
+    # 8. ROLES & PERMISSIONS CLEANUP
+    # ==============================================================================
+    logger.info(f"Deleting customer roles and role permissions for customer id {customer_id}")
+    role_res = await db.execute(select(RoleDB.id).where(RoleDB.customer_id == customer_id))
+    role_ids = role_res.scalars().all()
+    if role_ids:
+        await db.execute(delete(RolePermissionDB).where(RolePermissionDB.role_id.in_(role_ids)))
+        await db.execute(delete(RoleDB).where(RoleDB.id.in_(role_ids)))
+
+    # ==============================================================================
+    # 9. AUDIT LOG COMPLIANCE (UNLINK CUSTOMER_ID TO PREVENT FK BLOCKS ON CUSTOMER DELETION)
+    # ==============================================================================
+    logger.info(f"Unlinking customer audit logs for customer id {customer_id}")
+    await db.execute(update(AuditLogDB).where(AuditLogDB.customer_id == customer_id).values(customer_id=None))
+
+    # ==============================================================================
+    # 10. USERS & CUSTOMER RECORD DELETION
+    # ==============================================================================
     logger.info(f"Deleting customer users for customer id {customer_id}")
     await db.execute(delete(UserDB).where(UserDB.customer_id == customer_id))
     logger.info(f"Deleting customer record for customer id {customer_id}")

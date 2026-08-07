@@ -182,6 +182,104 @@ async def init_db():
         await conn.run_sync(_refresh_ekp_documents_table)
         await conn.run_sync(Base.metadata.create_all)
 
+    await seed_default_customer_and_admin()
+
+
+async def seed_default_customer_and_admin(session: AsyncSession = None):
+    """Seeds a default customer and a default system_admin user (admin@gateway.com, name 'admin')."""
+    from app.models.db_models import CustomerDB, UserDB, RoleDB
+    from app.core.security.hash import get_password_hash
+    from sqlalchemy import select
+
+    close_session = False
+    if session is None:
+        session = AsyncSessionLocal()
+        close_session = True
+
+    try:
+        # 1. Find or create default customer
+        stmt = select(CustomerDB).where(
+            (CustomerDB.domain == "gateway.com") | (CustomerDB.name == "Default Customer")
+        )
+        res = await session.execute(stmt)
+        customer = res.scalar_one_or_none()
+
+        if not customer:
+            customer = CustomerDB(
+                name="Default Customer",
+                domain="gateway.com",
+                status="active"
+            )
+            session.add(customer)
+            await session.flush()
+        else:
+            if customer.name == "Gateway":
+                customer.name = "Default Customer"
+            customer.status = "active"
+            session.add(customer)
+
+        # 2. Seed default users with password "test" (admin@gateway.com, tenant_admin@gateway.com, user@gateway.com)
+        default_users = [
+            {
+                "email": "admin@gateway.com",
+                "name": "Admin",
+                "role": "system_admin",
+            },
+            {
+                "email": "tenant_admin@gateway.com",
+                "name": "Tenant Admin",
+                "role": "tenant_admin",
+            },
+            {
+                "email": "user@gateway.com",
+                "name": "Standard User",
+                "role": "tenant_user",
+            },
+        ]
+
+        admin_user_id = None
+        for u_info in default_users:
+            email = u_info["email"]
+            user_stmt = select(UserDB).where(UserDB.email_id == email)
+            user_res = await session.execute(user_stmt)
+            user_obj = user_res.scalar_one_or_none()
+
+            role_stmt = select(RoleDB).where(RoleDB.role_type == u_info["role"], RoleDB.customer_id.is_(None))
+            role_res = await session.execute(role_stmt)
+            matched_role = role_res.scalar_one_or_none()
+
+            if not user_obj:
+                user_obj = UserDB(
+                    username=email,
+                    email_id=email,
+                    password=get_password_hash("test"),
+                    name=u_info["name"],
+                    role=u_info["role"],
+                    role_id=matched_role.id if matched_role else None,
+                    customer_id=customer.id,
+                    status="active",
+                )
+                session.add(user_obj)
+            else:
+                user_obj.password = get_password_hash("test")
+                user_obj.name = u_info["name"]
+                user_obj.role = u_info["role"]
+                user_obj.status = "active"
+                user_obj.customer_id = customer.id
+                if matched_role:
+                    user_obj.role_id = matched_role.id
+                session.add(user_obj)
+
+            await session.flush()
+            if email == "admin@gateway.com":
+                admin_user_id = str(user_obj.id)
+
+        # 3. Seed and synchronize default system domain schemas & EKP domains
+        from app.core.seed_data import seed_all_domains
+        await seed_all_domains(session, admin_user_id=admin_user_id)
+    finally:
+        if close_session:
+            await session.close()
 
 
 async def get_db():

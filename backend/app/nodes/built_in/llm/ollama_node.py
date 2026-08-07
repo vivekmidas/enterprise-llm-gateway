@@ -313,9 +313,13 @@ class OllamaNode(GenericLLMAgent):
                     from app.core.profile_resolver import ProfileResolver
                     async with AsyncSessionLocal() as db_session:
                         resolver = ProfileResolver(db=db_session)
+                        # ==============================================================================
+                        # BLOCK COMMENT: STRING-SAFE PROFILE RESOLUTION
+                        # Pass string/UUID profile_id and customer_id safely without int() ValueError crashes.
+                        # ==============================================================================
                         resolved = await resolver.resolve_execution_context(
-                            profile_id=int(llm_profile_id) if llm_profile_id else None,
-                            customer_id=int(customer_id) if customer_id else 1,
+                            profile_id=str(llm_profile_id) if llm_profile_id else None,
+                            customer_id=str(customer_id) if customer_id else "1",
                             model_type=str(config.get("model_type") or "generation")
                         )
                         if resolved:

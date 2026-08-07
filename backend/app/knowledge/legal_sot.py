@@ -495,8 +495,13 @@ LEGAL_JUDGMENT_SCHEMA = {
 def build_free_extract_prompts(filename: str, content_snippet: str) -> tuple[str, str]:
     """Build system and user prompts for free-form legal document extraction."""
     sys_prompt = LEGAL_SYSTEM_PROMPT
-    user_prompt = LEGAL_USER_PROMPT_TEMPLATE.format(
-        filename=filename, content_snippet=content_snippet
+    # ==============================================================================
+    # USE STR.REPLACE TO PREVENT KEYERROR ON EMBEDDED JSON BRACES IN PROMPT TEMPLATE
+    # ==============================================================================
+    user_prompt = (
+        LEGAL_USER_PROMPT_TEMPLATE
+        .replace("{filename}", str(filename))
+        .replace("{content_snippet}", str(content_snippet))
     )
     return sys_prompt, user_prompt
 

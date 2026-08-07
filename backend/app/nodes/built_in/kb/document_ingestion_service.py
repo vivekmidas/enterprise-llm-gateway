@@ -32,7 +32,7 @@ class DocumentIngestionService:
         *,
         db: AsyncSession,
         upload_file: UploadFile,
-        knowledge_base_id: int,
+        knowledge_base_id: str,
         current_user,
         description: str | None = None,
         tags: list[str] | None = None,
@@ -99,15 +99,14 @@ class DocumentIngestionService:
 
         # Get embedding provider settings for document metadata
         from app.knowledge.embeddings import resolve_kb_embedding_config
-        provider_name, model_name, dimension = await resolve_kb_embedding_config(
+        emb_config = await resolve_kb_embedding_config(
             db, knowledge_base_id, target_customer_id
         )
+        provider_name = emb_config["provider_name"]
+        model_name = emb_config["model_name"]
+        dimension = emb_config["dimension"]
 
-        provider = get_embedding_provider_for_model(
-            provider_name=provider_name,
-            model_name=model_name,
-            dimension=dimension,
-        )
+        provider = get_embedding_provider_for_model(**emb_config)
 
         # Create KnowledgeDocumentDB in DB (status "pending")
         metadata = {}
@@ -297,16 +296,11 @@ class DocumentIngestionService:
                 col_obj = res_col_job.scalar_one_or_none()
                 col_name = col_obj.name if col_obj else f"kb_collection_{knowledge_base_id}"
 
-                provider_name = settings.EMBEDDING_PROVIDER
-                model_name = (col_obj.embedding_model if col_obj else None) or settings.EMBEDDING_MODEL
-                if model_name.startswith("text-embedding") or provider_name == "openai":
-                    provider_name = "openai"
-
-                provider = get_embedding_provider_for_model(
-                    provider_name=provider_name,
-                    model_name=model_name,
-                    dimension=col_obj.vector_dimension if col_obj else settings.EMBEDDING_DIMENSION,
+                from app.knowledge.embeddings import resolve_kb_embedding_config
+                emb_config = await resolve_kb_embedding_config(
+                    db, knowledge_base_id, customer_id
                 )
+                provider = get_embedding_provider_for_model(**emb_config)
 
                 # Update progress to 50%
                 await job_service.update_progress(job_id, 50, message="Generating embeddings")

@@ -112,8 +112,12 @@ class ResponseGenerationService:
             try:
                 from app.core.profile_resolver import ProfileResolver
                 resolver = ProfileResolver(db=db)
+                # ==============================================================================
+                # BLOCK COMMENT: STRING-SAFE PROFILE RESOLUTION
+                # Pass string/UUID llm_config_id safely without int() ValueError crashes.
+                # ==============================================================================
                 profile = await resolver.resolve(
-                    profile_id=int(llm_config_id) if llm_config_id else None,
+                    profile_id=str(llm_config_id) if llm_config_id else None,
                     customer_id=request.customer_id,
                 )
                 effective_llm_config = profile.generation.model_dump()
@@ -138,9 +142,14 @@ class ResponseGenerationService:
             if "llm_model" not in effective_llm_config and "model" in effective_llm_config:
                 effective_llm_config["llm_model"] = effective_llm_config["model"]
             if "llm_base_url" not in effective_llm_config:
-                raw_url = effective_llm_config.get("url") or effective_llm_config.get("base_url") or "http://localhost:11434"
-                base_url = str(raw_url).rsplit("/api/", 1)[0].rsplit("/v1", 1)[0] if "http" in str(raw_url) else "http://localhost:11434"
-                effective_llm_config["llm_base_url"] = base_url
+                raw_url = effective_llm_config.get("url") or effective_llm_config.get("base_url") or effective_llm_config.get("endpoint")
+                if raw_url:
+                    clean = str(raw_url).rstrip("/")
+                    for suffix in ("/api/chat", "/api/generate", "/v1/chat/completions", "/chat/completions"):
+                        if clean.endswith(suffix):
+                            clean = clean[:-len(suffix)].rstrip("/")
+                            break
+                    effective_llm_config["llm_base_url"] = clean
 
         # Get LLM provider model
         llm = await self.llm_router.get_llm(
