@@ -17,6 +17,7 @@ from app.nodes.registry import NodesRegistry
 from app.api.jobs import router as jobs_router
 from app.api.admin.companies.router import router as company_router
 
+
 from app.api.admin.users import router as users
 
 from app.core.database import init_db
@@ -87,7 +88,7 @@ from app.api.admin.provider_presets import router as provider_presets_router
 
 from app.api.knowledge.ekp_router import router as ekp_router
 
-from app.api.roles.router import router as roles_router
+from app.api.knowledge.legal_research_router import router as legal_research_router
 
 app.include_router(root_router)
 app.include_router(agents_router)
@@ -102,6 +103,7 @@ app.include_router(email_webhooks.router)
 app.include_router(run_webhooks.router)
 app.include_router(users.router)
 app.include_router(knowledge_router)
+app.include_router(legal_research_router, prefix="/api")
 app.include_router(ekp_router)
 app.include_router(jobs_router)
 app.include_router(company_router)
@@ -109,7 +111,7 @@ app.include_router(llm_profiles_router)   # customer specific LLM profiles route
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
 app.include_router(provider_presets_router)
-app.include_router(roles_router)
+# app.include_router(roles_router)
 
 
 

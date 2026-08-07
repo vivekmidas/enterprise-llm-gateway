@@ -38,6 +38,15 @@ class CustomerDB(Base):
     document_types = Column(JSON, nullable=True, default=list)
     settings = Column(JSON, nullable=True, default=dict)
 
+    """
+    ===============================================================================
+    BLOCK COMMENT: HIERARCHICAL CUSTOMER SUPPORT
+    Added parent_id self-referential FK to enable Customer Admin sub-customer onboarding.
+    ===============================================================================
+    """
+    parent_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+
+
 
 class UserDB(Base):
     __tablename__ = "users"
@@ -698,5 +707,54 @@ class LegalAuditLogDB(Base):
     results_count = Column(Integer, default=0)
     details_json = Column(JSON, nullable=True, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+"""
+===============================================================================
+BLOCK COMMENT: LEGAL PLATFORM CASE WORKSPACE & PRECEDENTS MODELS
+Module: backend/app/models/db_models.py
+Author: Legal AI Architecture Team
+Description:
+    SQLAlchemy database models for Legal Platform Case Workspaces and saved
+    precedent links with attached search query strings and multi-filter metadata.
+===============================================================================
+"""
+
+class CaseWorkspaceDB(Base):
+    __tablename__ = "case_workspaces"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    case_number = Column(String(64), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    category = Column(String(128), nullable=True)
+    court = Column(String(128), nullable=True)
+    client_name = Column(String(128), nullable=True)
+    opposing_party = Column(String(128), nullable=True)
+    status = Column(String(32), default="ACTIVE", index=True)
+    customer_id = Column(String(36), nullable=True, index=True)
+    created_by = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CasePrecedentDB(Base):
+    __tablename__ = "case_precedents"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    case_id = Column(String(36), ForeignKey("case_workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    cnr = Column(String(64), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    court = Column(String(128), nullable=True)
+    decision_date = Column(String(32), nullable=True)
+    parallel_citation = Column(String(128), nullable=True)
+    status_badge = Column(String(64), default="Good Law")
+    outcome_tag = Column(String(128), nullable=True)
+    subfolder = Column(String(128), default="📁 03_Research_&_Judgments")
+    ratio_snippet = Column(Text, nullable=True)
+    query_text = Column(Text, nullable=True)
+    filters_json = Column(JSON, nullable=True, default=dict)
+    user_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 
 

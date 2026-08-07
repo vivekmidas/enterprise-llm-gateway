@@ -37,6 +37,12 @@ async def test_seed_provider_presets_refactor():
         anth_search = next((mt for mt in anthropic_preset.model_types if mt["name"] == "search"), None)
         assert anth_search["endpoint"] == "/messages"
 
+        gemini_preset = next((p for p in presets if p.provider_key == "gemini"), None)
+        assert gemini_preset is not None
+        assert gemini_preset.base_url == "https://generativelanguage.googleapis.com"
+        gem_search = next((mt for mt in gemini_preset.model_types if mt["name"] == "search"), None)
+        assert gem_search["default_model"] == "gemini-2.5-flash"
+
         # Verify Pydantic schema parsing
         resp = ProviderPresetResponse.model_validate(openai_preset)
         assert resp.provider_key == "openai"
@@ -86,9 +92,23 @@ async def test_payload_builder():
     assert ollama_payload["model"] == "llama3.2"
     assert ollama_payload["stream"] is False
 
+    # Gemini payload
+    gemini_payload = construct_provider_payload(
+        provider_key="gemini",
+        model_type="search",
+        payload_structure={"payload_format": "gemini"},
+        model_name="gemini-2.5-flash",
+        text_or_messages="Hello Gemini",
+        system_prompt="Be concise",
+    )
+    assert "contents" in gemini_payload
+    assert gemini_payload["contents"][0]["parts"][0]["text"] == "Hello Gemini"
+    assert gemini_payload["systemInstruction"]["parts"][0]["text"] == "Be concise"
+
 
 @pytest.mark.asyncio
 async def test_profile_resolver_execution_context():
+    await init_db()
     async with AsyncSessionLocal() as db:
         await seed_provider_presets(db=db, force=True)
         resolver = ProfileResolver(db=db)
@@ -104,7 +124,7 @@ async def test_profile_resolver_execution_context():
 def test_provider_preset_schema_null_handling():
     # Test that None for model_types, chat_models, etc. does not cause a ResponseValidationError
     raw_data = {
-        "id": 1,
+        "id": "1",
         "provider_key": "test_provider",
         "name": "test_provider",
         "base_url": "http://localhost:8000",
@@ -118,4 +138,22 @@ def test_provider_preset_schema_null_handling():
     assert resp.chat_models == []
     assert resp.embedding_models == []
     assert resp.rerank_models == []
+
+
+def test_gemini_url_normalization():
+    from app.knowledge.embeddings import OpenAIEmbeddingProvider
+    from app.knowledge.domain_extractor import DomainExtractor
+    from app.models.db_models import LLMProfileDB
+
+    provider = OpenAIEmbeddingProvider(
+        model_name="text-embedding-004",
+        api_key="test-key",
+        base_url="https://generativelanguage.googleapis.com/v1/"
+    )
+    assert str(provider.client.base_url) == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    profile = LLMProfileDB(name="GeminiProfile", settings={"generation": {"url": "https://generativelanguage.googleapis.com/v1/"}})
+    extractor = DomainExtractor.from_llm_profile(profile)
+    assert str(extractor.llm.client.base_url) == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 

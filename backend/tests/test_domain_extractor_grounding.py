@@ -110,3 +110,45 @@ def test_verify_answer_grounding_rejection():
     # Grounded answer must pass
     assert _verify_answer_grounding(valid_answer, doc_context) is True
 
+
+def test_prosecutor_and_defendant_arguments_grounding():
+    criminal_doc = (
+        "IN THE HIGH COURT OF DELHI AT NEW DELHI\n"
+        "CRIMINAL APPEAL NO. 450 OF 2021\n"
+        "STATE (NCT OF DELHI) .. PROSECUTOR\n"
+        "VERSUS\n"
+        "RAMESH KUMAR .. DEFENDANT / ACCUSED\n"
+        "CORAM: HON'BLE MR. JUSTICE SURESH KUMAR KAIT\n"
+        "The Public Prosecutor argued that the accused Ramesh Kumar was apprehended at the spot with 500 grams of contraband "
+        "and failed to provide a valid authorization license under Section 21 of the NDPS Act.\n"
+        "Defense Counsel for defendant Ramesh Kumar contended that the search was conducted without complying with mandatory "
+        "provisions of Section 50 of the NDPS Act and that the independent witnesses turned hostile during cross examination."
+    )
+    doc_lower = criminal_doc.lower()
+
+    # Verify grounding for prosecutor and defendant arguments
+    prosecutor_arg = "Public Prosecutor argued that the accused was apprehended at the spot with 500 grams of contraband"
+    defendant_arg = "Defense Counsel for defendant Ramesh Kumar contended that search was conducted without complying with Section 50"
+
+    assert _is_grounded_in_text(prosecutor_arg, doc_lower) is True
+    assert _is_grounded_in_text(defendant_arg, doc_lower) is True
+
+    extracted_payload = {
+        "parties": {
+            "prosecutor_prosecution": [{"name": "State (NCT of Delhi)", "role": "Prosecutor"}],
+            "defendant_accused": [{"name": "Ramesh Kumar", "role": "Accused/Defendant"}]
+        },
+        "arguments": {
+            "prosecutor": [prosecutor_arg],
+            "defendant": [defendant_arg]
+        }
+    }
+
+    filtered = filter_ungrounded_fields(extracted_payload, criminal_doc)
+    assert "arguments" in filtered
+    assert "prosecutor" in filtered["arguments"]
+    assert "defendant" in filtered["arguments"]
+    assert filtered["arguments"]["prosecutor"][0] == prosecutor_arg
+    assert filtered["arguments"]["defendant"][0] == defendant_arg
+
+

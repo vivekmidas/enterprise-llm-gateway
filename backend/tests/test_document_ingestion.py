@@ -25,7 +25,7 @@ async def test_document_ingestion_flow(client: AsyncClient, system_admin_headers
     vector_store.client = mock_qdrant_client
 
     try:
-        with patch("app.services.document_ingestion_service.get_embedding_provider", return_value=mock_provider):
+        with patch("app.nodes.built_in.kb.document_ingestion_service.get_embedding_provider_for_model", return_value=mock_provider):
             # 1. Create a Knowledge Base
             kb_payload = {
                 "name": "Test Knowledge Base",

@@ -1,3 +1,16 @@
+"""
+===============================================================================
+BLOCK COMMENT: BELLA JOURNEY 1 LEGAL RESEARCH & CASE PRECEDENT ROUTER
+Module: backend/app/api/knowledge/legal_research_router.py
+Author: AdI Tech Developer / Legal AI Architecture Team
+Description:
+    FastAPI router supporting Bella Journey 1: Judgment Research & Structured
+    Extraction (Non-LLM & Hybrid Mode). Features multi-dimensional filters, 
+    2-row ratio snippets, parent section expansions (Facts, Issues, Ratio, Order),
+    and Case Workspace precedent persistence with attached search metadata.
+===============================================================================
+"""
+
 import glob
 import json
 import logging
@@ -14,11 +27,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth.dependencies import get_current_user, require_tenant
 from app.core.database import get_db
 from app.core.types.users import User
-from app.models.db_models import LegalAuditLogDB, SavedQueryDB
+from app.models.db_models import LegalAuditLogDB, SavedQueryDB, CaseWorkspaceDB, CasePrecedentDB
+
+from app.knowledge.legal_search_service import LegalDomainSearch
 
 logger = logging.getLogger(__name__)
 
+"""
+curl -X POST "http://127.0.0.1:8000/api/knowledge/legal/search" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \ 
+  -d '{
+    "query": "Section 148A(b) Income Tax Act opportunity of hearing principles of natural justice breach",
+    "courts": ["Supreme Court of India", "High Court of Delhi"],
+    "statutes": ["Income Tax Act Sec 148A(b)"],
+    "outcome_tags": ["[Notice Quashed / Appeal Allowed]"],
+    "year_min": 2022,
+    "year_max": 2026,
+    "limit": 15
+  }'
+
+"""
 router = APIRouter(prefix="/legal", tags=["Legal Research"])
+legal_search_engine = LegalDomainSearch()
 
 
 # --- Schemas ---
@@ -26,10 +57,15 @@ router = APIRouter(prefix="/legal", tags=["Legal Research"])
 class SearchRequest(BaseModel):
     query: str
     court_code: Optional[str] = None
+    courts: Optional[List[str]] = None
     judge: Optional[str] = None
     statute: Optional[str] = None
+    statutes: Optional[List[str]] = None
     disposition: Optional[str] = None
+    outcome_tags: Optional[List[str]] = None
     year: Optional[int] = 2026
+    year_min: Optional[int] = 2022
+    year_max: Optional[int] = 2026
     date: Optional[str] = None
     page: int = 1
     limit: int = 15
@@ -43,61 +79,33 @@ class SavedQueryCreate(BaseModel):
     domain: str = "legal"
 
 
+class CaseWorkspaceCreate(BaseModel):
+    case_number: Optional[str] = None
+    title: str
+    category: Optional[str] = "Criminal Litigation / Bail"
+    court: Optional[str] = "High Court of Delhi"
+    client_name: Optional[str] = None
+    opposing_party: Optional[str] = None
+
+
+class CasePrecedentCreate(BaseModel):
+    cnr: str
+    title: str
+    court: Optional[str] = None
+    decision_date: Optional[str] = None
+    parallel_citation: Optional[str] = None
+    status_badge: Optional[str] = "Good Law"
+    outcome_tag: Optional[str] = None
+    subfolder: Optional[str] = "📁 03_Research_&_Judgments"
+    ratio_snippet: Optional[str] = None
+    query_text: Optional[str] = None
+    filters_json: Optional[Dict[str, Any]] = None
+
+
 # --- Intent Parser Helper ---
 
 def parse_natural_language_intent(query_text: str) -> Dict[str, Any]:
-    """
-    AI Natural Language Query Intent Parser.
-    Extracts judge, court, location, statute, and concept keywords from free-form text.
-    E.g. 'find cases related to pre-deposit under CGST Sec 107 with judge Anil Kshetarpal in Delhi High Court'
-    """
-    intent = {
-        "concept_query": query_text,
-        "extracted_judge": None,
-        "extracted_court": None,
-        "extracted_court_code": None,
-        "extracted_statute": None,
-        "extracted_disposition": None,
-    }
-
-    if not query_text:
-        return intent
-
-    text = query_text.strip()
-
-    # 1. Extract Judge (stopping before prepositions like 'in', 'at', 'with', 'under', 'for')
-    judge_match = re.search(r"(?:judge|justice|hon'ble|bench)\s+([A-Z][a-zA-z\.\s]+?)(?=\s+(?:in|at|with|under|for|against|court|\d|$))", text, re.IGNORECASE)
-    if judge_match:
-        intent["extracted_judge"] = judge_match.group(1).strip()
-
-    # 2. Extract Court / Location
-    court_mappings = {
-        "delhi": ("High Court of Delhi", "7_26"),
-        "bombay": ("Bombay High Court", "27_1"),
-        "calcutta": ("Calcutta High Court", "19_16"),
-        "madras": ("Madras High Court", "33_10"),
-        "punjab": ("High Court of Punjab and Haryana", "3_22"),
-        "karnataka": ("High Court of Karnataka", "29_3"),
-        "supreme": ("Supreme Court of India", "SC"),
-    }
-    for key, (c_name, c_code) in court_mappings.items():
-        if key in text.lower():
-            intent["extracted_court"] = c_name
-            intent["extracted_court_code"] = c_code
-            break
-
-    # 3. Extract Statute / Section (e.g. CGST Sec 107, Article 226, IPC 498A)
-    statute_match = re.search(r"((?:CGST|IGST|CrPC|IPC|CPC|Arms Act|Customs Act|Finance Act)(?:\s+Act)?(?:\s+(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)?)", text, re.IGNORECASE)
-    if statute_match:
-        intent["extracted_statute"] = statute_match.group(1).strip()
-
-    # 4. Extract Disposition
-    if re.search(r"allowed|quashed", text, re.IGNORECASE):
-        intent["extracted_disposition"] = "ALLOWED / QUASHED"
-    elif re.search(r"dismissed", text, re.IGNORECASE):
-        intent["extracted_disposition"] = "DISMISSED"
-
-    return intent
+    return legal_search_engine.parse_intent(query_text)
 
 
 # --- Search Endpoint ---
@@ -109,100 +117,188 @@ async def search_legal_cases(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Hybrid AI Semantic Search with Natural Language Query Intent Parsing.
-    Auto-extracts Judge, Court, Statute, and Concept from query text, executes search,
-    and logs accounting audit entry.
+    Legal Domain Precedent Search via LegalDomainSearch engine (inheriting from BaseDomainSearch).
     """
-    user_tenant_id = current_user.customer_id
-    intent = parse_natural_language_intent(payload.query)
+    return await legal_search_engine.search(payload, current_user, db)
 
-    # Determine effective filters
-    effective_court = payload.court_code or intent.get("extracted_court_code") or "7_26"
-    effective_judge = payload.judge or intent.get("extracted_judge")
-    effective_statute = payload.statute or intent.get("extracted_statute")
-    effective_disposition = payload.disposition or intent.get("extracted_disposition")
 
-    # Load local JSON knowledge graph records
-    results = []
-    kg_files = glob.glob("data/extracted_judgments/*.json")
-    
-    loaded_items = []
-    for fpath in kg_files:
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                items = json.load(f)
-                if isinstance(items, list):
-                    loaded_items.extend(items)
-                elif isinstance(items, dict):
-                    loaded_items.append(items)
-        except Exception:
-            pass
+# --- Case Workspaces & Precedent Linking Endpoints ---
 
-    # Filter & Score results
-    query_lower = payload.query.lower() if payload.query else ""
-    for item in loaded_items:
-        case_id = item.get("case_identity", {}) if "case_identity" in item else item
-        title = case_id.get("title") or case_id.get("case_title") or ""
-        judge_name = case_id.get("judge") or case_id.get("bench_judge") or ""
-        disposition = item.get("disposition") or item.get("decision_and_holding", {}).get("disposition") or ""
-        cnr = case_id.get("cnr") or item.get("cnr", "")
+@router.get("/cases")
+async def get_case_workspaces(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch Case Workspaces for active user/tenant."""
+    user_id = str(current_user.id)
+    tenant_id = getattr(current_user, "customer_id", None)
 
-        # Matching logic
-        match_score = 0.5
-        if query_lower:
-            if any(term in title.lower() for term in query_lower.split()):
-                match_score += 0.3
-            if any(term in str(item).lower() for term in query_lower.split() if len(term) > 3):
-                match_score += 0.2
+    stmt = select(CaseWorkspaceDB).where(
+        (CaseWorkspaceDB.created_by == user_id) | (CaseWorkspaceDB.customer_id == tenant_id)
+    ).order_by(CaseWorkspaceDB.created_at.desc())
+    res = await db.execute(stmt)
+    cases = res.scalars().all()
 
-        # Judge filter check
-        if effective_judge and effective_judge.lower() not in judge_name.lower():
-            continue
+    # Seed default case if empty for demonstration
+    if not cases:
+        default_case = CaseWorkspaceDB(
+            case_number="C-2026-104",
+            title="Sharma IT Appeal (State v. Ram Sharma)",
+            category="Income Tax / Re-assessment Notice Challenge",
+            court="High Court of Delhi",
+            client_name="Ram Sharma",
+            opposing_party="Income Tax Dept / State",
+            customer_id=tenant_id,
+            created_by=user_id,
+        )
+        db.add(default_case)
+        await db.commit()
+        await db.refresh(default_case)
+        cases = [default_case]
 
-        # Disposition filter check
-        if effective_disposition and effective_disposition.lower() not in disposition.lower():
-            continue
-
-        results.append({
-            "cnr": cnr,
-            "title": title,
-            "court": case_id.get("court", "High Court of Delhi"),
-            "judge": judge_name,
-            "decision_date": str(case_id.get("decision_date", "")).split()[0],
-            "disposition": disposition,
-            "relevance_score": min(round(match_score, 2), 1.0),
-            "matched_statutes": [node.get("label") for node in item.get("knowledge_graph", {}).get("nodes", []) if node.get("type") == "StatuteProvision"][:3],
-            "matched_precedents": [node.get("label") for node in item.get("knowledge_graph", {}).get("nodes", []) if node.get("type") == "Precedent"][:3],
-        })
-
-    # Log Audit & Accounting entry
-    audit_entry = LegalAuditLogDB(
-        user_id=str(current_user.id),
-        customer_id=user_tenant_id,
-        role=current_user.role or "user",
-        action="SEARCH",
-        query_text=payload.query,
-        results_count=len(results),
-        details_json={
-            "intent": intent,
-            "effective_filters": {
-                "court_code": effective_court,
-                "judge": effective_judge,
-                "statute": effective_statute,
-                "disposition": effective_disposition,
-            }
+    return [
+        {
+            "id": c.id,
+            "case_number": c.case_number,
+            "title": c.title,
+            "category": c.category,
+            "court": c.court,
+            "client_name": c.client_name,
+            "opposing_party": c.opposing_party,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
         }
+        for c in cases
+    ]
+
+
+@router.post("/cases", status_code=status.HTTP_201_CREATED)
+async def create_case_workspace(
+    payload: CaseWorkspaceCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new Case Workspace (e.g. Case C-2026-104)."""
+    user_id = str(current_user.id)
+    tenant_id = getattr(current_user, "customer_id", None)
+    case_num = payload.case_number or f"C-2026-{hash(payload.title)%900 + 100}"
+
+    workspace = CaseWorkspaceDB(
+        case_number=case_num,
+        title=payload.title,
+        category=payload.category,
+        court=payload.court,
+        client_name=payload.client_name,
+        opposing_party=payload.opposing_party,
+        customer_id=tenant_id,
+        created_by=user_id,
     )
-    db.add(audit_entry)
+    db.add(workspace)
     await db.commit()
+    await db.refresh(workspace)
 
     return {
-        "query": payload.query,
-        "intent_parsed": intent,
-        "total_results": len(results),
-        "page": payload.page,
-        "results": results[:payload.limit]
+        "message": "Case Workspace created successfully.",
+        "id": workspace.id,
+        "case_number": workspace.case_number,
+        "title": workspace.title
     }
+
+
+@router.post("/cases/{case_id}/precedents", status_code=status.HTTP_201_CREATED)
+async def link_precedent_to_case(
+    case_id: str,
+    payload: CasePrecedentCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save & Link a Judgment Precedent to a Case Workspace subfolder with search query metadata."""
+    user_id = str(current_user.id)
+
+    # Verify case exists
+    c_stmt = select(CaseWorkspaceDB).where(CaseWorkspaceDB.id == case_id)
+    c_res = await db.execute(c_stmt)
+    case_obj = c_res.scalar_one_or_none()
+    if not case_obj:
+        raise HTTPException(status_code=404, detail="Case workspace not found")
+
+    precedent = CasePrecedentDB(
+        case_id=case_id,
+        cnr=payload.cnr,
+        title=payload.title,
+        court=payload.court,
+        decision_date=payload.decision_date,
+        parallel_citation=payload.parallel_citation,
+        status_badge=payload.status_badge or "Good Law",
+        outcome_tag=payload.outcome_tag,
+        subfolder=payload.subfolder or "📁 03_Research_&_Judgments",
+        ratio_snippet=payload.ratio_snippet,
+        query_text=payload.query_text,
+        filters_json=payload.filters_json or {},
+        user_id=user_id,
+    )
+    db.add(precedent)
+
+    # Log audit entry
+    audit = LegalAuditLogDB(
+        user_id=user_id,
+        customer_id=getattr(current_user, "customer_id", None),
+        role=getattr(current_user, "role", "paralegal"),
+        action="LINK_PRECEDENT",
+        query_text=payload.query_text,
+        results_count=1,
+        details_json={
+            "case_id": case_id,
+            "case_number": case_obj.case_number,
+            "cnr": payload.cnr,
+            "subfolder": payload.subfolder,
+            "filters_attached": payload.filters_json,
+        }
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(precedent)
+
+    return {
+        "message": f"Precedent saved and linked to {case_obj.case_number} ({payload.subfolder})",
+        "id": precedent.id,
+        "case_id": case_id,
+        "cnr": precedent.cnr
+    }
+
+
+@router.get("/cases/{case_id}/precedents")
+async def get_case_precedents(
+    case_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch all precedents saved/linked to a specific Case Workspace."""
+    stmt = select(CasePrecedentDB).where(
+        CasePrecedentDB.case_id == case_id
+    ).order_by(CasePrecedentDB.created_at.desc())
+    res = await db.execute(stmt)
+    precedents = res.scalars().all()
+
+    return [
+        {
+            "id": p.id,
+            "case_id": p.case_id,
+            "cnr": p.cnr,
+            "title": p.title,
+            "court": p.court,
+            "decision_date": p.decision_date,
+            "parallel_citation": p.parallel_citation,
+            "status_badge": p.status_badge,
+            "outcome_tag": p.outcome_tag,
+            "subfolder": p.subfolder,
+            "ratio_snippet": p.ratio_snippet,
+            "query_text": p.query_text,
+            "filters_json": p.filters_json,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in precedents
+    ]
 
 
 # --- Saved Queries Endpoints ---
@@ -214,9 +310,8 @@ async def get_saved_queries(
 ):
     """Fetch Private Queries for current user and Public Queries across tenant."""
     user_id = str(current_user.id)
-    tenant_id = current_user.customer_id
+    tenant_id = getattr(current_user, "customer_id", None)
 
-    # Fetch private queries
     priv_stmt = select(SavedQueryDB).where(
         SavedQueryDB.user_id == user_id,
         SavedQueryDB.is_public == False
@@ -224,7 +319,6 @@ async def get_saved_queries(
     priv_res = await db.execute(priv_stmt)
     private_queries = priv_res.scalars().all()
 
-    # Fetch public tenant queries
     pub_stmt = select(SavedQueryDB).where(
         SavedQueryDB.customer_id == tenant_id,
         SavedQueryDB.is_public == True
@@ -266,7 +360,7 @@ async def create_saved_query(
 ):
     """Save a search query (marked Private or Tenant Public)."""
     user_id = str(current_user.id)
-    tenant_id = current_user.get("customer_id")
+    tenant_id = getattr(current_user, "customer_id", None)
 
     query_db = SavedQueryDB(
         user_id=user_id,
@@ -341,3 +435,4 @@ async def get_case_detail(
         except Exception:
             pass
     raise HTTPException(status_code=404, detail=f"Case details not found for CNR: {cnr}")
+

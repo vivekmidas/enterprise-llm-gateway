@@ -334,7 +334,22 @@ def require_admin_or_system_admin(request: Request):
         )
     return request.state.user
 
+"""
+===============================================================================
+BLOCK COMMENT: TENANT ADMIN DEPENDENCY
+Supports Customer Admin (tenant_admin) and System Admin dependency check.
+===============================================================================
+"""
+async def require_tenant_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in ("admin", "system_admin") and current_user.role_type not in ("tenant_admin", "system_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer Admin or System Admin privileges required",
+        )
+    return current_user
+
 require_resource_access = _require_resource_access
+
 
 @staticmethod
 def require_tenant(user: User) -> int:

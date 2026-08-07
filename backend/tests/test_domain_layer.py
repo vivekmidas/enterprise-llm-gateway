@@ -31,7 +31,7 @@ async def test_domain_extractor_schema_and_extra_fields():
     }
 
     res = await extractor.extract_domain_knowledge(
-        text="Sample insurance policy document content POL-9988-ABC",
+        text="Sample insurance policy document content POL-9988-ABC validity_expiry 2028-12-31 deductible_amount 500.0 underwriter Acme Reinsurance",
         filename="policy.pdf",
         domain_name="Insurance",
         domain_key="insurance",

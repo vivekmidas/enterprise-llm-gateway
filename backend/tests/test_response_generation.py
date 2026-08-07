@@ -218,7 +218,7 @@ async def test_end_to_end_rag_flow(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_response_generation_service_empty_context():
-    from app.services.response_generation_service import ResponseGenerationService
+    from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
     from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext
 
     service = ResponseGenerationService()
@@ -241,7 +241,7 @@ async def test_response_generation_service_empty_context():
 
 @pytest.mark.asyncio
 async def test_response_generation_service_no_answer_from_llm():
-    from app.services.response_generation_service import ResponseGenerationService
+    from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
     from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext, RetrievedChunk
 
     service = ResponseGenerationService()

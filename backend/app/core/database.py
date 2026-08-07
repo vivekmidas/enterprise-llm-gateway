@@ -82,6 +82,8 @@ def _refresh_customers_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN document_types JSON")
     if "settings" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN settings JSON")
+    if "parent_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN parent_id VARCHAR(36)")
 
 
 def _refresh_nodes_table(sync_conn):

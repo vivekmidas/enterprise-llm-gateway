@@ -22,7 +22,7 @@ from app.models.db_models import (
 )
 from app.knowledge.vector_store import vector_store
 from app.core.security.hash import get_password_hash
-from app.api.auth.dependencies import  require_system_admin, get_current_user, require_admin_or_system_admin
+from app.api.auth.dependencies import require_system_admin, get_current_user, require_admin_or_system_admin, require_tenant_admin
 from app.core.types.users import User
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -159,7 +159,10 @@ async def list_customers(
             "email": c.email,
             "address": c.address,
             "contact_person": c.contact_person,
-            "dateadded": c.dateadded
+            "dateadded": c.dateadded,
+            "allowed_domains": (c.settings or {}).get("allowed_domains", ["legal"]) if c.settings else ["legal"],
+            "domain_path": (c.settings or {}).get("domain_path", "/legal") if c.settings else "/legal",
+            "settings": c.settings or {}
         } for c in customers
     ]
 
@@ -181,6 +184,10 @@ async def create_customer(
     if dup.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Customer with this name or domain already exists")
         
+    settings = dict(customer_data.get("settings") or {})
+    settings["allowed_domains"] = customer_data.get("allowed_domains", ["legal"])
+    settings["domain_path"] = customer_data.get("domain_path", "/legal")
+
     new_cust = CustomerDB(
         name=name,
         domain=domain,
@@ -191,7 +198,8 @@ async def create_customer(
         email=customer_data.get("email"),
         address=customer_data.get("address"),
         contact_person=customer_data.get("contact_person"),
-        status="active"
+        status="active",
+        settings=settings
     )
     db.add(new_cust)
     await db.commit()
@@ -221,7 +229,10 @@ async def create_customer(
         "plugin_storage_path": new_cust.plugin_storage_path,
         "email": new_cust.email,
         "address": new_cust.address,
-        "contact_person": new_cust.contact_person
+        "contact_person": new_cust.contact_person,
+        "allowed_domains": new_cust.settings.get("allowed_domains", ["legal"]),
+        "domain_path": new_cust.settings.get("domain_path", "/legal"),
+        "settings": new_cust.settings
     }
 
 
@@ -259,6 +270,13 @@ async def update_customer(
         customer.address = customer_data["address"]
     if "contact_person" in customer_data:
         customer.contact_person = customer_data["contact_person"]
+
+    cust_settings = dict(customer.settings or {})
+    if "allowed_domains" in customer_data:
+        cust_settings["allowed_domains"] = customer_data["allowed_domains"]
+    if "domain_path" in customer_data:
+        cust_settings["domain_path"] = customer_data["domain_path"]
+    customer.settings = cust_settings
         
     customer.dateupdated = datetime.utcnow().isoformat()
     await db.commit()
@@ -275,7 +293,10 @@ async def update_customer(
         "plugin_storage_path": customer.plugin_storage_path,
         "email": customer.email,
         "address": customer.address,
-        "contact_person": customer.contact_person
+        "contact_person": customer.contact_person,
+        "allowed_domains": (customer.settings or {}).get("allowed_domains", ["legal"]),
+        "domain_path": (customer.settings or {}).get("domain_path", "/legal"),
+        "settings": customer.settings or {}
     }
 
 
@@ -605,4 +626,200 @@ async def list_audit_logs(
         }
         for log in logs
     ]
+
+
+"""
+===============================================================================
+BLOCK COMMENT: HIERARCHICAL ADMIN FRAMEWORK (SYSTEM ADMIN & CUSTOMER ADMIN)
+Endpoints for:
+1. System Admin: Onboarding Customer, assigning domain/allowed_domains, creating Customer Admin.
+2. Customer Admin: Sub-Customer onboarding (parent_id), user access, RBAC permission assignment.
+===============================================================================
+"""
+
+@router.post("/customers/{customer_id}/admin", response_model=dict, status_code=201)
+async def create_customer_admin(
+    customer_id: str,
+    admin_data: dict,
+    current_user: User = Depends(require_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Creates a Customer Admin user assigned to a customer (System Admin only)."""
+    email = admin_data.get("email")
+    password = admin_data.get("password")
+    name = admin_data.get("name", "Customer Admin")
+    username = admin_data.get("username") or email
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    dup = await db.execute(select(UserDB).where(or_(UserDB.email_id == email, UserDB.username == username)))
+    if dup.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="User with this email or username already exists")
+
+    role_stmt = select(RoleDB).where(RoleDB.role_type == "tenant_admin", RoleDB.customer_id.is_(None))
+    role_res = await db.execute(role_stmt)
+    tenant_admin_role = role_res.scalar_one_or_none()
+
+    new_user = UserDB(
+        username=username,
+        email_id=email,
+        password=get_password_hash(password),
+        name=name,
+        customer_id=customer_id,
+        role="admin",
+        role_id=tenant_admin_role.id if tenant_admin_role else None,
+        status="active"
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    return {
+        "id": new_user.id,
+        "username": new_user.username,
+        "email": new_user.email_id,
+        "name": new_user.name,
+        "customer_id": new_user.customer_id,
+        "role": new_user.role,
+        "status": new_user.status
+    }
+
+
+@router.get("/sub-customers", response_model=List[Dict[str, Any]])
+async def list_sub_customers(
+    current_user: User = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Lists sub-customers under the active user's customer organization."""
+    if current_user.role == "system_admin":
+        stmt = select(CustomerDB).where(CustomerDB.parent_id.isnot(None))
+    else:
+        if not current_user.customer_id:
+            return []
+        stmt = select(CustomerDB).where(CustomerDB.parent_id == current_user.customer_id)
+
+    result = await db.execute(stmt)
+    customers = result.scalars().all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "domain": c.domain,
+            "parent_id": c.parent_id,
+            "status": c.status,
+            "allowed_domains": (c.settings or {}).get("allowed_domains", ["legal"]),
+            "domain_path": (c.settings or {}).get("domain_path", "/legal"),
+            "email": c.email,
+            "contact_person": c.contact_person,
+            "dateadded": c.dateadded
+        } for c in customers
+    ]
+
+
+@router.post("/sub-customers", response_model=dict, status_code=201)
+async def create_sub_customer(
+    sub_data: dict,
+    current_user: User = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Creates a sub-customer unit under the Customer Admin's customer tenant."""
+    if current_user.role != "system_admin" and not current_user.customer_id:
+        raise HTTPException(status_code=400, detail="User is not associated with a parent customer tenant")
+
+    parent_id = current_user.customer_id if current_user.role != "system_admin" else sub_data.get("parent_id")
+    if not parent_id:
+        raise HTTPException(status_code=400, detail="Parent customer ID is required")
+
+    name = sub_data.get("name")
+    domain = sub_data.get("domain", "").strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail="Sub-customer name is required")
+
+    dup = await db.execute(select(CustomerDB).where(CustomerDB.name == name))
+    if dup.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Sub-customer with this name already exists")
+
+    settings = dict(sub_data.get("settings") or {})
+    settings["allowed_domains"] = sub_data.get("allowed_domains", ["legal"])
+
+    new_sub = CustomerDB(
+        name=name,
+        domain=domain if domain else None,
+        parent_id=parent_id,
+        status="active",
+        email=sub_data.get("email"),
+        contact_person=sub_data.get("contact_person"),
+        settings=settings
+    )
+    db.add(new_sub)
+    await db.commit()
+    await db.refresh(new_sub)
+
+    return {
+        "id": new_sub.id,
+        "name": new_sub.name,
+        "domain": new_sub.domain,
+        "parent_id": new_sub.parent_id,
+        "status": new_sub.status,
+        "allowed_domains": settings["allowed_domains"],
+        "dateadded": new_sub.dateadded
+    }
+
+
+@router.post("/sub-customers/{sub_id}/users", response_model=dict, status_code=201)
+async def create_sub_customer_user(
+    sub_id: str,
+    user_data: dict,
+    current_user: User = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Creates a user within a sub-customer tenant and assigns role permissions."""
+    sub_res = await db.execute(select(CustomerDB).where(CustomerDB.id == sub_id))
+    sub_cust = sub_res.scalar_one_or_none()
+    if not sub_cust:
+        raise HTTPException(status_code=404, detail="Sub-customer not found")
+
+    if current_user.role != "system_admin" and sub_cust.parent_id != current_user.customer_id and sub_cust.id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this customer unit")
+
+    email = user_data.get("email")
+    password = user_data.get("password")
+    name = user_data.get("name")
+    role_type = user_data.get("role_type", "tenant_user")
+
+    if not email or not password or not name:
+        raise HTTPException(status_code=400, detail="Name, email, and password are required")
+
+    dup = await db.execute(select(UserDB).where(or_(UserDB.email_id == email, UserDB.username == email)))
+    if dup.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+
+    role_stmt = select(RoleDB).where(RoleDB.role_type == role_type)
+    role_res = await db.execute(role_stmt)
+    assigned_role = role_res.scalars().first()
+
+    new_user = UserDB(
+        username=email,
+        email_id=email,
+        password=get_password_hash(password),
+        name=name,
+        customer_id=sub_id,
+        role="user",
+        role_id=assigned_role.id if assigned_role else None,
+        status="active"
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    return {
+        "id": new_user.id,
+        "name": new_user.name,
+        "email": new_user.email_id,
+        "customer_id": new_user.customer_id,
+        "role_type": role_type,
+        "status": new_user.status
+    }
+
 

@@ -110,11 +110,11 @@ async def get_customer_node_configs(
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves all custom configurations and status of nodes for the active customer."""
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role not in ["admin", "tenant_admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
     
     target_customer_id = customer_id
-    if current_user.role == "admin":
+    if current_user.role in ["admin", "tenant_admin"]:
         target_customer_id = current_user.customer_id
     elif current_user.role == "system_admin":
         if target_customer_id is None:
@@ -160,15 +160,15 @@ async def configure_customer_node(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role not in ["admin", "tenant_admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
         
-    is_customer_config = (current_user.role == "admin") or (current_user.role == "system_admin" and customer_id is not None)
+    is_customer_config = (current_user.role in ["admin", "tenant_admin"]) or (current_user.role == "system_admin" and customer_id is not None)
     base_node = None
     
     if is_customer_config:
         # update specific customer node definitions
-        target_customer_id = current_user.customer_id if current_user.role == "admin" else customer_id
+        target_customer_id = current_user.customer_id if current_user.role in ["admin", "tenant_admin"] else customer_id
         stmt = select(CustomerNodeDB).where(
             CustomerNodeDB.customer_id == target_customer_id,
             CustomerNodeDB.node_name == node_name
@@ -192,7 +192,7 @@ async def configure_customer_node(
             )
             db.add(customer_node)
             
-        if current_user.role == "admin" and not customer_node.is_enabled:
+        if current_user.role in ["admin", "tenant_admin"] and not customer_node.is_enabled:
             raise HTTPException(
                 status_code=403,
                 detail="This node is locked and cannot be configured because it has been disabled by the system administrator."
@@ -630,7 +630,7 @@ async def get_node(
             return {"error": "Node not found or not enabled by admin"}
             
     overrides = cust_node.properties if cust_node and cust_node.properties else {}
-    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    mask_sensitive = current_user.role not in ["system_admin", "admin", "tenant_admin"]
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
@@ -669,7 +669,7 @@ async def get_node_by_id(
             return {"error": "Node not found or not enabled by admin"}
             
     overrides = cust_node.properties if cust_node and cust_node.properties else {}
-    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    mask_sensitive = current_user.role not in ["system_admin", "admin", "tenant_admin"]
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
@@ -818,7 +818,7 @@ async def delete_node(
     Only System Admins (for global/system nodes) or Tenant Admins (for their customer-scoped nodes) can delete.
     If the node is used in workflows, it flags them unless force=True is passed.
     """
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role not in ["admin", "tenant_admin", "system_admin"]:
         raise HTTPException(status_code=403, detail="Admin permissions required to delete nodes")
 
     # Fetch the node definition
@@ -830,7 +830,7 @@ async def delete_node(
         raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
 
     # Check authorization:
-    if current_user.role == "admin":
+    if current_user.role in ["admin", "tenant_admin"]:
         if node.customer_id is None or node.customer_id != current_user.customer_id:
             raise HTTPException(status_code=403, detail="You do not have permission to delete this node")
 
