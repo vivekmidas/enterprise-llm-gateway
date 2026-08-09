@@ -108,6 +108,60 @@ def parse_natural_language_intent(query_text: str) -> Dict[str, Any]:
     return legal_search_engine.parse_intent(query_text)
 
 
+
+# ===============================================================================
+# BLOCK COMMENT: MULTI-SELECT FILTER OPTIONS ENDPOINT
+# Route: GET /api/knowledge/legal/filter-options
+# Description: Returns available multi-select taxonomy for Courts, Statutory Sections,
+#              Outcome Tags, Status Badges, and Year Range.
+# ===============================================================================
+@router.get("/filter-options")
+async def get_legal_filter_options(
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch multi-select filter taxonomy for legal precedent search hub."""
+    return {
+        "courts": [
+            {"label": "Supreme Court of India", "value": "Supreme Court of India"},
+            {"label": "High Court of Delhi", "value": "High Court of Delhi"},
+            {"label": "Bombay High Court", "value": "Bombay High Court"},
+            {"label": "Madras High Court", "value": "Madras High Court"},
+            {"label": "Calcutta High Court", "value": "Calcutta High Court"},
+            {"label": "Punjab & Haryana High Court", "value": "High Court of Punjab and Haryana"},
+            {"label": "Karnataka High Court", "value": "Karnataka High Court"},
+            {"label": "Telangana High Court", "value": "Telangana High Court"}
+        ],
+        "statutes": [
+            "Income Tax Act Sec 148A(b)",
+            "Income Tax Act Sec 148",
+            "BNS Sec 103(1)",
+            "BNSS Sec 480",
+            "IPC Sec 302",
+            "CGST Sec 107",
+            "CrPC Sec 439",
+            "Companies Act Sec 241/242"
+        ],
+        "outcome_tags": [
+            "[Notice Quashed / Appeal Allowed]",
+            "[Bail Granted]",
+            "[Petition Dismissed]",
+            "[Interim Stay Granted]",
+            "[Remanded back to AO]"
+        ],
+        "status_badges": [
+            "Good Law",
+            "Overruled",
+            "Distinguished / Referred"
+        ],
+        "year_range": {
+            "min": 1950,
+            "max": 2026,
+            "default_min": 2022,
+            "default_max": 2026
+        }
+    }
+
+
 # --- Search Endpoint ---
 
 @router.post("/search")
@@ -120,6 +174,7 @@ async def search_legal_cases(
     Legal Domain Precedent Search via LegalDomainSearch engine (inheriting from BaseDomainSearch).
     """
     return await legal_search_engine.search(payload, current_user, db)
+
 
 
 # --- Case Workspaces & Precedent Linking Endpoints ---

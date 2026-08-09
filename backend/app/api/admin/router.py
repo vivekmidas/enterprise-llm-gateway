@@ -470,7 +470,7 @@ async def create_customer_user(
     email = user_data.get("email")
     password = user_data.get("password")
     name = user_data.get("name")
-    role = user_data.get("role", "admin")
+    role = user_data.get("role", "tenant_user")
     
     if not email or not password or not name:
         raise HTTPException(status_code=400, detail="Email, password, and name are required")
