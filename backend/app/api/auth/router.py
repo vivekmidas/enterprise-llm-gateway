@@ -82,26 +82,57 @@ async def login(request: LoginRequest):
             perm_res = await session.execute(select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id))
             permissions_list = [p for p in perm_res.scalars().all()]
 
+        # Resolve tenant allowed_domains
+        allowed_domains = ["legal"]
+        if user.customer_id:
+            cust_res = await session.execute(select(CustomerDB.allowed_domains).where(CustomerDB.id == user.customer_id))
+            cust_allowed = cust_res.scalar_one_or_none()
+            if cust_allowed and isinstance(cust_allowed, list):
+                allowed_domains = cust_allowed
+
+        # Calculate default landing route (defaults to /legal)
+        default_route = "/legal"
+        if user.role == "system_admin" or "*:*:*" in permissions_list or "admin:*:*" in permissions_list:
+            default_route = "/admin"
+        elif "legal:research:query" in permissions_list or "legal:*:*" in permissions_list:
+            default_route = "/legal"
+        elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
+            default_route = "/workflow-builder"
+
+
+        # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
+        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
+
         token_data = {
             "user_id": str(user.id),
+            "email": user.email_id,
             "role": user.role,
-            "status": True if user.status=="active" else False,
+            "role_type": role_obj.role_type if role_obj else user.role,
+            "status": True if user.status == "active" else False,
             "customer_id": user.customer_id,
             "domain": domain,
+            "domain_id": primary_domain_id,
+            "allowed_domains": allowed_domains,
             "permissions": permissions_list,
+            "default_route": default_route,
         }
         token = create_access_token(token_data)
 
         return {
             "user_id": str(user.id),
             "token": token,
-            "status": True if user.status=="active" else False,
+            "status": True if user.status == "active" else False,
             "role": user.role,
+            "role_type": role_obj.role_type if role_obj else user.role,
             "email": user.email_id,
             "customer_id": user.customer_id,
             "domain": domain,
+            "domain_id": primary_domain_id,
+            "allowed_domains": allowed_domains,
             "permissions": permissions_list,
+            "default_route": default_route,
         }
+
 
 
 @router.get("/me", response_model=User)

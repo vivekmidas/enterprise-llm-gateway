@@ -18,16 +18,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/roles", tags=["Roles & Permissions"])
 
 
+# BLOCK COMMENT: 3-TIER ROLES & PERMISSIONS API (xx:yy:zzz FORMAT)
+# Router: backend/app/api/roles/router.py
+# Description: Supports 3-tier hierarchy (Module -> Submodule -> Permission) and Route Permission Binding Portal endpoints.
+
 class PermissionCreateRequest(BaseModel):
-    id: str
+    id: str = Field(..., description="Format: module:submodule:permission (xx:yy:zzz)")
     module: str
+    submodule: Optional[str] = None
     label: str
     description: Optional[str] = None
     target_layer: Optional[str] = "both"
 
 
+# BLOCK COMMENT: PERMISSION UPDATE SCHEMA
+class PermissionUpdateRequest(BaseModel):
+    label: Optional[str] = None
+    description: Optional[str] = None
+    target_layer: Optional[str] = "both"
+    module: Optional[str] = None
+    submodule: Optional[str] = None
+
+
+
 class PermissionItem(BaseModel):
     id: str
+    submodule: Optional[str] = None
     label: str
     description: Optional[str] = None
     target_layer: Optional[str] = "both"
@@ -35,7 +51,17 @@ class PermissionItem(BaseModel):
 
 class ModuleBatchCreateRequest(BaseModel):
     module_name: str
+    submodule_name: Optional[str] = None
     permissions: List[PermissionItem]
+
+
+class RoutePermissionCreateRequest(BaseModel):
+    pattern: str
+    permission_id: str
+    module: Optional[str] = None
+    submodule: Optional[str] = None
+    label: Optional[str] = None
+    description: Optional[str] = None
 
 
 @router.post("/modules", response_model=dict, status_code=201)
@@ -46,11 +72,11 @@ async def create_or_update_module_permissions(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Registers a new top-level module (e.g., HealthCare, Education) along with
-    multiple granular permission scopes into PermissionDB in batch.
+    Registers a new top-level module along with multiple granular permission scopes into PermissionDB in batch.
     """
     mod_name = payload.module_name.strip()
     mod_key = mod_name.lower().replace(" ", "_")
+    submod_key = payload.submodule_name.strip().lower().replace(" ", "_") if payload.submodule_name else None
 
     if not mod_name or not payload.permissions:
         raise HTTPException(status_code=400, detail="module_name and at least 1 permission are required")
@@ -64,10 +90,12 @@ async def create_or_update_module_permissions(
         existing = await db.execute(select(PermissionDB).where(PermissionDB.id == perm_id))
         perm_obj = existing.scalar_one_or_none()
 
+        submod = item.submodule or submod_key
         if not perm_obj:
             perm_obj = PermissionDB(
                 id=perm_id,
                 module=mod_key,
+                submodule=submod,
                 target_layer=item.target_layer or "both",
                 label=item.label.strip(),
                 description=item.description.strip() if item.description else "",
@@ -75,6 +103,7 @@ async def create_or_update_module_permissions(
             db.add(perm_obj)
         else:
             perm_obj.module = mod_key
+            perm_obj.submodule = submod
             perm_obj.label = item.label.strip()
             if item.description:
                 perm_obj.description = item.description.strip()
@@ -99,10 +128,11 @@ async def create_permission(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Registers a new granular permission or module scope into the PermissionDB registry.
+    Registers a new granular permission key in xx:yy:zzz format into PermissionDB.
     """
     perm_id = payload.id.strip().lower()
     module = payload.module.strip().lower()
+    submodule = payload.submodule.strip().lower() if payload.submodule else None
 
     if not perm_id or not module or not payload.label:
         raise HTTPException(status_code=400, detail="id, module, and label are required")
@@ -114,6 +144,7 @@ async def create_permission(
     new_perm = PermissionDB(
         id=perm_id,
         module=module,
+        submodule=submodule,
         target_layer=payload.target_layer or "both",
         label=payload.label,
         description=payload.description or "",
@@ -125,13 +156,82 @@ async def create_permission(
     return {
         "id": new_perm.id,
         "module": new_perm.module,
+        "submodule": new_perm.submodule,
         "target_layer": new_perm.target_layer,
         "label": new_perm.label,
         "description": new_perm.description,
     }
 
 
+# BLOCK COMMENT: UPDATE PERMISSION ENDPOINT (PROVISION TO EDIT PERMISSIONS)
+@router.put("/permissions/{permission_id:path}", response_model=dict)
+async def update_permission(
+    permission_id: str,
+    payload: PermissionUpdateRequest,
+    current_user: User = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Updates an existing permission's metadata (label, description, target_layer, submodule).
+    """
+    perm_id = permission_id.strip()
+    stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+    res = await db.execute(stmt)
+    perm = res.scalar_one_or_none()
+
+    if not perm:
+        raise HTTPException(status_code=404, detail=f"Permission '{perm_id}' not found")
+
+    if payload.label is not None:
+        perm.label = payload.label.strip()
+    if payload.description is not None:
+        perm.description = payload.description.strip()
+    if payload.target_layer is not None:
+        perm.target_layer = payload.target_layer.strip()
+    if payload.module is not None:
+        perm.module = payload.module.strip()
+    if payload.submodule is not None:
+        perm.submodule = payload.submodule.strip()
+
+    await db.commit()
+    await db.refresh(perm)
+
+    return {
+        "id": perm.id,
+        "module": perm.module,
+        "submodule": perm.submodule,
+        "target_layer": perm.target_layer,
+        "label": perm.label,
+        "description": perm.description,
+    }
+
+
+# BLOCK COMMENT: DELETE PERMISSION ENDPOINT
+@router.delete("/permissions/{permission_id:path}", response_model=dict)
+async def delete_permission(
+    permission_id: str,
+    current_user: User = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Deletes an existing permission from PermissionDB.
+    """
+    perm_id = permission_id.strip()
+    stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+    res = await db.execute(stmt)
+    perm = res.scalar_one_or_none()
+
+    if not perm:
+        raise HTTPException(status_code=404, detail=f"Permission '{perm_id}' not found")
+
+    await db.delete(perm)
+    await db.commit()
+
+    return {"status": "success", "message": f"Permission '{perm_id}' deleted successfully"}
+
+
 @router.get("/route-permissions", response_model=List[dict])
+
 async def list_route_permissions(
     db: AsyncSession = Depends(get_db)
 ):
@@ -144,20 +244,124 @@ async def list_route_permissions(
     if routes:
         return [
             {
+                "id": r.id,
                 "pattern": r.pattern,
                 "permission": r.permission_id,
+                "module": r.module,
+                "submodule": r.submodule,
+                "label": r.label,
                 "description": r.description,
             }
             for r in routes
         ]
     return [
         {
+            "id": f"default_{idx}",
             "pattern": r["pattern"],
             "permission": r["permission_id"],
+            "module": r.get("module"),
+            "submodule": r.get("submodule"),
+            "label": r.get("label"),
             "description": r.get("description"),
         }
-        for r in DEFAULT_ROUTE_PERMISSIONS
+        for idx, r in enumerate(DEFAULT_ROUTE_PERMISSIONS)
     ]
+
+
+@router.post("/route-permissions", response_model=dict, status_code=201)
+async def create_route_permission_binding(
+    payload: RoutePermissionCreateRequest,
+    current_user: User = Depends(require_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Binds a route pattern to a 3-tier permission key (System Admin only)."""
+    pattern = payload.pattern.strip()
+    permission_id = payload.permission_id.strip().lower()
+
+    if not pattern or not permission_id:
+        raise HTTPException(status_code=400, detail="pattern and permission_id are required")
+
+    existing = await db.execute(select(RoutePermissionDB).where(RoutePermissionDB.pattern == pattern))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Route pattern '{pattern}' is already bound")
+
+    new_rp = RoutePermissionDB(
+        id=str(uuid.uuid4()),
+        pattern=pattern,
+        permission_id=permission_id,
+        module=payload.module,
+        submodule=payload.submodule,
+        label=payload.label,
+        description=payload.description or ""
+    )
+    db.add(new_rp)
+    await db.commit()
+    await db.refresh(new_rp)
+
+    return {
+        "id": new_rp.id,
+        "pattern": new_rp.pattern,
+        "permission": new_rp.permission_id,
+        "module": new_rp.module,
+        "submodule": new_rp.submodule,
+        "label": new_rp.label,
+        "description": new_rp.description
+    }
+
+
+@router.put("/route-permissions/{binding_id}", response_model=dict)
+async def update_route_permission_binding(
+    binding_id: str,
+    payload: RoutePermissionCreateRequest,
+    current_user: User = Depends(require_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Updates a route permission binding (System Admin only)."""
+    res = await db.execute(select(RoutePermissionDB).where(RoutePermissionDB.id == binding_id))
+    rp = res.scalar_one_or_none()
+    if not rp:
+        raise HTTPException(status_code=404, detail="Route permission binding not found")
+
+    rp.pattern = payload.pattern.strip()
+    rp.permission_id = payload.permission_id.strip().lower()
+    if payload.module:
+        rp.module = payload.module
+    if payload.submodule:
+        rp.submodule = payload.submodule
+    if payload.label:
+        rp.label = payload.label
+    if payload.description is not None:
+        rp.description = payload.description
+
+    await db.commit()
+    await db.refresh(rp)
+
+    return {
+        "id": rp.id,
+        "pattern": rp.pattern,
+        "permission": rp.permission_id,
+        "module": rp.module,
+        "submodule": rp.submodule,
+        "label": rp.label,
+        "description": rp.description
+    }
+
+
+@router.delete("/route-permissions/{binding_id}", status_code=204)
+async def delete_route_permission_binding(
+    binding_id: str,
+    current_user: User = Depends(require_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Deletes a route permission binding (System Admin only)."""
+    res = await db.execute(select(RoutePermissionDB).where(RoutePermissionDB.id == binding_id))
+    rp = res.scalar_one_or_none()
+    if not rp:
+        raise HTTPException(status_code=404, detail="Route permission binding not found")
+
+    await db.delete(rp)
+    await db.commit()
+    return None
 
 
 @router.get("/permissions", response_model=dict)
@@ -167,21 +371,22 @@ async def list_permissions_registry(
 ):
     """
     Returns the complete registry of all system permissions,
-    grouped by module (legal, kb, workflow, node, tenant, system).
+    grouped by 3-tier Module -> Submodule -> Permissions.
     """
     # Query permissions stored in PermissionDB
     result = await db.execute(select(PermissionDB))
     db_perms = result.scalars().all()
     
-    # Fallback to in-memory registry if DB table is empty
     perms_list = []
     if db_perms:
         perms_list = [
             {
                 "id": p.id,
                 "module": p.module,
+                "submodule": p.submodule or "general",
                 "target_layer": p.target_layer,
                 "name": p.label,
+                "label": p.label,
                 "description": p.description
             }
             for p in db_perms
@@ -189,17 +394,27 @@ async def list_permissions_registry(
     else:
         perms_list = PERMISSIONS_REGISTRY
 
-    # Group by module
+    # Group by module and submodule
     grouped = {}
+    grouped_3tier = {}
     for p in perms_list:
         mod = p.get("module", "general")
+        submod = p.get("submodule", "general")
+        
         if mod not in grouped:
             grouped[mod] = []
         grouped[mod].append(p)
 
+        if mod not in grouped_3tier:
+            grouped_3tier[mod] = {}
+        if submod not in grouped_3tier[mod]:
+            grouped_3tier[mod][submod] = []
+        grouped_3tier[mod][submod].append(p)
+
     return {
         "permissions": perms_list,
-        "grouped_by_module": grouped
+        "grouped_by_module": grouped,
+        "grouped_by_module_and_submodule": grouped_3tier
     }
 
 

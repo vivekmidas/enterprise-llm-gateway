@@ -34,9 +34,10 @@ async def get_current_user(
             detail="Token missing user information",
         )
     
+    # BLOCK COMMENT: RESOLVE CUSTOMER ALLOWED_DOMAINS AND ACTIVE DOMAIN_ID
     from app.models.db_models import CustomerDB, RoleDB, RolePermissionDB
     stmt = (
-        select(UserDB, CustomerDB.domain)
+        select(UserDB, CustomerDB.domain, CustomerDB.allowed_domains)
         .outerjoin(CustomerDB, UserDB.customer_id == CustomerDB.id)
         .where(UserDB.id == user_id)
     )
@@ -49,7 +50,10 @@ async def get_current_user(
             detail="User not found",
         )
         
-    db_user, domain = row
+    db_user, domain, allowed_domains_raw = row
+    allowed_domains_list = allowed_domains_raw if (allowed_domains_raw and isinstance(allowed_domains_raw, list)) else ["legal"]
+    domain_id_val = payload.get("domain_id") or (allowed_domains_list[0] if allowed_domains_list else "legal")
+
     # is user active, if not error
     if db_user.status != "active":
         raise HTTPException(
@@ -92,6 +96,8 @@ async def get_current_user(
         email=db_user.email_id,
         customer_id=db_user.customer_id,
         domain=domain,
+        domain_id=domain_id_val,
+        allowed_domains=allowed_domains_list,
         name=db_user.name,
         status=db_user.status,
         role_id=role_id_val,
@@ -99,6 +105,7 @@ async def get_current_user(
         role_type=role_type_val,
         permissions=permissions_list
     )
+
 
 @staticmethod
 async def get_current_admin(
@@ -111,14 +118,50 @@ async def get_current_admin(
         )
     return current_user
 
-def require_permission(permission_id: str):
+# BLOCK COMMENT: 3-TIER PERMISSION MATCHING ENGINE (xx:yy:zzz FORMAT)
+# Evaluates exact permission keys, submodule wildcards (xx:yy:*), module wildcards (xx:*:*), and global super admin (*:*:*).
+
+def has_permission_scope(user_permissions: list, required_permission: str) -> bool:
+    """
+    Evaluates if user permissions satisfy required_permission with 3-tier xx:yy:zzz & wildcard support:
+    1. '*:*:*' matches everything.
+    2. 'xx:*:*' matches any key starting with 'xx:' (Module wildcard).
+    3. 'xx:yy:*' matches any key starting with 'xx:yy:' (Submodule wildcard).
+    4. Exact match 'xx:yy:zzz'.
+    """
+    if not user_permissions or not isinstance(user_permissions, list):
+        return False
+
+    if "*:*:*" in user_permissions:
+        return True
+
+    if required_permission in user_permissions:
+        return True
+
+    parts = required_permission.split(":")
+    module = parts[0] if len(parts) > 0 else ""
+    submodule = parts[1] if len(parts) > 1 else ""
+
+    # Check Module wildcard xx:*:* or xx:*
+    if f"{module}:*:*" in user_permissions or f"{module}:*" in user_permissions:
+        return True
+
+    # Check Submodule wildcard xx:yy:*
+    if submodule and f"{module}:{submodule}:*" in user_permissions:
+        return True
+
+    return False
+
+
+def require_permission(required_permission: str):
+    """FastAPI dependency to enforce required permission key (HTTP 403 on denial)."""
     async def dependency(
         current_user: User = Depends(get_current_user)
     ) -> User:
-        if not current_user.has_permission(permission_id):
+        if not has_permission_scope(current_user.permissions, required_permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: Permission '{permission_id}' required."
+                detail=f"Access Denied: Missing required permission '{required_permission}'"
             )
         return current_user
     return dependency

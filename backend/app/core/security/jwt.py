@@ -27,26 +27,39 @@ PUBLIC_PATHS:json = {
         "/health",
         "/metrics"
         }
+# BLOCK COMMENT: JWT CLAIMS ENRICHMENT (DOMAIN, CUSTOMER_ID, DOMAIN_ID, USER_ID, ROLE, PERMISSIONS)
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
 
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
+    # Primary domain ID calculation (e.g., 'legal', 'education')
+    allowed_domains = data.get("allowed_domains", [])
+    domain_id = data.get("domain_id") or (allowed_domains[0] if allowed_domains else "legal")
+
     to_encode = {
-        "sub": data.get("user_id"),                    # User ID
-        "role" : data.get("role"),
-        "tenant": data.get("customer_id"),
-        "domain":data.get("domain"),
-        "status":data.get("status"),
+        "sub": str(data.get("user_id") or data.get("sub")),    # User ID
+        "user_id": str(data.get("user_id") or data.get("sub")),
+        "email": data.get("email"),
+        "role": data.get("role"),
+        "role_type": data.get("role_type"),
+        "customer_id": data.get("customer_id"),
+        "tenant": data.get("customer_id"),                     # Alias for backwards compatibility
+        "domain": data.get("domain"),                          # Tenant company domain (e.g. azbpartners.com)
+        "domain_id": domain_id,                                # Active vertical domain (legal, education)
+        "allowed_domains": allowed_domains,                    # List of assigned vertical domains
+        "status": data.get("status"),
         "permissions": data.get("permissions", []),
+        "default_route": data.get("default_route"),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "jti": str(uuid.uuid4()),          # Unique token ID for revocation
+        "jti": str(uuid.uuid4()),                              # Unique token ID for revocation
         "type": "access",
         "iss": settings.ISSUER,
         "aud": settings.AUDIENCE,
     }
 
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
 
 def decode_access_token(token: str) -> Optional[dict]:
     try:

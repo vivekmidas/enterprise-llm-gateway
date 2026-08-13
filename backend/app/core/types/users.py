@@ -8,7 +8,9 @@ class User(BaseModel):
     role: str  # Legacy role string (e.g. system_admin, admin, user)
     email: str
     customer_id: Optional[str] = None
-    domain: Optional[str] = None
+    domain: Optional[str] = None              # Company email domain (e.g. azbpartners.com)
+    domain_id: Optional[str] = None           # Active vertical domain (legal, education, etc.)
+    allowed_domains: List[str] = Field(default_factory=list)
     name: Optional[str] = None
     status: Optional[str] = "active"
     
@@ -17,6 +19,7 @@ class User(BaseModel):
     role_name: Optional[str] = None
     role_type: Optional[str] = None
     permissions: List[str] = Field(default_factory=list)
+
 
     def has_permission(self, required_permission: str) -> bool:
         """

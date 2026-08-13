@@ -109,6 +109,10 @@ app.include_router(llm_profiles_router)   # customer specific LLM profiles route
 app.include_router(profiles_router)        # new structured profiles API
 app.include_router(playground_router)
 app.include_router(provider_presets_router)
+# BLOCK COMMENT: REGISTER ADMIN BACKUP ROUTER (REQUIREMENT 3 DUMP EXPORTER)
+from app.api.admin.backup import router as backup_router
+app.include_router(backup_router)
+
 app.include_router(roles_router)
 
 
