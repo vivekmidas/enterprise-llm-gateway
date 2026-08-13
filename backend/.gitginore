@@ -9,3 +9,5 @@ backend/enterprise_gateway.db
 */qdrant_storage/*
 */qdrant_data/*
 ./data/knowledge/* 
+./mysql_data/*
+../mysql_data/*
