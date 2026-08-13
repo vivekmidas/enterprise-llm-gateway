@@ -34,9 +34,10 @@ async def get_current_user(
             detail="Token missing user information",
         )
     
+    # BLOCK COMMENT: RESOLVE CUSTOMER ALLOWED_DOMAINS AND ACTIVE DOMAIN_ID
     from app.models.db_models import CustomerDB, RoleDB, RolePermissionDB
     stmt = (
-        select(UserDB, CustomerDB.domain)
+        select(UserDB, CustomerDB.domain, CustomerDB.allowed_domains)
         .outerjoin(CustomerDB, UserDB.customer_id == CustomerDB.id)
         .where(UserDB.id == user_id)
     )
@@ -49,7 +50,10 @@ async def get_current_user(
             detail="User not found",
         )
         
-    db_user, domain = row
+    db_user, domain, allowed_domains_raw = row
+    allowed_domains_list = allowed_domains_raw if (allowed_domains_raw and isinstance(allowed_domains_raw, list)) else ["legal"]
+    domain_id_val = payload.get("domain_id") or (allowed_domains_list[0] if allowed_domains_list else "legal")
+
     # is user active, if not error
     if db_user.status != "active":
         raise HTTPException(
@@ -92,6 +96,8 @@ async def get_current_user(
         email=db_user.email_id,
         customer_id=db_user.customer_id,
         domain=domain,
+        domain_id=domain_id_val,
+        allowed_domains=allowed_domains_list,
         name=db_user.name,
         status=db_user.status,
         role_id=role_id_val,
@@ -99,6 +105,7 @@ async def get_current_user(
         role_type=role_type_val,
         permissions=permissions_list
     )
+
 
 @staticmethod
 async def get_current_admin(

@@ -99,12 +99,18 @@ async def login(request: LoginRequest):
         elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
             default_route = "/workflow-builder"
 
+        # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
+        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
+
         token_data = {
             "user_id": str(user.id),
+            "email": user.email_id,
             "role": user.role,
-            "status": True if user.status=="active" else False,
+            "role_type": role_obj.role_type if role_obj else user.role,
+            "status": True if user.status == "active" else False,
             "customer_id": user.customer_id,
             "domain": domain,
+            "domain_id": primary_domain_id,
             "allowed_domains": allowed_domains,
             "permissions": permissions_list,
             "default_route": default_route,
@@ -114,15 +120,18 @@ async def login(request: LoginRequest):
         return {
             "user_id": str(user.id),
             "token": token,
-            "status": True if user.status=="active" else False,
+            "status": True if user.status == "active" else False,
             "role": user.role,
+            "role_type": role_obj.role_type if role_obj else user.role,
             "email": user.email_id,
             "customer_id": user.customer_id,
             "domain": domain,
+            "domain_id": primary_domain_id,
             "allowed_domains": allowed_domains,
             "permissions": permissions_list,
             "default_route": default_route,
         }
+
 
 
 @router.get("/me", response_model=User)
