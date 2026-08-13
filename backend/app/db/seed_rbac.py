@@ -12,24 +12,31 @@ DEFAULT_ROUTE_PERMISSIONS = [
     {"pattern": "/workflow-builder/new", "permission_id": "workflow:builder:create", "module": "workflow", "submodule": "builder", "label": "Create Workflow Canvas", "description": "Create new workflow canvas"},
     {"pattern": "/workflow-builder/*/edit", "permission_id": "workflow:builder:edit", "module": "workflow", "submodule": "builder", "label": "Edit Workflow Canvas", "description": "Edit workflow canvas"},
     {"pattern": "/workflow-builder", "permission_id": "workflow:builder:view", "module": "workflow", "submodule": "builder", "label": "View Workflow Builder", "description": "View workflow builder canvas"},
-    {"pattern": "/workflow-builder/**", "permission_id": "workflow:builder:view", "module": "workflow", "submodule": "builder", "label": "Workflow Routes", "description": "View workflow builder routes"},
-    {"pattern": "/admin/users", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Tenant Users", "description": "Tenant user management"},
-    {"pattern": "/admin/users/**", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Tenant Users Sub-routes", "description": "Tenant user management sub-routes"},
-    {"pattern": "/admin/roles", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Tenant Roles", "description": "Tenant role management"},
-    {"pattern": "/admin/roles/**", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Tenant Roles Sub-routes", "description": "Tenant role management sub-routes"},
+    # BLOCK COMMENT: RENAMED LABELS TO USERS & ROLES
+    {"pattern": "/admin/users", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Users", "description": "User management"},
+    {"pattern": "/admin/users/**", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Users Sub-routes", "description": "User management sub-routes"},
+    {"pattern": "/admin/roles", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Roles", "description": "Role management"},
+    {"pattern": "/admin/roles/**", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Roles Sub-routes", "description": "Role management sub-routes"},
+
     {"pattern": "/admin/provider-presets", "permission_id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "label": "Provider Presets", "description": "Provider Presets management portal"},
     {"pattern": "/admin/provider-presets/**", "permission_id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "label": "Provider Presets Sub-routes", "description": "Provider Presets management sub-routes"},
     {"pattern": "/admin/playground", "permission_id": "admin:playground:view", "module": "admin", "submodule": "playground", "label": "Retrieval Playground", "description": "Retrieval Playground testing console"},
     {"pattern": "/admin/playground/**", "permission_id": "admin:playground:view", "module": "admin", "submodule": "playground", "label": "Retrieval Playground Sub-routes", "description": "Retrieval Playground testing sub-routes"},
     {"pattern": "/admin/customers", "permission_id": "admin:customer_management:view", "module": "admin", "submodule": "customer_management", "label": "System Customers", "description": "System customer tenants management"},
-    {"pattern": "/admin/customers/**", "permission_id": "admin:customer_management:view", "module": "admin", "submodule": "customer_management", "label": "System Customers Sub-routes", "description": "System customer tenants sub-routes"},
-    {"pattern": "/admin/nodes", "permission_id": "admin:node_management:view", "module": "admin", "submodule": "node_management", "label": "Node Registry", "description": "Node Registry catalog management"},
-    {"pattern": "/admin/nodes/**", "permission_id": "admin:node_management:view", "module": "admin", "submodule": "node_management", "label": "Node Registry Sub-routes", "description": "Node Registry sub-routes"},
+    # BLOCK COMMENT: SYSTEM ADMIN DYNAMIC MODULE ROUTE PERMISSIONS
+    {"pattern": "/admin/permissions", "permission_id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "label": "Permissions Registry", "description": "Manage system-wide permissions"},
+    {"pattern": "/admin/permissions/**", "permission_id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "label": "Permissions Registry Sub-routes", "description": "System permissions sub-routes"},
+    {"pattern": "/admin/backup", "permission_id": "admin:backup:manage", "module": "admin", "submodule": "backup", "label": "SQL Backup Exporter", "description": "System-wide SQL data backup export"},
+    {"pattern": "/admin/backup/**", "permission_id": "admin:backup:manage", "module": "admin", "submodule": "backup", "label": "SQL Backup Exporter Sub-routes", "description": "System-wide SQL backup sub-routes"},
+    {"pattern": "/admin/domains", "permission_id": "admin:domains:manage", "module": "admin", "submodule": "domains", "label": "Domain Registry", "description": "System multi-domain management"},
+    {"pattern": "/admin/domains/**", "permission_id": "admin:domains:manage", "module": "admin", "submodule": "domains", "label": "Domain Registry Sub-routes", "description": "System multi-domain sub-routes"},
     {"pattern": "/admin", "permission_id": "admin:dashboard:view", "module": "admin", "submodule": "dashboard", "label": "Admin Dashboard", "description": "Admin Console access"},
-    {"pattern": "/admin/**", "permission_id": "admin:dashboard:view", "module": "admin", "submodule": "dashboard", "label": "Admin Sub-routes", "description": "Admin Console sub-routes"},
-    {"pattern": "/legal-research", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal Research", "description": "Legal research search portal"},
-    {"pattern": "/legal-research/**", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal Research Sub-routes", "description": "Legal research sub-routes"},
+    # BLOCK COMMENT: ROUTE PERMISSION UPDATED TO /legal
+    {"pattern": "/legal", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal AI Platform", "description": "Legal AI platform and research portal"},
+    {"pattern": "/legal/**", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal AI Sub-routes", "description": "Legal AI platform sub-routes"},
 ]
+
+
 
 PERMISSIONS_REGISTRY = [
     # Legal Domain
@@ -60,10 +67,11 @@ PERMISSIONS_REGISTRY = [
     
     # Admin Domain
     {"id": "admin:dashboard:view", "module": "admin", "submodule": "dashboard", "target_layer": "both", "label": "View Admin Dashboard", "description": "Access admin dashboard overview"},
-    {"id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "View Tenant Users", "description": "View list of users in tenant"},
-    {"id": "admin:user_management:manage", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "Manage Tenant Users", "description": "Invite, deactivate, and assign roles to users"},
-    {"id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "View Tenant Roles", "description": "View tenant custom roles and permissions"},
-    {"id": "admin:role_management:manage", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "Manage Tenant Roles", "description": "Create, edit, and assign roles and permissions"},
+    {"id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "View Users", "description": "View list of users"},
+    {"id": "admin:user_management:manage", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "Manage Users", "description": "Invite, deactivate, and assign roles to users"},
+    {"id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "View Roles", "description": "View custom roles and permissions"},
+    {"id": "admin:role_management:manage", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "Manage Roles", "description": "Create, edit, and assign roles and permissions"},
+
     {"id": "admin:customer_management:view", "module": "admin", "submodule": "customer_management", "target_layer": "both", "label": "View System Customers", "description": "View system-wide customer tenants"},
     {"id": "admin:customer_management:manage", "module": "admin", "submodule": "customer_management", "target_layer": "both", "label": "Manage System Customers", "description": "Create, edit, suspend, and delete customer tenants"},
     {"id": "admin:node_management:view", "module": "admin", "submodule": "node_management", "target_layer": "both", "label": "View Node Registry", "description": "View global agent node catalog"},
@@ -71,7 +79,13 @@ PERMISSIONS_REGISTRY = [
     {"id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "target_layer": "both", "label": "View Provider Presets", "description": "Access provider presets management portal"},
     {"id": "admin:provider_presets:manage", "module": "admin", "submodule": "provider_presets", "target_layer": "both", "label": "Manage Provider Presets", "description": "Create and update provider presets"},
     {"id": "admin:playground:view", "module": "admin", "submodule": "playground", "target_layer": "both", "label": "View Retrieval Playground", "description": "Access retrieval playground testing console"},
-    {"id": "admin:tenant_settings:configure", "module": "admin", "submodule": "tenant_settings", "target_layer": "both", "label": "Configure Tenant Settings", "description": "Manage tenant branding, plugins, and allocations"},
+    {"id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "target_layer": "both", "label": "View Permissions", "description": "View system-wide permissions"},
+    {"id": "admin:permissions:manage", "module": "admin", "submodule": "permissions", "target_layer": "both", "label": "Manage Permissions", "description": "Manage system-wide permissions"},
+    {"id": "admin:backup:view", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "View SQL Backups", "description": "View system SQL data backup files"},
+    {"id": "admin:backup:manage", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups"},
+    {"id": "admin:domains:view", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "View Domains", "description": "View registered system domains"},
+    {"id": "admin:domains:manage", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "Manage Domains", "description": "Create and configure system domains"},
+
     
     # Wildcard Domain Scopes (xx:*:* & *:*:*)
     {"id": "admin:*:*", "module": "admin", "submodule": "all", "target_layer": "both", "label": "Admin Domain Full Access", "description": "Full access to all admin submodules"},

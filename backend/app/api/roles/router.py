@@ -31,6 +31,16 @@ class PermissionCreateRequest(BaseModel):
     target_layer: Optional[str] = "both"
 
 
+# BLOCK COMMENT: PERMISSION UPDATE SCHEMA
+class PermissionUpdateRequest(BaseModel):
+    label: Optional[str] = None
+    description: Optional[str] = None
+    target_layer: Optional[str] = "both"
+    module: Optional[str] = None
+    submodule: Optional[str] = None
+
+
+
 class PermissionItem(BaseModel):
     id: str
     submodule: Optional[str] = None
@@ -153,7 +163,75 @@ async def create_permission(
     }
 
 
+# BLOCK COMMENT: UPDATE PERMISSION ENDPOINT (PROVISION TO EDIT PERMISSIONS)
+@router.put("/permissions/{permission_id:path}", response_model=dict)
+async def update_permission(
+    permission_id: str,
+    payload: PermissionUpdateRequest,
+    current_user: User = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Updates an existing permission's metadata (label, description, target_layer, submodule).
+    """
+    perm_id = permission_id.strip()
+    stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+    res = await db.execute(stmt)
+    perm = res.scalar_one_or_none()
+
+    if not perm:
+        raise HTTPException(status_code=404, detail=f"Permission '{perm_id}' not found")
+
+    if payload.label is not None:
+        perm.label = payload.label.strip()
+    if payload.description is not None:
+        perm.description = payload.description.strip()
+    if payload.target_layer is not None:
+        perm.target_layer = payload.target_layer.strip()
+    if payload.module is not None:
+        perm.module = payload.module.strip()
+    if payload.submodule is not None:
+        perm.submodule = payload.submodule.strip()
+
+    await db.commit()
+    await db.refresh(perm)
+
+    return {
+        "id": perm.id,
+        "module": perm.module,
+        "submodule": perm.submodule,
+        "target_layer": perm.target_layer,
+        "label": perm.label,
+        "description": perm.description,
+    }
+
+
+# BLOCK COMMENT: DELETE PERMISSION ENDPOINT
+@router.delete("/permissions/{permission_id:path}", response_model=dict)
+async def delete_permission(
+    permission_id: str,
+    current_user: User = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Deletes an existing permission from PermissionDB.
+    """
+    perm_id = permission_id.strip()
+    stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+    res = await db.execute(stmt)
+    perm = res.scalar_one_or_none()
+
+    if not perm:
+        raise HTTPException(status_code=404, detail=f"Permission '{perm_id}' not found")
+
+    await db.delete(perm)
+    await db.commit()
+
+    return {"status": "success", "message": f"Permission '{perm_id}' deleted successfully"}
+
+
 @router.get("/route-permissions", response_model=List[dict])
+
 async def list_route_permissions(
     db: AsyncSession = Depends(get_db)
 ):

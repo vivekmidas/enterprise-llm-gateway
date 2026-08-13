@@ -90,14 +90,15 @@ async def login(request: LoginRequest):
             if cust_allowed and isinstance(cust_allowed, list):
                 allowed_domains = cust_allowed
 
-        # Calculate default landing route
-        default_route = "/legal-research"
+        # Calculate default landing route (defaults to /legal)
+        default_route = "/legal"
         if user.role == "system_admin" or "*:*:*" in permissions_list or "admin:*:*" in permissions_list:
             default_route = "/admin"
         elif "legal:research:query" in permissions_list or "legal:*:*" in permissions_list:
-            default_route = "/legal-research"
+            default_route = "/legal"
         elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
             default_route = "/workflow-builder"
+
 
         # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
         primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
