@@ -85,3 +85,33 @@ async def list_backup_history(
 
     backups.sort(key=lambda x: x["created_at"], reverse=True)
     return backups
+
+
+@router.get("/download/{filename}")
+async def download_backup_file(
+    filename: str,
+    current_user: User = Depends(require_system_admin)
+):
+    """
+    Downloads a specific existing SQL backup file.
+    """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not (filename.startswith("ekb_data_") and filename.endswith(".sql")):
+        raise HTTPException(status_code=400, detail="Invalid backup filename format")
+
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "backups"))
+    filepath = os.path.join(base_dir, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup file not found")
+
+    return FileResponse(
+        path=filepath,
+        filename=filename,
+        media_type="application/sql",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
