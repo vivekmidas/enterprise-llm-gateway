@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 def generate_backup_filename(now: datetime = None) -> str:
     """
-    Generates backup filename matching ekb_data_dd_mm_yyyy_sss.sql format.
+    Generates backup filename matching ekb_data_dd_mm_yyyy_MM_ss_sss.sql format.
     Where:
       dd = 2-digit day
       mm = 2-digit month
       yyyy = 4-digit year
+      MM = 2-digit hour
+      ss = 2-digit minute
       sss = 3-digit millisecond string
     """
     if now is None:
@@ -30,8 +32,10 @@ def generate_backup_filename(now: datetime = None) -> str:
     dd = now.strftime("%d")
     mm = now.strftime("%m")
     yyyy = now.strftime("%Y")
+    MM = now.strftime("%M") 
+    ss = now.strftime("%S")
     sss = f"{now.microsecond // 1000:03d}"
-    return f"ekb_data_{dd}_{mm}_{yyyy}_{sss}.sql"
+    return f"ekb_data_{dd}_{mm}_{yyyy}_{MM}_{ss}_{sss}.sql"
 
 
 def format_sql_value(val: Any) -> str:
