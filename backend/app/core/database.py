@@ -82,6 +82,32 @@ def _refresh_customers_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN document_types JSON")
     if "settings" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN settings JSON")
+    if "allowed_domains" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN allowed_domains JSON")
+
+
+def _refresh_permissions_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("permissions"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("permissions")}
+    if "submodule" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN submodule VARCHAR(50)")
+
+
+def _refresh_route_permissions_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("route_permissions"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("route_permissions")}
+    if "module" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN module VARCHAR(50)")
+    if "submodule" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN submodule VARCHAR(50)")
+    if "label" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN label VARCHAR(150)")
 
 
 def _refresh_nodes_table(sync_conn):
@@ -173,6 +199,8 @@ async def init_db():
         await conn.run_sync(_refresh_workflow_node_properties_table)
         await conn.run_sync(_refresh_customer_nodes_table)
         await conn.run_sync(_refresh_customers_table)
+        await conn.run_sync(_refresh_permissions_table)
+        await conn.run_sync(_refresh_route_permissions_table)
         await conn.run_sync(_refresh_users_table)
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)

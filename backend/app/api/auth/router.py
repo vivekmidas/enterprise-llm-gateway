@@ -82,13 +82,32 @@ async def login(request: LoginRequest):
             perm_res = await session.execute(select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id))
             permissions_list = [p for p in perm_res.scalars().all()]
 
+        # Resolve tenant allowed_domains
+        allowed_domains = ["legal"]
+        if user.customer_id:
+            cust_res = await session.execute(select(CustomerDB.allowed_domains).where(CustomerDB.id == user.customer_id))
+            cust_allowed = cust_res.scalar_one_or_none()
+            if cust_allowed and isinstance(cust_allowed, list):
+                allowed_domains = cust_allowed
+
+        # Calculate default landing route
+        default_route = "/legal-research"
+        if user.role == "system_admin" or "*:*:*" in permissions_list or "admin:*:*" in permissions_list:
+            default_route = "/admin"
+        elif "legal:research:query" in permissions_list or "legal:*:*" in permissions_list:
+            default_route = "/legal-research"
+        elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
+            default_route = "/workflow-builder"
+
         token_data = {
             "user_id": str(user.id),
             "role": user.role,
             "status": True if user.status=="active" else False,
             "customer_id": user.customer_id,
             "domain": domain,
+            "allowed_domains": allowed_domains,
             "permissions": permissions_list,
+            "default_route": default_route,
         }
         token = create_access_token(token_data)
 
@@ -100,7 +119,9 @@ async def login(request: LoginRequest):
             "email": user.email_id,
             "customer_id": user.customer_id,
             "domain": domain,
+            "allowed_domains": allowed_domains,
             "permissions": permissions_list,
+            "default_route": default_route,
         }
 
 

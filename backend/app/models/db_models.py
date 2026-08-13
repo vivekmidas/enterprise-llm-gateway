@@ -20,6 +20,9 @@ Description:
 def generate_uuid() -> str:
     return str(uuid.uuid4())
 
+# BLOCK COMMENT: STREAMLINED 3-TIER RBAC MODELS (xx:yy:zzz FORMAT)
+# Modified: CustomerDB (allowed_domains), PermissionDB (submodule), RoutePermissionDB (module, submodule, label)
+
 class CustomerDB(Base):
     __tablename__ = "customers"
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
@@ -37,6 +40,7 @@ class CustomerDB(Base):
     dateupdated = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
     document_types = Column(JSON, nullable=True, default=list)
     settings = Column(JSON, nullable=True, default=dict)
+    allowed_domains = Column(JSON, nullable=True, default=list)  # Allowed top-level modules e.g. ["legal"]
 
 
 class UserDB(Base):
@@ -68,8 +72,9 @@ class RoleDB(Base):
 
 class PermissionDB(Base):
     __tablename__ = "permissions"
-    id = Column(String(100), primary_key=True, index=True)  # e.g., legal:research:query
-    module = Column(String(50), nullable=False)            # legal, knowledge, workflows, nodes, admin
+    id = Column(String(100), primary_key=True, index=True)  # e.g., legal:case_management:view
+    module = Column(String(50), nullable=False, index=True) # legal, knowledge, workflows, nodes, admin
+    submodule = Column(String(50), nullable=True, index=True) # case_management, research, user_management, etc.
     target_layer = Column(String(20), default="both")       # ui, api, both
     label = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
@@ -87,6 +92,9 @@ class RoutePermissionDB(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     pattern = Column(String(150), nullable=False, unique=True, index=True)
     permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
+    module = Column(String(50), nullable=True, index=True)
+    submodule = Column(String(50), nullable=True, index=True)
+    label = Column(String(150), nullable=True)
     description = Column(Text, nullable=True)
 
 

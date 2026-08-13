@@ -151,6 +151,7 @@ async def list_customers(
             "id": c.id,
             "name": c.name,
             "domain": c.domain,
+            "allowed_domains": c.allowed_domains or ["legal"],
             "status": c.status,
             "icon": c.icon,
             "color_schema": c.color_schema,
@@ -173,6 +174,7 @@ async def create_customer(
     """Creates a new customer tenant (System Admin only)."""
     name = customer_data.get("name")
     domain = customer_data.get("domain", "").strip().lower()
+    allowed_domains = customer_data.get("allowed_domains", ["legal"])
     
     if not name or not domain:
         raise HTTPException(status_code=400, detail="Name and domain are required")
@@ -184,6 +186,7 @@ async def create_customer(
     new_cust = CustomerDB(
         name=name,
         domain=domain,
+        allowed_domains=allowed_domains,
         icon=customer_data.get("icon"),
         color_schema=customer_data.get("color_schema"),
         custom_plugins_enabled=customer_data.get("custom_plugins_enabled", False),
@@ -215,6 +218,7 @@ async def create_customer(
         "id": new_cust.id,
         "name": new_cust.name,
         "domain": new_cust.domain,
+        "allowed_domains": new_cust.allowed_domains or ["legal"],
         "icon": new_cust.icon,
         "color_schema": new_cust.color_schema,
         "custom_plugins_enabled": new_cust.custom_plugins_enabled,
@@ -223,7 +227,6 @@ async def create_customer(
         "address": new_cust.address,
         "contact_person": new_cust.contact_person
     }
-
 
 
 @router.put("/customers/{customer_id}", response_model=dict)
@@ -243,6 +246,8 @@ async def update_customer(
         customer.name = customer_data["name"]
     if "domain" in customer_data:
         customer.domain = customer_data["domain"].strip().lower()
+    if "allowed_domains" in customer_data:
+        customer.allowed_domains = customer_data["allowed_domains"]
     if "icon" in customer_data:
         customer.icon = customer_data["icon"]
     if "color_schema" in customer_data:
@@ -268,6 +273,7 @@ async def update_customer(
         "id": customer.id,
         "name": customer.name,
         "domain": customer.domain,
+        "allowed_domains": customer.allowed_domains or ["legal"],
         "icon": customer.icon,
         "color_schema": customer.color_schema,
         "status": customer.status,
