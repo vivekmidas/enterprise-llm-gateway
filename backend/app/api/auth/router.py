@@ -90,18 +90,17 @@ async def login(request: LoginRequest):
             permissions_list = [p for p in perm_res.scalars().all()]
 
         # Resolve tenant allowed_domains
-        allowed_domains = ["legal"]
+        allowed_domains = []
         if user.customer_id:
             cust_res = await session.execute(select(CustomerDB.allowed_domains).where(CustomerDB.id == user.customer_id))
             cust_allowed = cust_res.scalar_one_or_none()
             if cust_allowed and isinstance(cust_allowed, list):
                 allowed_domains = cust_allowed
 
-        # Calculate default landing route (admin/tenant_admin -> /admin, legal -> /legal, etc.)
-        # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
-        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
+        # Calculate default landing route (admin/tenant_admin -> /admin, specific allowed domain -> domain route, fallback -> /)
+        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else None
 
-        default_route = "/legal"
+        default_route = "/"
         if (
             user.role in ["system_admin", "admin", "tenant_admin"]
             or "*:*:*" in permissions_list
@@ -110,12 +109,14 @@ async def login(request: LoginRequest):
             or any(p.startswith("admin:") for p in permissions_list)
         ):
             default_route = "/admin"
-        elif "legal:research:query" in permissions_list or "legal:*:*" in permissions_list:
+        elif "legal" in allowed_domains and ("legal:research:query" in permissions_list or "legal:*:*" in permissions_list):
             default_route = "/legal"
-        elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
+        elif "workflow-builder" in allowed_domains and ("workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list):
             default_route = "/workflow-builder"
         elif primary_domain_id:
             default_route = f"/{primary_domain_id}"
+        else:
+            default_route = "/"
 
 
 
