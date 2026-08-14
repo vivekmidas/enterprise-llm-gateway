@@ -25,14 +25,26 @@ DEFAULT_DOMAINS = [
         "name": "Legal Judgments & Court Orders",
         "description": "Exhaustive legal judgment document domain schema for courts, advocates, findings, and arguments.",
         "scope": "SYSTEM",
-        "schema_data": LEGAL_JUDGMENT_SCHEMA,
+        "schema_data": {
+            **LEGAL_JUDGMENT_SCHEMA,
+            "default_path": "/legal",
+            "icon": "Scale",
+            "theme_color": "#4f46e5",
+            "status": "active",
+        },
     },
     {
         "domain_key": "legal",
         "name": "Legal & Contracts",
         "description": "Legal agreement, court judgment, and contract extraction schema",
         "scope": "SYSTEM",
-        "schema_data": LEGAL_JUDGMENT_SCHEMA,
+        "schema_data": {
+            **LEGAL_JUDGMENT_SCHEMA,
+            "default_path": "/legal",
+            "icon": "Scale",
+            "theme_color": "#4f46e5",
+            "status": "active",
+        },
     },
     {
         "domain_key": "general",
@@ -40,11 +52,15 @@ DEFAULT_DOMAINS = [
         "description": "Standard general document domain schema",
         "scope": "SYSTEM",
         "schema_data": {
+            "default_path": "/admin/knowledge",
+            "icon": "Globe",
+            "theme_color": "#2563eb",
+            "status": "active",
             "fields": [
                 {"key": "title", "label": "Title", "type": "string", "weight": 1.5, "importance": "high", "required": False, "description": "Document title"},
                 {"key": "author", "label": "Author", "type": "string", "weight": 1.0, "importance": "medium", "required": False, "description": "Document author"},
                 {"key": "summary", "label": "Summary", "type": "string", "weight": 2.0, "importance": "high", "required": False, "description": "Brief content summary"},
-            ]
+            ],
         },
     },
     {
@@ -53,11 +69,15 @@ DEFAULT_DOMAINS = [
         "description": "Financial and invoice document extraction schema",
         "scope": "SYSTEM",
         "schema_data": {
+            "default_path": "/finance",
+            "icon": "Briefcase",
+            "theme_color": "#059669",
+            "status": "active",
             "fields": [
                 {"key": "invoice_number", "label": "Invoice Number", "type": "string", "weight": 2.5, "importance": "critical", "required": False, "description": "Invoice identifier"},
                 {"key": "total_amount", "label": "Total Amount", "type": "number", "weight": 2.0, "importance": "high", "required": False, "description": "Total monetary amount"},
                 {"key": "vendor_name", "label": "Vendor Name", "type": "string", "weight": 1.5, "importance": "medium", "required": False, "description": "Vendor or issuer name"},
-            ]
+            ],
         },
     },
 ]

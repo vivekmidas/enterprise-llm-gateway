@@ -75,15 +75,30 @@ async def login(request: LoginRequest):
                 detail="User account is deactivated or suspended",
             )
 
-        # Distinguish company domain (e.g. wayme.com) from allowed functional domains (e.g. ['legal', 'education'])
+        # ==============================================================================
+        # BLOCK COMMENT: RESOLVE DOMAIN SCHEMA BY DOMAIN_ID & COMPUTE DEFAULT ROUTE
+        # ==============================================================================
+        from app.models.db_models import DomainSchemaDB
+
         if allowed_domains_raw is not None and isinstance(allowed_domains_raw, list):
             allowed_domains_list = allowed_domains_raw
         elif user.customer_id:
-            allowed_domains_list = ["legal"]
+            allowed_domains_list = []
         else:
             allowed_domains_list = []
 
-        domain_id_val = allowed_domains_list[0] if (allowed_domains_list and len(allowed_domains_list) > 0) else None
+        primary_domain_ref = allowed_domains_list[0] if (allowed_domains_list and len(allowed_domains_list) > 0) else None
+        domain_schema = None
+
+        if primary_domain_ref:
+            domain_stmt = select(DomainSchemaDB).where(
+                (DomainSchemaDB.id == str(primary_domain_ref)) | (DomainSchemaDB.domain_key == str(primary_domain_ref))
+            )
+            domain_res = await session.execute(domain_stmt)
+            domain_schema = domain_res.scalar_one_or_none()
+
+        domain_id_val = domain_schema.id if domain_schema else (str(primary_domain_ref) if primary_domain_ref else None)
+        domain_key_val = domain_schema.domain_key if domain_schema else (str(primary_domain_ref) if primary_domain_ref else None)
 
         # Resolve granular role & permissions
         role_obj = None
@@ -116,15 +131,19 @@ async def login(request: LoginRequest):
             perm_res = await session.execute(perm_stmt)
             permissions_list = [p for p in perm_res.scalars().all()]
 
-        # Resolve destination default route for redirection based on role and allowed_domains
+        # Resolve destination default route for redirection based on domain_schema default_path & role
         if (
-            user.role in ["system_admin", "admin", "tenant_admin"]
-            or role_type_val in ["system_admin", "admin", "tenant_admin"]
-            or any(p.startswith("admin:") or p == "*:*:*" for p in permissions_list)
+            user.role in ["system_admin", "admin"]
+            or role_type_val in ["system_admin", "admin"]
+            or "*:*:*" in permissions_list
         ):
             default_route = "/admin"
-        elif domain_id_val:
-            default_route = f"/{domain_id_val}"
+        elif domain_schema and domain_schema.schema_json and isinstance(domain_schema.schema_json, dict) and domain_schema.schema_json.get("default_path"):
+            default_route = domain_schema.schema_json.get("default_path")
+        elif domain_schema:
+            default_route = f"/{domain_schema.domain_key}"
+        elif primary_domain_ref:
+            default_route = f"/{primary_domain_ref}"
         elif user.customer_id is None:
             default_route = "/admin"
         else:
@@ -139,7 +158,8 @@ async def login(request: LoginRequest):
             "customer_id": user.customer_id,
             "company_domain": domain,        # Customer company domain e.g. wayme.com
             "domain": domain,                # Backwards-compatible domain field
-            "domain_id": domain_id_val,      # Active vertical domain (legal, education, etc.)
+            "domain_id": domain_id_val,      # Active vertical domain ID
+            "domain_key": domain_key_val,    # Active vertical domain key (legal, education, etc.)
             "allowed_domains": allowed_domains_list,
             "permissions": permissions_list,
             "default_route": default_route,
@@ -159,6 +179,7 @@ async def login(request: LoginRequest):
             "company_domain": domain,
             "domain": domain,
             "domain_id": domain_id_val,
+            "domain_key": domain_key_val,
             "allowed_domains": allowed_domains_list,
             "permissions": permissions_list,
             "default_route": default_route,

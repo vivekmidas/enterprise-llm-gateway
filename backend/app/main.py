@@ -66,10 +66,12 @@ async def startup_event():
     # Seed default provider presets if missing
     from app.core.seed_provider_presets import seed_provider_presets
     from app.db.seed_rbac import seed_rbac
+    from app.core.seed_data import seed_all_domains
     async with AsyncSessionLocal() as session:
         await sync_workflows_runnability(session)
         await seed_provider_presets(session)
         await seed_rbac(session)
+        await seed_all_domains(session)
     
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).

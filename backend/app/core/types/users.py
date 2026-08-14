@@ -9,8 +9,10 @@ class User(BaseModel):
     email: str
     customer_id: Optional[str] = None
     domain: Optional[str] = None              # Company email domain (e.g. azbpartners.com)
-    domain_id: Optional[str] = None           # Active vertical domain (legal, education, etc.)
+    domain_id: Optional[str] = None           # Active vertical domain ID or key
+    domain_key: Optional[str] = None          # Active vertical domain key (legal, education, etc.)
     allowed_domains: List[str] = Field(default_factory=list)
+    default_route: Optional[str] = None       # Resolved default landing route
     name: Optional[str] = None
     status: Optional[str] = "active"
     

@@ -151,7 +151,7 @@ async def list_customers(
             "id": c.id,
             "name": c.name,
             "domain": c.domain,
-            "allowed_domains": c.allowed_domains or ["legal"],
+            "allowed_domains": c.allowed_domains if c.allowed_domains is not None else [],
             "status": c.status,
             "icon": c.icon,
             "color_schema": c.color_schema,
@@ -174,7 +174,7 @@ async def create_customer(
     """Creates a new customer tenant (System Admin only)."""
     name = customer_data.get("name")
     domain = customer_data.get("domain", "").strip().lower()
-    allowed_domains = customer_data.get("allowed_domains", ["legal"])
+    allowed_domains = customer_data.get("allowed_domains", [])
     
     if not name or not domain:
         raise HTTPException(status_code=400, detail="Name and domain are required")
@@ -218,7 +218,7 @@ async def create_customer(
         "id": new_cust.id,
         "name": new_cust.name,
         "domain": new_cust.domain,
-        "allowed_domains": new_cust.allowed_domains or ["legal"],
+        "allowed_domains": new_cust.allowed_domains or [],
         "icon": new_cust.icon,
         "color_schema": new_cust.color_schema,
         "custom_plugins_enabled": new_cust.custom_plugins_enabled,
@@ -273,7 +273,7 @@ async def update_customer(
         "id": customer.id,
         "name": customer.name,
         "domain": customer.domain,
-        "allowed_domains": customer.allowed_domains or ["legal"],
+        "allowed_domains": customer.allowed_domains or [],
         "icon": customer.icon,
         "color_schema": customer.color_schema,
         "status": customer.status,

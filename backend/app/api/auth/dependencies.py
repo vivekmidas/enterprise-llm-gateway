@@ -156,8 +156,8 @@ async def get_current_user(
             detail="Token missing user information",
         )
     
-    # BLOCK COMMENT: RESOLVE CUSTOMER ALLOWED_DOMAINS AND ACTIVE DOMAIN_ID
-    from app.models.db_models import CustomerDB, RoleDB, RolePermissionDB
+    # BLOCK COMMENT: RESOLVE CUSTOMER ALLOWED_DOMAINS, DOMAIN SCHEMA, AND DEFAULT ROUTE
+    from app.models.db_models import CustomerDB, RoleDB, RolePermissionDB, DomainSchemaDB
     stmt = (
         select(UserDB, CustomerDB.domain, CustomerDB.allowed_domains)
         .outerjoin(CustomerDB, UserDB.customer_id == CustomerDB.id)
@@ -173,8 +173,19 @@ async def get_current_user(
         )
         
     db_user, domain, allowed_domains_raw = row
-    allowed_domains_list = allowed_domains_raw if (allowed_domains_raw and isinstance(allowed_domains_raw, list)) else ["legal"]
-    domain_id_val = payload.get("domain_id") or (allowed_domains_list[0] if allowed_domains_list else "legal")
+    allowed_domains_list = allowed_domains_raw if (allowed_domains_raw and isinstance(allowed_domains_raw, list)) else []
+    primary_domain_ref = allowed_domains_list[0] if allowed_domains_list else None
+    
+    domain_schema = None
+    if primary_domain_ref:
+        domain_stmt = select(DomainSchemaDB).where(
+            (DomainSchemaDB.id == str(primary_domain_ref)) | (DomainSchemaDB.domain_key == str(primary_domain_ref))
+        )
+        domain_res = await db.execute(domain_stmt)
+        domain_schema = domain_res.scalar_one_or_none()
+
+    domain_id_val = domain_schema.id if domain_schema else (payload.get("domain_id") or (str(primary_domain_ref) if primary_domain_ref else None))
+    domain_key_val = domain_schema.domain_key if domain_schema else (payload.get("domain_key") or (str(primary_domain_ref) if primary_domain_ref else None))
 
     # is user active, if not error
     if db_user.status != "active":
@@ -216,6 +227,22 @@ async def get_current_user(
         perm_res = await db.execute(perm_stmt)
         permissions_list = [p for p in perm_res.scalars().all()]
 
+    # Compute default route
+    if db_user.role == "system_admin" or role_type_val == "system_admin":
+        default_route = "/admin"
+    elif domain_schema and domain_schema.schema_json and isinstance(domain_schema.schema_json, dict) and domain_schema.schema_json.get("default_path"):
+        default_route = domain_schema.schema_json.get("default_path")
+    elif domain_schema:
+        default_route = f"/{domain_schema.domain_key}"
+    elif primary_domain_ref:
+        default_route = f"/{primary_domain_ref}"
+    elif db_user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
+        default_route = "/admin"
+    elif db_user.customer_id is None:
+        default_route = "/admin"
+    else:
+        default_route = "/"
+
     return User(
         id=str(db_user.id),
         role=db_user.role,
@@ -223,7 +250,9 @@ async def get_current_user(
         customer_id=db_user.customer_id,
         domain=domain,
         domain_id=domain_id_val,
+        domain_key=domain_key_val,
         allowed_domains=allowed_domains_list,
+        default_route=default_route,
         name=db_user.name,
         status=db_user.status,
         role_id=role_id_val,

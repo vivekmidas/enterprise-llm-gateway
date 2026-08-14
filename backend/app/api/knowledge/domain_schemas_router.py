@@ -50,6 +50,11 @@ class CreateDomainSchemaRequest(BaseModel):
     domain_key: str
     description: str | None = None
     scope: str = Field("TENANT", description="SYSTEM or TENANT")
+    default_path: str | None = None
+    icon: str | None = None
+    theme_color: str | None = None
+    status: str | None = "active"
+    config: dict[str, Any] | None = None
     fields: list[DomainFieldSpec] = Field(default_factory=list)
     system_prompt: str | None = None
     user_prompt: str | None = None
@@ -57,7 +62,13 @@ class CreateDomainSchemaRequest(BaseModel):
 
 class UpdateDomainSchemaRequest(BaseModel):
     name: str | None = None
+    domain_key: str | None = None
     description: str | None = None
+    default_path: str | None = None
+    icon: str | None = None
+    theme_color: str | None = None
+    status: str | None = None
+    config: dict[str, Any] | None = None
     fields: list[DomainFieldSpec] | None = None
     system_prompt: str | None = None
     user_prompt: str | None = None
@@ -75,6 +86,7 @@ async def create_domain_schema(
 ):
     """Create a domain schema at SYSTEM level (system_admin) or TENANT level (tenant admin)."""
     scope = req.scope.upper()
+    domain_key = req.domain_key.lower().strip()
     if scope == "SYSTEM":
         if not _is_system_admin(current_user):
             raise HTTPException(
@@ -82,18 +94,42 @@ async def create_domain_schema(
                 detail="Only system administrators can create system-level domain schemas.",
             )
         customer_id = None
+        dup_stmt = select(DomainSchemaDB).where(
+            DomainSchemaDB.domain_key == domain_key,
+            DomainSchemaDB.scope == "SYSTEM",
+        )
     else:
         customer_id = require_tenant(current_user)
+        dup_stmt = select(DomainSchemaDB).where(
+            DomainSchemaDB.domain_key == domain_key,
+            (DomainSchemaDB.scope == "SYSTEM") | (DomainSchemaDB.customer_id == customer_id),
+        )
+
+    # Check for duplicate domain key
+    dup_res = await db.execute(dup_stmt)
+    if dup_res.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Domain schema with key '{domain_key}' already exists.",
+        )
 
     fields_json = [f.model_dump() for f in req.fields]
+    schema_data = {
+        "fields": fields_json,
+        "default_path": req.default_path or f"/{domain_key}",
+        "icon": req.icon or "Globe",
+        "theme_color": req.theme_color or "#4f46e5",
+        "status": req.status or "active",
+        "config": req.config or {},
+    }
 
     domain = DomainSchemaDB(
         name=req.name,
-        domain_key=req.domain_key.lower().strip(),
+        domain_key=domain_key,
         description=req.description,
         scope=scope,
         customer_id=customer_id,
-        schema_json={"fields": fields_json},
+        schema_json=schema_data,
         system_prompt=req.system_prompt or DEFAULT_SYSTEM_PROMPT,
         user_prompt=req.user_prompt or DEFAULT_USER_PROMPT,
         created_by=str(current_user.id),
@@ -106,6 +142,7 @@ async def create_domain_schema(
         "domain_schema_created",
         domain_id=domain.id,
         name=domain.name,
+        domain_key=domain.domain_key,
         scope=scope,
         customer_id=customer_id,
     )
@@ -160,7 +197,7 @@ async def update_domain_schema(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update domain schema fields, weights, importance, or prompts."""
+    """Update domain schema fields, weights, importance, default path, prompts, or domain_key."""
     stmt = select(DomainSchemaDB).where(DomainSchemaDB.id == domain_id)
     res = await db.execute(stmt)
     domain = res.scalar_one_or_none()
@@ -180,9 +217,49 @@ async def update_domain_schema(
         domain.name = req.name
     if req.description is not None:
         domain.description = req.description
+
+    # ==============================================================================
+    # BLOCK COMMENT: DOMAIN KEY UPDATE AND DUPLICATE VALIDATION
+    # ==============================================================================
+    if req.domain_key is not None:
+        new_key = req.domain_key.lower().strip()
+        if new_key and new_key != domain.domain_key:
+            if domain.scope == "SYSTEM":
+                dup_stmt = select(DomainSchemaDB).where(
+                    DomainSchemaDB.domain_key == new_key,
+                    DomainSchemaDB.scope == "SYSTEM",
+                    DomainSchemaDB.id != domain_id,
+                )
+            else:
+                dup_stmt = select(DomainSchemaDB).where(
+                    DomainSchemaDB.domain_key == new_key,
+                    (DomainSchemaDB.scope == "SYSTEM") | (DomainSchemaDB.customer_id == domain.customer_id),
+                    DomainSchemaDB.id != domain_id,
+                )
+            dup_res = await db.execute(dup_stmt)
+            if dup_res.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Domain schema with key '{new_key}' already exists.",
+                )
+            domain.domain_key = new_key
+
+    current_schema = dict(domain.schema_json) if isinstance(domain.schema_json, dict) else {}
     if req.fields is not None:
         fields_json = [f.model_dump() for f in req.fields]
-        domain.schema_json = {"fields": fields_json}
+        current_schema["fields"] = fields_json
+    if req.default_path is not None:
+        current_schema["default_path"] = req.default_path
+    if req.icon is not None:
+        current_schema["icon"] = req.icon
+    if req.theme_color is not None:
+        current_schema["theme_color"] = req.theme_color
+    if req.status is not None:
+        current_schema["status"] = req.status
+    if req.config is not None:
+        current_schema["config"] = req.config
+    domain.schema_json = current_schema
+
     if req.system_prompt is not None:
         domain.system_prompt = req.system_prompt
     if req.user_prompt is not None:
@@ -191,7 +268,7 @@ async def update_domain_schema(
     await db.commit()
     await db.refresh(domain)
 
-    logger.info("domain_schema_updated", domain_id=domain.id, name=domain.name)
+    logger.info("domain_schema_updated", domain_id=domain.id, name=domain.name, domain_key=domain.domain_key)
     return domain
 
 
