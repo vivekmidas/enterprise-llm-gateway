@@ -428,19 +428,33 @@ async def list_roles(
     Lists system preset roles, system-wide custom roles (customer_id is NULL), and customer-specific custom roles.
     System Admin can specify customer_id to view roles for a target tenant.
     """
-    target_customer_id = current_user.customer_id
+    # BLOCK COMMENT: SYSTEM ADMIN SEES ALL ROLES ACROSS TENANTS (OR FILTERED IF TARGET SPECIFIED)
     if current_user.role == "system_admin":
-        target_customer_id = customer_id if customer_id is not None else current_user.customer_id
+        if customer_id and str(customer_id).strip() not in ("all", "null", "None", ""):
+            if str(customer_id).strip() in ("system", "system-wide"):
+                stmt = select(RoleDB).where(or_(RoleDB.is_system_preset == True, RoleDB.customer_id.is_(None)))
+            else:
+                stmt = select(RoleDB).where(
+                    or_(
+                        RoleDB.is_system_preset == True,
+                        RoleDB.customer_id.is_(None),
+                        RoleDB.customer_id == str(customer_id)
+                    )
+                )
+        else:
+            # All roles across all tenants + system presets
+            stmt = select(RoleDB)
+    else:
+        # Tenant Admin only sees system presets, system-wide custom roles, and their own tenant roles
+        target_customer_id = current_user.customer_id
+        filters = [
+            RoleDB.is_system_preset == True,
+            RoleDB.customer_id.is_(None)
+        ]
+        if target_customer_id is not None:
+            filters.append(RoleDB.customer_id == str(target_customer_id))
+        stmt = select(RoleDB).where(or_(*filters))
 
-    # BLOCK COMMENT: FETCH SYSTEM PRESETS, SYSTEM-WIDE CUSTOM ROLES (customer_id IS NULL), OR TENANT CUSTOM ROLES
-    filters = [
-        RoleDB.is_system_preset == True,
-        RoleDB.customer_id.is_(None)
-    ]
-    if target_customer_id is not None:
-        filters.append(RoleDB.customer_id == str(target_customer_id))
-
-    stmt = select(RoleDB).where(or_(*filters))
     res = await db.execute(stmt)
     roles = res.scalars().all()
 

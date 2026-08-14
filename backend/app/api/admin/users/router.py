@@ -150,6 +150,14 @@ async def update_user_role(
     if current_user.role == "admin" and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to edit users outside your tenant")
 
+    # BLOCK COMMENT: REASSIGN CUSTOMER_ID IF PROVIDED BY SYSTEM ADMIN
+    if "customer_id" in payload and current_user.role == "system_admin":
+        raw_cid = payload.get("customer_id")
+        if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide"):
+            user.customer_id = str(raw_cid)
+        else:
+            user.customer_id = None
+
     new_role = payload.get("role")
     new_role_id = payload.get("role_id")
 
