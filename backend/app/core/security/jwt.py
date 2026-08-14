@@ -94,11 +94,23 @@ def create_refresh_token(subject: str) -> str:
 
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
+def cors_json_response(request: Request, status_code: int, content: dict) -> JSONResponse:
+    origin = request.headers.get("origin")
+    headers = {
+        "Access-Control-Allow-Credentials": "true",
+    }
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+    else:
+        headers["Access-Control-Allow-Origin"] = "*"
+    return JSONResponse(status_code=status_code, content=content, headers=headers)
+
+
 class AuthenticationMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
 
-        # Pre-processing: Log or modify the request
+        # Pre-processing: Handle CORS pre-flight
         if request.method == "OPTIONS":
             return await call_next(request)
 
@@ -111,7 +123,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("Authorization")
 
         if not auth or not auth.startswith("Bearer "):
-            return JSONResponse(
+            return cors_json_response(
+                request=request,
                 status_code=401,
                 content={"detail": "Missing token"}
             )
@@ -125,9 +138,18 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 audience=settings.AUDIENCE,
                 issuer=settings.ISSUER
             )
-            if (request.url.path.startswith("/admin")):
-                if (payload.get("role") not in ["admin","system_admin"]):
-                    return JSONResponse(
+            if request.url.path.startswith("/admin"):
+                user_role = (payload.get("role") or "").lower()
+                user_perms = payload.get("permissions", [])
+                is_admin_user = (
+                    user_role in ["admin", "system_admin", "tenant_admin"]
+                    or "*:*:*" in user_perms
+                    or "admin:*:*" in user_perms
+                    or any(p.startswith("admin:") for p in user_perms)
+                )
+                if not is_admin_user:
+                    return cors_json_response(
+                        request=request,
                         status_code=status.HTTP_403_FORBIDDEN,
                         content={"detail": "Not authorized to access admin panel"}
                     )
@@ -137,31 +159,36 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 "status":payload.get("status"),
                 "role": payload.get("role"),
                 "sid": payload.get("sid"),
-                "tenant": payload.get("tenant")
+                "tenant": payload.get("tenant"),
+                "permissions": payload.get("permissions", [])
             }
 
         except jwt.ExpiredSignatureError:
-            return JSONResponse(
+            return cors_json_response(
+                request=request,
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Token has expired"}
             )
         except jwt.InvalidTokenError as e:
             logger.warning("Invalid token: %s", str(e))
-            return JSONResponse(
+            return cors_json_response(
+                request=request,
                 status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid token"}
+            )
+        except jwt.PyJWTError as e:
+            logger.error("invalid_token", error=str(e))
+            return cors_json_response(
+                request=request,
+                status_code=401,
                 content={"detail": "Invalid token"}
             )
         except Exception as e:  # Catch unexpected errors
             logger.error("Token validation error", exc_info=True)
-            return JSONResponse(
+            return cors_json_response(
+                request=request,
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Authentication failed"}
-            )
-        except jwt.PyJWTError as e:
-            logger.error("invalid_token", error=str(e))
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid token"}
             )
 
         return await call_next(request)

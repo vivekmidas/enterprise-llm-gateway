@@ -452,10 +452,14 @@ async def create_customer_user(
     db: AsyncSession = Depends(get_db)
 ):
     """Onboards/creates a user under a customer tenant (System Admin only)."""
+    # BLOCK COMMENT: COMMON ROLE RESOLUTION HELPER
+    from app.api.auth.dependencies import resolve_role_and_id
+
     email = user_data.get("email")
     password = user_data.get("password")
     name = user_data.get("name")
-    role = user_data.get("role", "admin")
+    role_str = user_data.get("role", "admin")
+    role_id = user_data.get("role_id")
     
     if not email or not password or not name:
         raise HTTPException(status_code=400, detail="Email, password, and name are required")
@@ -467,14 +471,24 @@ async def create_customer_user(
     dup = await db.execute(select(UserDB).where(UserDB.email_id == email))
     if dup.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="User with this email already exists")
-        
+
+    # Resolve role and role_id using common helper
+    role_obj, assigned_role, assigned_role_id = await resolve_role_and_id(
+        db,
+        role_id=role_id,
+        role_str=role_str,
+        customer_id=customer_id,
+        default_role="admin"
+    )
+
     hashed_password = get_password_hash(password)
     new_user = UserDB(
         username=email,
         email_id=email,
         password=hashed_password,
         name=name,
-        role=role,
+        role=assigned_role,
+        role_id=assigned_role_id,
         customer_id=customer_id,
         status="active"
     )
@@ -487,6 +501,7 @@ async def create_customer_user(
         "email": new_user.email_id,
         "name": new_user.name,
         "role": new_user.role,
+        "role_id": new_user.role_id,
         "customer_id": new_user.customer_id
     }
 

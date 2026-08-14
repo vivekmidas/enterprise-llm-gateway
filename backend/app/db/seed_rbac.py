@@ -83,6 +83,7 @@ PERMISSIONS_REGISTRY = [
     {"id": "admin:permissions:manage", "module": "admin", "submodule": "permissions", "target_layer": "both", "label": "Manage Permissions", "description": "Manage system-wide permissions"},
     {"id": "admin:backup:view", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "View SQL Backups", "description": "View system SQL data backup files"},
     {"id": "admin:backup:manage", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups"},
+    {"id": "admin:tenant_settings:configure", "module": "admin", "submodule": "tenant_settings", "target_layer": "both", "label": "Configure Tenant Settings", "description": "Configure settings and integrations for customer tenant"},
     {"id": "admin:domains:view", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "View Domains", "description": "View registered system domains"},
     {"id": "admin:domains:manage", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "Manage Domains", "description": "Create and configure system domains"},
 
@@ -183,7 +184,7 @@ async def seed_rbac(db: AsyncSession):
 
     # 2. Seed System Preset Roles & Permissions
     for role_data in ROLE_PRESETS:
-        perms_list = role_data.pop("permissions")
+        perms_list = list(role_data.get("permissions", []))
         stmt = select(RoleDB).where(RoleDB.role_type == role_data["role_type"], RoleDB.customer_id.is_(None))
         res = await db.execute(stmt)
         role = res.scalar_one_or_none()
@@ -209,13 +210,26 @@ async def seed_rbac(db: AsyncSession):
         await db.commit()
 
         for p_id in perms_list:
+            # Ensure permission exists in PermissionDB to satisfy FK
+            chk_perm = await db.execute(select(PermissionDB).where(PermissionDB.id == p_id))
+            if not chk_perm.scalar_one_or_none():
+                mod_key = p_id.split(":")[0] if ":" in p_id else "general"
+                db.add(PermissionDB(
+                    id=p_id,
+                    module=mod_key,
+                    submodule="general",
+                    label=p_id,
+                    description=p_id,
+                    target_layer="both"
+                ))
+                await db.commit()
+
             db.add(RolePermissionDB(
                 id=generate_uuid(),
                 role_id=role.id,
                 permission_id=p_id
             ))
         await db.commit()
-        role_data["permissions"] = perms_list
 
     # 3. Seed Route Permissions
     for route_data in DEFAULT_ROUTE_PERMISSIONS:

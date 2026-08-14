@@ -13,6 +13,128 @@ settings = get_settings()
 
 security_bearer = HTTPBearer()
 
+async def resolve_role_for_user(
+    db: AsyncSession,
+    role_id: Optional[str] = None,
+    role_str: Optional[str] = None,
+    customer_id: Optional[str] = None
+) -> Optional[Any]:
+    """
+    Resolves the RoleDB entity for a user given role_id, role_type/name, and customer_id.
+    Resolution order:
+    1. Exact RoleDB.id match if role_id provided.
+    2. Exact RoleDB.id match if role_str matches a UUID / role ID.
+    3. Tenant custom role matching role_type or role_name if customer_id provided.
+    4. System preset role matching role_type or role_name.
+    5. Legacy role aliases (admin -> tenant_admin, user -> tenant_user, system_admin -> system_admin).
+    """
+    from app.models.db_models import RoleDB
+    from sqlalchemy import or_
+
+    # 1. Look up by explicit role_id
+    if role_id:
+        res = await db.execute(select(RoleDB).where(RoleDB.id == str(role_id)))
+        role_obj = res.scalar_one_or_none()
+        if role_obj:
+            return role_obj
+
+    if not role_str:
+        return None
+
+    clean_str = str(role_str).strip()
+
+    # 2. Check if role_str is actually an ID
+    res = await db.execute(select(RoleDB).where(RoleDB.id == clean_str))
+    role_obj = res.scalar_one_or_none()
+    if role_obj:
+        return role_obj
+
+    # 3. Check customer-specific custom role
+    if customer_id:
+        res = await db.execute(
+            select(RoleDB).where(
+                RoleDB.customer_id == str(customer_id),
+                or_(
+                    RoleDB.role_type == clean_str,
+                    RoleDB.role_name == clean_str,
+                    RoleDB.role_type == clean_str.lower().replace(" ", "_")
+                )
+            )
+        )
+        role_obj = res.scalars().first()
+        if role_obj:
+            return role_obj
+
+    # BLOCK COMMENT: RESOLVE SYSTEM-WIDE OR PRESET ROLES (customer_id IS NULL OR is_system_preset IS TRUE)
+    # 4. Check system preset or system-wide (customer_id is NULL) role by role_type or role_name
+    res = await db.execute(
+        select(RoleDB).where(
+            or_(RoleDB.is_system_preset == True, RoleDB.customer_id.is_(None)),
+            or_(
+                RoleDB.role_type == clean_str,
+                RoleDB.role_name == clean_str,
+                RoleDB.role_type == clean_str.lower().replace(" ", "_")
+            )
+        )
+    )
+    role_obj = res.scalars().first()
+    if role_obj:
+        return role_obj
+
+    # 5. Handle legacy role alias mappings
+    alias_map = {
+        "admin": "tenant_admin",
+        "tenant_admin": "tenant_admin",
+        "administrator": "tenant_admin",
+        "system_admin": "system_admin",
+        "super_admin": "system_admin",
+        "sysadmin": "system_admin",
+        "user": "tenant_user",
+        "tenant_user": "tenant_user",
+        "standard_user": "tenant_user",
+        "para_legal": "para_legal",
+        "paralegal": "para_legal",
+        "legal_analyst": "legal_analyst",
+        "analyst": "legal_analyst"
+    }
+    mapped_type = alias_map.get(clean_str.lower().replace(" ", "_"))
+    if mapped_type:
+        res = await db.execute(
+            select(RoleDB).where(
+                RoleDB.role_type == mapped_type,
+                or_(RoleDB.is_system_preset == True, RoleDB.customer_id.is_(None))
+            )
+        )
+        role_obj = res.scalars().first()
+        if role_obj:
+            return role_obj
+
+    return None
+
+
+# BLOCK COMMENT: COMMON USER ROLE & ROLE_ID RESOLUTION HELPER
+async def resolve_role_and_id(
+    db: AsyncSession,
+    role_id: Optional[str] = None,
+    role_str: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    default_role: str = "tenant_user"
+) -> Tuple[Optional[Any], str, Optional[str]]:
+    """
+    Common reusable function to resolve role object, assigned role string, and assigned role ID.
+    Returns: (role_obj, assigned_role, assigned_role_id)
+    """
+    role_obj = await resolve_role_for_user(
+        db,
+        role_id=role_id,
+        role_str=role_str,
+        customer_id=customer_id
+    )
+    assigned_role = role_obj.role_type if role_obj else (role_str or default_role)
+    assigned_role_id = str(role_obj.id) if role_obj else (str(role_id) if role_id else None)
+    return role_obj, assigned_role, assigned_role_id
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
@@ -69,11 +191,15 @@ async def get_current_user(
         role_obj = role_res.scalar_one_or_none()
 
     if not role_obj:
-        # Fallback to system preset role based on legacy db_user.role string
-        role_type_fallback = "system_admin" if db_user.role == "system_admin" else ("tenant_admin" if db_user.role == "admin" else "tenant_user")
-        role_stmt = select(RoleDB).where(RoleDB.role_type == role_type_fallback, RoleDB.customer_id.is_(None))
-        role_res = await db.execute(role_stmt)
-        role_obj = role_res.scalar_one_or_none()
+        role_obj = await resolve_role_for_user(
+            db,
+            role_id=db_user.role_id,
+            role_str=db_user.role,
+            customer_id=db_user.customer_id
+        )
+        if role_obj and not db_user.role_id:
+            db_user.role_id = role_obj.id
+            await db.commit()
 
     permissions_list = []
     role_id_val = None

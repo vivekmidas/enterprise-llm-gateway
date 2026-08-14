@@ -5,12 +5,13 @@ from sqlalchemy import select, delete
 
 from app.core.database import get_db
 from app.models.db_models import UserDB as usersDb
-from app.api.auth.dependencies import get_current_user, require_admin, require_system_admin, require_admin_or_system_admin
+from app.api.auth.dependencies import get_current_user, require_admin, require_system_admin, require_admin_or_system_admin, resolve_role_for_user, resolve_role_and_id
 from app.core.types.users import User
 from app.core.security.hash import get_password_hash
 
 router = APIRouter(prefix="/admin/users", tags=["Admin"])
 
+@router.get("", response_model=List[Dict[str, Any]])
 @router.get("/", response_model=List[Dict[str, Any]])
 async def list_users(
     current_user: User = Depends(get_current_user),
@@ -30,13 +31,15 @@ async def list_users(
             "name": u.name,
             "customer_id": u.customer_id,
             "status": u.status,
-            "role": u.role, 
+            "role": u.role,
+            "role_id": u.role_id,
             "username": u.username,
             "email_id": u.email_id,
         } for u in users
     ]
 
 
+@router.post("", response_model=dict, status_code=201)
 @router.post("/", response_model=dict, status_code=201)
 async def create_user(
     user_data: dict,
@@ -48,7 +51,8 @@ async def create_user(
     email = user_data.get("email")
     password = user_data.get("password")
     name = user_data.get("name")
-    role = user_data.get("role", "user")
+    role_str = user_data.get("role", "tenant_user")
+    role_id = user_data.get("role_id")
     
     if not email or not password or not name:
         raise HTTPException(status_code=400, detail="Email, password, and name are required")
@@ -64,13 +68,23 @@ async def create_user(
     if dup.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="User with this email already exists")
         
+    # Resolve role and role_id using common helper
+    role_obj, assigned_role, assigned_role_id = await resolve_role_and_id(
+        db,
+        role_id=role_id,
+        role_str=role_str,
+        customer_id=customer_id,
+        default_role="tenant_user"
+    )
+
     hashed_password = get_password_hash(password)
     new_user = usersDb(
         username=email,
         email_id=email,
         password=hashed_password,
         name=name,
-        role=role,
+        role=assigned_role,
+        role_id=assigned_role_id,
         customer_id=customer_id,
         status="active"
     )
@@ -83,6 +97,7 @@ async def create_user(
         "email": new_user.email_id,
         "name": new_user.name,
         "role": new_user.role,
+        "role_id": new_user.role_id,
         "customer_id": new_user.customer_id
     }
 
@@ -138,26 +153,16 @@ async def update_user_role(
     new_role = payload.get("role")
     new_role_id = payload.get("role_id")
 
-    if new_role:
-        user.role = new_role
-        from app.models.db_models import RoleDB
-        role_res = await db.execute(
-            select(RoleDB).where(
-                (RoleDB.role_type == new_role) | (RoleDB.id == new_role)
-            )
-        )
-        matched_role = role_res.scalars().first()
-        if matched_role:
-            user.role_id = matched_role.id
-            user.role = matched_role.role_type
+    role_obj, assigned_role, assigned_role_id = await resolve_role_and_id(
+        db,
+        role_id=new_role_id,
+        role_str=new_role,
+        customer_id=user.customer_id,
+        default_role=user.role
+    )
 
-    if new_role_id:
-        from app.models.db_models import RoleDB
-        role_res = await db.execute(select(RoleDB).where(RoleDB.id == new_role_id))
-        matched_role = role_res.scalar_one_or_none()
-        if matched_role:
-            user.role_id = matched_role.id
-            user.role = matched_role.role_type
+    user.role = assigned_role
+    user.role_id = assigned_role_id
 
     if "name" in payload and payload["name"]:
         user.name = payload["name"]

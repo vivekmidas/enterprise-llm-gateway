@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
@@ -425,18 +425,22 @@ async def list_roles(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Lists system preset roles and customer-specific custom roles.
+    Lists system preset roles, system-wide custom roles (customer_id is NULL), and customer-specific custom roles.
     System Admin can specify customer_id to view roles for a target tenant.
     """
     target_customer_id = current_user.customer_id
     if current_user.role == "system_admin":
         target_customer_id = customer_id if customer_id is not None else current_user.customer_id
 
-    # Fetch system presets OR customer custom roles
-    stmt = select(RoleDB).where(
-        (RoleDB.is_system_preset == True) | 
-        (RoleDB.customer_id == target_customer_id)
-    )
+    # BLOCK COMMENT: FETCH SYSTEM PRESETS, SYSTEM-WIDE CUSTOM ROLES (customer_id IS NULL), OR TENANT CUSTOM ROLES
+    filters = [
+        RoleDB.is_system_preset == True,
+        RoleDB.customer_id.is_(None)
+    ]
+    if target_customer_id is not None:
+        filters.append(RoleDB.customer_id == str(target_customer_id))
+
+    stmt = select(RoleDB).where(or_(*filters))
     res = await db.execute(stmt)
     roles = res.scalars().all()
 
@@ -471,29 +475,43 @@ async def create_role(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Creates a new custom role for the active customer tenant (or target customer for System Admin).
+    Creates a new custom role for the active customer tenant or system-wide.
+    System Admin can assign role to specific customer_id or create system-wide (customer_id=None).
     """
+    # BLOCK COMMENT: TARGET CUSTOMER ID RESOLUTION (SYSTEM-WIDE IF NULL/OMITTED FOR SYSTEM ADMIN)
     target_customer_id = current_user.customer_id
     if current_user.role == "system_admin":
-        target_customer_id = customer_id or current_user.customer_id
+        raw_cid = customer_id if customer_id is not None else payload.get("customer_id")
+        if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide"):
+            target_customer_id = str(raw_cid)
+        else:
+            target_customer_id = None
 
     role_name = payload.get("role_name")
     if not role_name:
         raise HTTPException(status_code=400, detail="role_name is required")
 
-    role_type = payload.get("role_type", "custom").strip().lower().replace(" ", "_")
+    role_type = payload.get("role_type")
+    if not role_type or role_type.strip().lower() == "custom":
+        role_type = role_name.strip().lower().replace(" ", "_")
+    else:
+        role_type = role_type.strip().lower().replace(" ", "_")
+
     description = payload.get("description", "")
     permission_ids = payload.get("permission_ids", [])
 
-    # Check for existing role with same type/name under target customer
+    # Check for existing role with same type/name under target customer or system-wide
+    # BLOCK COMMENT: DUPLICATE ROLE CHECK SUPPORTING SYSTEM-WIDE AND TENANT SCOPES
+    cust_filter = RoleDB.customer_id.is_(None) if target_customer_id is None else RoleDB.customer_id == str(target_customer_id)
     existing = await db.execute(
         select(RoleDB).where(
-            RoleDB.customer_id == target_customer_id,
-            (RoleDB.role_name == role_name) | (RoleDB.role_type == role_type)
+            cust_filter,
+            or_(RoleDB.role_name == role_name, RoleDB.role_type == role_type)
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Role with name '{role_name}' already exists for this tenant")
+        scope_str = "system-wide" if target_customer_id is None else f"tenant {target_customer_id}"
+        raise HTTPException(status_code=400, detail=f"Role with name '{role_name}' already exists for {scope_str}")
 
     new_role = RoleDB(
         id=str(uuid.uuid4()),
@@ -508,10 +526,24 @@ async def create_role(
 
     # Assign permissions
     for pid in permission_ids:
+        pid_clean = pid.strip().lower()
+        chk = await db.execute(select(PermissionDB).where(PermissionDB.id == pid_clean))
+        if not chk.scalar_one_or_none():
+            mod_key = pid_clean.split(":")[0] if ":" in pid_clean else "custom"
+            db.add(PermissionDB(
+                id=pid_clean,
+                module=mod_key,
+                submodule="custom",
+                label=pid_clean,
+                description=pid_clean,
+                target_layer="both"
+            ))
+            await db.flush()
+
         rp = RolePermissionDB(
             id=str(uuid.uuid4()),
             role_id=new_role.id,
-            permission_id=pid
+            permission_id=pid_clean
         )
         db.add(rp)
 
@@ -539,7 +571,7 @@ async def update_role(
 ):
     """
     Updates role metadata and permission assignments.
-    System Admin can update system presets or tenant roles. Tenant Admin can update tenant roles.
+    System Admin can update system presets or any tenant/system-wide roles. Tenant Admin can update their own tenant roles.
     """
     res = await db.execute(select(RoleDB).where(RoleDB.id == role_id))
     role = res.scalar_one_or_none()
@@ -549,23 +581,43 @@ async def update_role(
     if role.is_system_preset and current_user.role != "system_admin":
         raise HTTPException(status_code=403, detail="System preset roles can only be updated by System Admin")
 
-    if not role.is_system_preset and current_user.role != "system_admin" and role.customer_id != current_user.customer_id:
+    if role.customer_id is None and current_user.role != "system_admin":
+        raise HTTPException(status_code=403, detail="System-wide custom roles can only be updated by System Admin")
+
+    if not role.is_system_preset and role.customer_id is not None and current_user.role != "system_admin" and str(role.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to edit roles for another tenant")
 
     if "role_name" in payload and payload["role_name"]:
         role.role_name = payload["role_name"]
     if "description" in payload:
         role.description = payload["description"]
+    if "customer_id" in payload and current_user.role == "system_admin":
+        raw_cid = payload.get("customer_id")
+        role.customer_id = str(raw_cid) if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide") else None
 
     if "permission_ids" in payload and isinstance(payload["permission_ids"], list):
         permission_ids = payload["permission_ids"]
         # Wipe existing role permissions
         await db.execute(delete(RolePermissionDB).where(RolePermissionDB.role_id == role.id))
         for pid in permission_ids:
+            pid_clean = pid.strip().lower()
+            chk = await db.execute(select(PermissionDB).where(PermissionDB.id == pid_clean))
+            if not chk.scalar_one_or_none():
+                mod_key = pid_clean.split(":")[0] if ":" in pid_clean else "custom"
+                db.add(PermissionDB(
+                    id=pid_clean,
+                    module=mod_key,
+                    submodule="custom",
+                    label=pid_clean,
+                    description=pid_clean,
+                    target_layer="both"
+                ))
+                await db.flush()
+
             rp = RolePermissionDB(
                 id=str(uuid.uuid4()),
                 role_id=role.id,
-                permission_id=pid
+                permission_id=pid_clean
             )
             db.add(rp)
 
@@ -606,7 +658,10 @@ async def delete_role(
     if role.is_system_preset:
         raise HTTPException(status_code=400, detail="System preset default roles cannot be deleted")
 
-    if current_user.role != "system_admin" and role.customer_id != current_user.customer_id:
+    if role.customer_id is None and current_user.role != "system_admin":
+        raise HTTPException(status_code=403, detail="System-wide custom roles can only be deleted by System Admin")
+
+    if role.customer_id is not None and current_user.role != "system_admin" and str(role.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to delete roles for another tenant")
 
     # Check if any user is currently assigned this role

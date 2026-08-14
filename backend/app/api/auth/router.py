@@ -68,15 +68,22 @@ async def login(request: LoginRequest):
 
         # Resolve user permissions for JWT payload & login response
         from app.models.db_models import RoleDB, RolePermissionDB
+        from app.api.auth.dependencies import resolve_role_for_user
         permissions_list = []
         role_obj = None
         if user.role_id:
             role_res = await session.execute(select(RoleDB).where(RoleDB.id == user.role_id))
             role_obj = role_res.scalar_one_or_none()
         if not role_obj:
-            role_type_fallback = "system_admin" if user.role == "system_admin" else ("tenant_admin" if user.role == "admin" else "tenant_user")
-            role_res = await session.execute(select(RoleDB).where(RoleDB.role_type == role_type_fallback, RoleDB.customer_id.is_(None)))
-            role_obj = role_res.scalar_one_or_none()
+            role_obj = await resolve_role_for_user(
+                session,
+                role_id=user.role_id,
+                role_str=user.role,
+                customer_id=user.customer_id
+            )
+            if role_obj and not user.role_id:
+                user.role_id = role_obj.id
+                await session.commit()
 
         if role_obj:
             perm_res = await session.execute(select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id))
@@ -90,18 +97,27 @@ async def login(request: LoginRequest):
             if cust_allowed and isinstance(cust_allowed, list):
                 allowed_domains = cust_allowed
 
-        # Calculate default landing route (defaults to /legal)
+        # Calculate default landing route (admin/tenant_admin -> /admin, legal -> /legal, etc.)
+        # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
+        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
+
         default_route = "/legal"
-        if user.role == "system_admin" or "*:*:*" in permissions_list or "admin:*:*" in permissions_list:
+        if (
+            user.role in ["system_admin", "admin", "tenant_admin"]
+            or "*:*:*" in permissions_list
+            or "admin:*:*" in permissions_list
+            or "admin:dashboard:view" in permissions_list
+            or any(p.startswith("admin:") for p in permissions_list)
+        ):
             default_route = "/admin"
         elif "legal:research:query" in permissions_list or "legal:*:*" in permissions_list:
             default_route = "/legal"
         elif "workflow:builder:view" in permissions_list or "workflow:*:*" in permissions_list:
             default_route = "/workflow-builder"
+        elif primary_domain_id:
+            default_route = f"/{primary_domain_id}"
 
 
-        # BLOCK COMMENT: RESOLVE DOMAIN_ID & JWT TOKEN DATA (DOMAIN, CUSTOMER_ID, DOMAIN_ID)
-        primary_domain_id = allowed_domains[0] if (allowed_domains and len(allowed_domains) > 0) else "legal"
 
         token_data = {
             "user_id": str(user.id),
