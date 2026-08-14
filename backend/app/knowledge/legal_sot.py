@@ -344,69 +344,69 @@ LEGAL_SYSTEM_PROMPT = (
 )
 
 LEGAL_USER_PROMPT_TEMPLATE = (
-    "Document Filename: {filename}\n\n"
-    "Document Content:\n{content_snippet}\n\n"
-    "Extract a comprehensive structured JSON from the above legal document.\n"
-    "CRITICAL INSTRUCTIONS:\n"
-    "- Omit any field not found in the document.\n"
-    "- NEVER output bracketed placeholders like '[Name]', '[Advocate]', '[Judge]', or '[Date]'.\n"
-    "- For parties, extract exact names of entities/people (e.g., 'State of Maharashtra', 'John Doe'), not just role labels.\n"
-    "- 'arguments' MUST map specific arguments to the party making them:\n"
-    "  - 'prosecutor': arguments by Prosecution, State, Public Prosecutor, or Complainant.\n"
-    "  - 'defendant': arguments by Defendant, Accused, or Defense Counsel.\n"
-    "  - 'appellant': arguments by Appellant or Petitioner.\n"
-    "  - 'respondent': arguments by Respondent.\n"
-    "  - 'other_parties': arguments by Intervenors, Amicus Curiae, Co-accused, or 3rd Parties.\n"
-    "- DO NOT MISS ANY HELPFUL INFORMATION. Include all key dates, facts, evidence items, statutory interpretations, and observations.\n"
-    "- 'legal_principles' must be legal propositions EXPLICITLY STATED or CONFIRMED by the court in this document only — not inferred.\n"
-    "- 'number_of_connected_cases' must be an integer (number), not a string.\n\n"
-    "Structure (omit any section not present):\n"
-    "{\n"
-    '  "executive_case_summary": {\n'
-    '    "one_line_summary": "High-level single line summary (e.g. Case of AAA v. BBB regarding XYZ decided in favour of AAA under Section 302 IPC / Section 103 BNS)",\n'
-    '    "case_overview": "Natural language narrative describing dispute, main parties (AAA v. BBB), core subject matter, key statutory sections (IPC/BNS/CrPC/BNSS/Acts), final outcome, and favoured party",\n'
-    '    "favoured_party": "Name and role of party in whose favour the ruling was decided",\n'
-    '    "key_sections_involved": ["IPC 302 / BNS 103", "..."]\n'
-    '  },\n'
-    '  "document": {"title": "...", "document_type": "...", "court": "...", "jurisdiction": "...", "case_number": "...", "citation": "...", "decision_date": "...", "coram": ["..."], "judgment_type": "..."},\n'
-    '  "parties": {\n'
-    '    "petitioner": {"name": "...", "type": "..."}, "respondent": {"name": "...", "type": "..."},\n'
-    '    "prosecutor": {"name": "...", "type": "..."}, "defendant": {"name": "...", "type": "..."},\n'
-    '    "advocates": {"petitioner": ["..."], "respondent": ["..."], "prosecutor": ["..."], "defense": ["..."]}\n'
-    '  },\n'
-    '  "procedural_history": [{"date": "...", "event": "..."}],\n'
-    '  "facts": {\n'
-    '    "summary": "...",\n'
-    '    "employment": {"designation": "...", "employer": "..."},\n'
-    '    "incident": {"inspection_date": "...", "allegation": "..."},\n'
-    '    "disciplinary_action": {"charge_sheet_issued": true, "departmental_enquiry": true, "dismissal_date": "..."}\n'
-    '  },\n'
-    '  "legal_provisions": {"statutes": [{"name": "...", "abbreviation": "..."}], "sections": [], "schedule_items": ["..."]},\n'
-    '  "issues": [{"id": 1, "issue": "..."}],\n'
-    '  "labour_court_findings": {"enquiry": {}, "natural_justice": {}, "misconduct": {}, "relief": {}},\n'
-    '  "industrial_court": {"revision_application": "...", "decision": "..."},\n'
-    '  "high_court_arguments": {\n'
-    '    "petitioner": ["..."],\n'
-    '    "respondent": ["..."],\n'
-    '    "prosecutor": ["..."],\n'
-    '    "defendant": ["..."]\n'
-    '  },\n'
-    '  "arguments": {\n'
-    '    "prosecutor": ["..."],\n'
-    '    "defendant": ["..."],\n'
-    '    "petitioner": ["..."],\n'
-    '    "respondent": ["..."]\n'
-    '  },\n'
-    '  "evidence": {"documentary": ["..."], "inspection": ["..."]},\n'
-    '  "legal_concepts": ["..."],\n'
-    '  "research_topics": ["..."],\n'
-    '  "keywords": ["..."],\n'
-    '  "citations": {"cases_referred": [], "statutes_referred": ["..."]},\n'
-    '  "judgment_status": {"portion_available": "...", "final_decision": "...", "ratio_decidendi": "... "},\n'
-    '  "knowledge_graph_entities": {"persons": ["..."], "organizations": ["..."], "dates": ["..."]},\n'
-    '  "embedding_metadata": {"document_domain": "...", "practice_area": ["..."], "confidence": 0.95}\n'
-    "}\n"
-    "Output ONLY the JSON. Omit fields not present in the document."
+        "Document Filename: {filename}\n\n"
+        "Document Content:\n{content_snippet}\n\n"
+        "Extract a comprehensive structured JSON from the above legal document.\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "- Omit any field not found in the document.\n"
+        "- NEVER output bracketed placeholders like '[Name]', '[Advocate]', '[Judge]', or '[Date]'.\n"
+        "- For parties, extract exact names of entities/people (e.g., 'State of Maharashtra', 'John Doe'), not just role labels.\n"
+        "- 'arguments' MUST map specific arguments to the party making them:\n"
+        "  - 'prosecutor': arguments by Prosecution, State, Public Prosecutor, or Complainant.\n"
+        "  - 'defendant': arguments by Defendant, Accused, or Defense Counsel.\n"
+        "  - 'appellant': arguments by Appellant or Petitioner.\n"
+        "  - 'respondent': arguments by Respondent.\n"
+        "  - 'other_parties': arguments by Intervenors, Amicus Curiae, Co-accused, or 3rd Parties.\n"
+        "- DO NOT MISS ANY HELPFUL INFORMATION. Include all key dates, facts, evidence items, statutory interpretations, and observations.\n"
+        "- 'legal_principles' must be legal propositions EXPLICITLY STATED or CONFIRMED by the court in this document only — not inferred.\n"
+        "- 'number_of_connected_cases' must be an integer (number), not a string.\n\n"
+        "Structure (omit any section not present):\n"
+        "{\n"
+        '  "executive_case_summary": {\n'
+        '    "one_line_summary": "High-level single line summary (e.g. Case of AAA v. BBB regarding XYZ decided in favour of AAA under Section 302 IPC / Section 103 BNS)",\n'
+        '    "case_overview": "Natural language narrative describing dispute, main parties (AAA v. BBB), core subject matter, key statutory sections (IPC/BNS/CrPC/BNSS/Acts), final outcome, and favoured party",\n'
+        '    "favoured_party": "Name and role of party in whose favour the ruling was decided",\n'
+        '    "key_sections_involved": ["IPC 302 / BNS 103", "..."]\n'
+        '  },\n'
+        '  "document": {"title": "...", "document_type": "...", "court": "...", "jurisdiction": "...", "case_number": "...", "citation": "...", "decision_date": "...", "coram": ["..."], "judgment_type": "..."},\n'
+        '  "parties": {\n'
+        '    "petitioner": {"name": "...", "type": "..."}, "respondent": {"name": "...", "type": "..."},\n'
+        '    "prosecutor": {"name": "...", "type": "..."}, "defendant": {"name": "...", "type": "..."},\n'
+        '    "advocates": {"petitioner": ["..."], "respondent": ["..."], "prosecutor": ["..."], "defense": ["..."]}\n'
+        '  },\n'
+        '  "procedural_history": [{"date": "...", "event": "..."}],\n'
+        '  "facts": {\n'
+        '    "summary": "...",\n'
+        '    "employment": {"designation": "...", "employer": "..."},\n'
+        '    "incident": {"inspection_date": "...", "allegation": "..."},\n'
+        '    "disciplinary_action": {"charge_sheet_issued": true, "departmental_enquiry": true, "dismissal_date": "..."}\n'
+        '  },\n'
+        '  "legal_provisions": {"statutes": [{"name": "...", "abbreviation": "..."}], "sections": [], "schedule_items": ["..."]},\n'
+        '  "issues": [{"id": 1, "issue": "..."}],\n'
+        '  "labour_court_findings": {"enquiry": {}, "natural_justice": {}, "misconduct": {}, "relief": {}},\n'
+        '  "industrial_court": {"revision_application": "...", "decision": "..."},\n'
+        '  "high_court_arguments": {\n'
+        '    "petitioner": ["..."],\n'
+        '    "respondent": ["..."],\n'
+        '    "prosecutor": ["..."],\n'
+        '    "defendant": ["..."]\n'
+        '  },\n'
+        '  "arguments": {\n'
+        '    "prosecutor": ["..."],\n'
+        '    "defendant": ["..."],\n'
+        '    "petitioner": ["..."],\n'
+        '    "respondent": ["..."]\n'
+        '  },\n'
+        '  "evidence": {"documentary": ["..."], "inspection": ["..."]},\n'
+        '  "legal_concepts": ["..."],\n'
+        '  "research_topics": ["..."],\n'
+        '  "keywords": ["..."],\n'
+        '  "citations": {"cases_referred": [], "statutes_referred": ["..."]},\n'
+        '  "judgment_status": {"portion_available": "...", "final_decision": "...", "ratio_decidendi": "... "},\n'
+        '  "knowledge_graph_entities": {"persons": ["..."], "organizations": ["..."], "dates": ["..."]},\n'
+        '  "embedding_metadata": {"document_domain": "...", "practice_area": ["..."], "confidence": 0.95}\n'
+        "}\n"
+        "Output ONLY the JSON. Omit fields not present in the document."
 )
 
 # Evidence RAG Prompts (for Block-level provenance in Domain RAG V1)

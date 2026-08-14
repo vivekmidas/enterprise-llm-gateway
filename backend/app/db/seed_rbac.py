@@ -1,188 +1,505 @@
-# BLOCK COMMENT: STREAMLINED 3-TIER RBAC SEED DATA (xx:yy:zzz FORMAT)
+# BLOCK COMMENT: CANONICAL MODULE SOT & 3-TIER RBAC SEED DATA
 # Module: backend/app/db/seed_rbac.py
-# Description: Seeds 3-tier module:submodule:permission keys and route permission rules.
+# Description:
+#     Single Source of Truth (SOT) registry for application modules, routes, and atomic capability actions.
+#     - Defines MODULES_REGISTRY with route patterns, icons, and granular actions (view, create, edit, delete, etc.).
+#     - Auto-generates PermissionDB records linked to module_id with is_route_guard=True for view actions.
+#     - Seeds ROLE_PRESETS with explicit role scopes (system_admin wildcard, tenant_admin tenant-scoped capabilities, etc.).
+#     - Synchronizes RoutePermissionDB for backward middleware compatibility.
 
 import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
-from app.models.db_models import RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, generate_uuid
+from app.models.db_models import ModuleDB, RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, generate_uuid
 
-DEFAULT_ROUTE_PERMISSIONS = [
-    {"pattern": "/workflow-builder/new", "permission_id": "workflow:builder:create", "module": "workflow", "submodule": "builder", "label": "Create Workflow Canvas", "description": "Create new workflow canvas"},
-    {"pattern": "/workflow-builder/*/edit", "permission_id": "workflow:builder:edit", "module": "workflow", "submodule": "builder", "label": "Edit Workflow Canvas", "description": "Edit workflow canvas"},
-    {"pattern": "/workflow-builder", "permission_id": "workflow:builder:view", "module": "workflow", "submodule": "builder", "label": "View Workflow Builder", "description": "View workflow builder canvas"},
-    # BLOCK COMMENT: RENAMED LABELS TO USERS & ROLES
-    {"pattern": "/admin/users", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Users", "description": "User management"},
-    {"pattern": "/admin/users/**", "permission_id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "label": "Users Sub-routes", "description": "User management sub-routes"},
-    {"pattern": "/admin/roles", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Roles", "description": "Role management"},
-    {"pattern": "/admin/roles/**", "permission_id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "label": "Roles Sub-routes", "description": "Role management sub-routes"},
+MODULES_REGISTRY = [
+    # -------------------------------------------------------------------------
+    # 1. ADMIN SYSTEM INFRASTRUCTURE (System Admin Only)
+    # -------------------------------------------------------------------------
+    {
+        "id": "admin_backup",
+        "module": "admin",
+        "submodule": "backup",
+        "label": "SQL Backup Exporter",
+        "description": "System-wide database SQL backup export and restore",
+        "route_patterns": ["/admin/backup", "/admin/backup/**"],
+        "icon": "Database",
+        "display_order": 90,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View SQL Backups", "description": "View system SQL data backup files"},
+            {"action": "manage", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups"}
+        ]
+    },
+    {
+        "id": "admin_domains",
+        "module": "admin",
+        "submodule": "domains",
+        "label": "Domain Registry",
+        "description": "Multi-tenant custom domain routing and SSL configurations",
+        "route_patterns": ["/admin/domains", "/admin/domains/**"],
+        "icon": "Globe",
+        "display_order": 91,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Domains", "description": "View registered system domains"},
+            {"action": "manage", "label": "Manage Domains", "description": "Create and configure system domains"}
+        ]
+    },
+    {
+        "id": "admin_customers",
+        "module": "admin",
+        "submodule": "customer_management",
+        "label": "Customers & Tenants",
+        "description": "Enterprise customer tenant lifecycle management",
+        "route_patterns": ["/admin/customers", "/admin/customers/**"],
+        "icon": "Building",
+        "display_order": 92,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Customers", "description": "View system-wide customer tenants"},
+            {"action": "manage", "label": "Manage Customers", "description": "Create, edit, suspend, and delete customer tenants"}
+        ]
+    },
+    {
+        "id": "admin_permissions",
+        "module": "admin",
+        "submodule": "permissions",
+        "label": "Permissions & Routes",
+        "description": "System-wide RBAC capability catalog and route bindings",
+        "route_patterns": ["/admin/permissions", "/admin/permissions/**"],
+        "icon": "Lock",
+        "display_order": 93,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Permissions & Routes", "description": "View system permissions and route bindings"},
+            {"action": "manage", "label": "Manage Permissions & Routes", "description": "Manage system permissions and route bindings"}
+        ]
+    },
 
-    {"pattern": "/admin/provider-presets", "permission_id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "label": "Provider Presets", "description": "Provider Presets management portal"},
-    {"pattern": "/admin/provider-presets/**", "permission_id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "label": "Provider Presets Sub-routes", "description": "Provider Presets management sub-routes"},
-    {"pattern": "/admin/playground", "permission_id": "admin:playground:view", "module": "admin", "submodule": "playground", "label": "Retrieval Playground", "description": "Retrieval Playground testing console"},
-    {"pattern": "/admin/playground/**", "permission_id": "admin:playground:view", "module": "admin", "submodule": "playground", "label": "Retrieval Playground Sub-routes", "description": "Retrieval Playground testing sub-routes"},
-    {"pattern": "/admin/customers", "permission_id": "admin:customer_management:view", "module": "admin", "submodule": "customer_management", "label": "System Customers", "description": "System customer tenants management"},
-    # BLOCK COMMENT: SYSTEM ADMIN DYNAMIC MODULE ROUTE PERMISSIONS
-    {"pattern": "/admin/permissions", "permission_id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "label": "Permissions Registry", "description": "Manage system-wide permissions"},
-    {"pattern": "/admin/permissions/**", "permission_id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "label": "Permissions Registry Sub-routes", "description": "System permissions sub-routes"},
-    {"pattern": "/admin/backup", "permission_id": "admin:backup:manage", "module": "admin", "submodule": "backup", "label": "SQL Backup Exporter", "description": "System-wide SQL data backup export"},
-    {"pattern": "/admin/backup/**", "permission_id": "admin:backup:manage", "module": "admin", "submodule": "backup", "label": "SQL Backup Exporter Sub-routes", "description": "System-wide SQL backup sub-routes"},
-    {"pattern": "/admin/domains", "permission_id": "admin:domains:manage", "module": "admin", "submodule": "domains", "label": "Domain Registry", "description": "System multi-domain management"},
-    {"pattern": "/admin/domains/**", "permission_id": "admin:domains:manage", "module": "admin", "submodule": "domains", "label": "Domain Registry Sub-routes", "description": "System multi-domain sub-routes"},
-    {"pattern": "/admin", "permission_id": "admin:dashboard:view", "module": "admin", "submodule": "dashboard", "label": "Admin Dashboard", "description": "Admin Console access"},
-    # BLOCK COMMENT: ROUTE PERMISSION UPDATED TO /legal
-    {"pattern": "/legal", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal AI Platform", "description": "Legal AI platform and research portal"},
-    {"pattern": "/legal/**", "permission_id": "legal:research:query", "module": "legal", "submodule": "research", "label": "Legal AI Sub-routes", "description": "Legal AI platform sub-routes"},
+    # -------------------------------------------------------------------------
+    # 2. ADMIN CORE & TENANT MANAGEMENT (Tenant Admin & System Admin)
+    # -------------------------------------------------------------------------
+    {
+        "id": "admin_dashboard",
+        "module": "admin",
+        "submodule": "dashboard",
+        "label": "Admin Dashboard",
+        "description": "Admin Console overview and system health",
+        "route_patterns": ["/admin", "/system", "/system/**"],
+        "icon": "LayoutDashboard",
+        "display_order": 1,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Admin Dashboard", "description": "Access admin dashboard and system overview"}
+        ]
+    },
+    {
+        "id": "admin_users",
+        "module": "admin",
+        "submodule": "user_management",
+        "label": "User Accounts",
+        "description": "User accounts, invitations, and role assignments",
+        "route_patterns": ["/admin/users", "/admin/users/**"],
+        "icon": "Users",
+        "display_order": 2,
+        "actions": [
+            {"action": "read", "is_route_guard": True, "label": "View Users", "description": "View tenant users list"},
+            {"action": "create", "label": "Create / Invite Users", "description": "Invite new users to tenant"},
+            {"action": "edit", "label": "Edit Users", "description": "Edit user roles and profiles"},
+            {"action": "delete", "label": "Deactivate Users", "description": "Deactivate or remove users"},
+            {"action": "manage", "label": "Full User Management", "description": "Full administrative control over tenant users"}
+        ]
+    },
+    {
+        "id": "admin_roles",
+        "module": "admin",
+        "submodule": "role_management",
+        "label": "Roles & Permissions",
+        "description": "Custom role creation and granular capability matrices",
+        "route_patterns": ["/admin/roles", "/admin/roles/**"],
+        "icon": "Shield",
+        "display_order": 3,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Roles", "description": "View custom roles and capability matrices"},
+            {"action": "create", "label": "Create Role", "description": "Create custom tenant roles"},
+            {"action": "edit", "label": "Edit Role", "description": "Modify role permissions matrix"},
+            {"action": "delete", "label": "Delete Role", "description": "Delete custom roles"},
+            {"action": "manage", "label": "Full Role Management", "description": "Full administrative control over roles"}
+        ]
+    },
+    {
+        "id": "admin_knowledge",
+        "module": "admin",
+        "submodule": "knowledge",
+        "label": "Knowledge Bases",
+        "description": "Enterprise knowledge base catalog and document ingestion",
+        "route_patterns": ["/admin/knowledge", "/admin/knowledge/**", "/knowledge", "/knowledge/**"],
+        "icon": "BookOpen",
+        "display_order": 4,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Knowledge Bases", "description": "Access knowledge bases catalog"},
+            {"action": "create", "label": "Create Knowledge Base", "description": "Create new knowledge bases"},
+            {"action": "edit", "label": "Edit Knowledge Base", "description": "Update knowledge base settings"},
+            {"action": "delete", "label": "Delete Knowledge Base", "description": "Delete knowledge bases"},
+            {"action": "ingest", "label": "Ingest Documents", "description": "Upload and vectorize documents"},
+            {"action": "manage", "label": "Full Knowledge Management", "description": "Full administrative control over knowledge bases"}
+        ]
+    },
+    {
+        "id": "admin_profiles",
+        "module": "admin",
+        "submodule": "profiles",
+        "label": "LLM Profiles",
+        "description": "LLM provider configurations and prompt profiles",
+        "route_patterns": ["/admin/profiles", "/admin/profiles/**"],
+        "icon": "Brain",
+        "display_order": 5,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View LLM Profiles", "description": "View LLM provider configurations"},
+            {"action": "create", "label": "Create LLM Profile", "description": "Create new LLM profiles"},
+            {"action": "edit", "label": "Edit LLM Profile", "description": "Update model parameters and keys"},
+            {"action": "delete", "label": "Delete LLM Profile", "description": "Delete LLM profiles"},
+            {"action": "manage", "label": "Full LLM Profiles Management", "description": "Full administrative control over LLM profiles"}
+        ]
+    },
+    {
+        "id": "admin_workflows",
+        "module": "workflows",
+        "submodule": "builder",
+        "label": "Workflows & Automation",
+        "description": "Workflow graph builder, execution engine, and demo flows",
+        "route_patterns": ["/workflow-builder", "/workflow-builder/**", "/admin/workflows", "/admin/workflows/**", "/demo-flows", "/demo-flows/**"],
+        "icon": "Workflow",
+        "display_order": 6,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Workflows", "description": "View workflow definitions"},
+            {"action": "create", "label": "Create Workflow", "description": "Create workflow canvases"},
+            {"action": "edit", "label": "Edit Workflow", "description": "Modify workflow nodes and links"},
+            {"action": "delete", "label": "Delete Workflow", "description": "Delete workflow definitions"},
+            {"action": "execute", "label": "Execute Workflow", "description": "Trigger workflow execution runs"},
+            {"action": "manage", "label": "Full Workflow Management", "description": "Full control over workflow graphs"}
+        ]
+    },
+    {
+        "id": "admin_nodes",
+        "module": "nodes",
+        "submodule": "catalog",
+        "label": "Agent Nodes Catalog",
+        "description": "Agent tool nodes and execution components",
+        "route_patterns": ["/admin/nodes", "/admin/nodes/**"],
+        "icon": "Boxes",
+        "display_order": 7,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Nodes Catalog", "description": "Browse available agent nodes"},
+            {"action": "execute", "label": "Execute Standalone Node", "description": "Run isolated node executions"},
+            {"action": "manage", "label": "Configure Node Registry", "description": "Enable and configure nodes"}
+        ]
+    },
+    {
+        "id": "admin_playground",
+        "module": "admin",
+        "submodule": "playground",
+        "label": "Retrieval Playground",
+        "description": "Interactive testing console for vector search and prompt evaluation",
+        "route_patterns": ["/admin/playground", "/admin/playground/**"],
+        "icon": "Sparkles",
+        "display_order": 8,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Playground", "description": "Access retrieval testing console"},
+            {"action": "query", "label": "Query Playground", "description": "Run search queries in playground"}
+        ]
+    },
+    {
+        "id": "admin_presets",
+        "module": "admin",
+        "submodule": "provider_presets",
+        "label": "Provider Presets",
+        "description": "Reusable model presets and configurations",
+        "route_patterns": ["/admin/provider-presets", "/admin/provider-presets/**"],
+        "icon": "Layers",
+        "display_order": 9,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Provider Presets", "description": "Access provider presets portal"},
+            {"action": "manage", "label": "Manage Provider Presets", "description": "Create and update provider presets"}
+        ]
+    },
+    {
+        "id": "admin_logs",
+        "module": "admin",
+        "submodule": "logs",
+        "label": "Audit & System Logs",
+        "description": "Audit logs, request tracing, and execution telemetry",
+        "route_patterns": ["/admin/logs", "/admin/logs/**", "/logs", "/logs/**"],
+        "icon": "FileText",
+        "display_order": 10,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Audit Logs", "description": "Access audit logs console"},
+            {"action": "manage", "label": "Manage Audit Logs", "description": "Configure log retention and export"}
+        ]
+    },
+    {
+        "id": "admin_oauth",
+        "module": "admin",
+        "submodule": "oauth",
+        "label": "OAuth Integrations",
+        "description": "OAuth 2.0 connected apps and provider credentials",
+        "route_patterns": ["/admin/oauth", "/admin/oauth/**", "/oauth", "/oauth/**"],
+        "icon": "Key",
+        "display_order": 11,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View OAuth Integrations", "description": "View connected OAuth integrations"},
+            {"action": "manage", "label": "Configure OAuth Integrations", "description": "Configure OAuth providers and credentials"}
+        ]
+    },
+    {
+        "id": "admin_metrics",
+        "module": "admin",
+        "submodule": "metrics",
+        "label": "Metrics & Telemetry",
+        "description": "System usage telemetry and cost analytics charts",
+        "route_patterns": ["/admin/metrics", "/admin/metrics/**", "/metrics", "/metrics/**"],
+        "icon": "Activity",
+        "display_order": 12,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Metrics", "description": "Access metrics analytics charts"},
+            {"action": "manage", "label": "Configure Metrics", "description": "Configure telemetry metrics collection"}
+        ]
+    },
+    {
+        "id": "admin_settings",
+        "module": "admin",
+        "submodule": "tenant_settings",
+        "label": "Company Settings",
+        "description": "Tenant profile, branding, and custom configurations",
+        "route_patterns": ["/admin/company-settings", "/admin/company-settings/**"],
+        "icon": "Settings",
+        "display_order": 13,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Company Settings", "description": "View tenant configuration settings"},
+            {"action": "configure", "label": "Configure Company Settings", "description": "Update tenant settings and integrations"}
+        ]
+    },
+
+    # -------------------------------------------------------------------------
+    # 3. LEGAL AI PLATFORM DOMAIN
+    # -------------------------------------------------------------------------
+    {
+        "id": "legal_platform",
+        "module": "legal",
+        "submodule": "research",
+        "label": "Legal AI Platform",
+        "description": "Legal case research, judgment analysis, and precedent search",
+        "route_patterns": ["/legal", "/legal/**", "/legal-research", "/legal-research/**"],
+        "icon": "Scale",
+        "display_order": 20,
+        "actions": [
+            {"action": "query", "is_route_guard": True, "label": "Execute Legal Research", "description": "Run search queries on legal knowledge bases"},
+            {"action": "view", "label": "View Legal Cases", "description": "View court judgments, acts, and case summaries"},
+            {"action": "upload", "label": "Upload Case Files", "description": "Upload legal briefs and documents"},
+            {"action": "edit", "label": "Edit Legal Cases", "description": "Edit case metadata and details"},
+            {"action": "delete", "label": "Delete Legal Cases", "description": "Delete legal cases"},
+            {"action": "bookmark", "label": "Bookmark Legal Cases", "description": "Save case bookmarks"},
+            {"action": "admin", "label": "Full Legal Admin", "description": "Full administrative control of legal platform"}
+        ]
+    }
 ]
 
-
-
-PERMISSIONS_REGISTRY = [
-    # Legal Domain
-    {"id": "legal:research:query", "module": "legal", "submodule": "research", "target_layer": "both", "label": "Execute Legal Research", "description": "Run search queries on legal knowledge bases and precedents"},
-    {"id": "legal:case_management:view", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "View Legal Cases", "description": "View court judgments, acts, and legal documents"},
-    {"id": "legal:case_management:upload", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "Upload Case Files", "description": "Upload legal briefs, contracts, and case files"},
-    {"id": "legal:case_management:edit", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "Edit Legal Cases", "description": "Edit case metadata and details"},
-    {"id": "legal:case_management:delete", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "Delete Legal Cases", "description": "Delete legal cases and documents"},
-    {"id": "legal:case_management:bookmark", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "Bookmark Legal Cases", "description": "Save and organize legal case bookmarks"},
-    {"id": "legal:case_management:admin", "module": "legal", "submodule": "case_management", "target_layer": "both", "label": "Full Legal Case Admin", "description": "Full administrative control of legal cases"},
-    
-    # Knowledge Base Domain
-    {"id": "kb:base:view", "module": "knowledge", "submodule": "base", "target_layer": "both", "label": "View Knowledge Bases", "description": "View catalog of accessible knowledge bases"},
-    {"id": "kb:base:create", "module": "knowledge", "submodule": "base", "target_layer": "both", "label": "Create Knowledge Base", "description": "Create new knowledge bases"},
-    {"id": "kb:base:delete", "module": "knowledge", "submodule": "base", "target_layer": "both", "label": "Delete Knowledge Base", "description": "Delete existing knowledge bases"},
-    {"id": "kb:document:ingest", "module": "knowledge", "submodule": "document", "target_layer": "both", "label": "Ingest Documents into KB", "description": "Process and vectorize documents into knowledge base"},
-    
-    # Workflow Domain
-    {"id": "workflow:builder:view", "module": "workflows", "submodule": "builder", "target_layer": "both", "label": "View Workflows", "description": "View workflow graph definitions"},
-    {"id": "workflow:builder:create", "module": "workflows", "submodule": "builder", "target_layer": "both", "label": "Create Workflow", "description": "Create new workflow graphs"},
-    {"id": "workflow:builder:edit", "module": "workflows", "submodule": "builder", "target_layer": "both", "label": "Edit Workflow", "description": "Modify workflow node structure and settings"},
-    {"id": "workflow:builder:execute", "module": "workflows", "submodule": "builder", "target_layer": "both", "label": "Execute Workflow", "description": "Trigger workflow execution runs"},
-    {"id": "workflow:builder:delete", "module": "workflows", "submodule": "builder", "target_layer": "both", "label": "Delete Workflow", "description": "Delete workflow definitions"},
-    
-    # Node Domain
-    {"id": "node:catalog:view", "module": "nodes", "submodule": "catalog", "target_layer": "both", "label": "View Nodes Catalog", "description": "Browse available agent/tool nodes"},
-    {"id": "node:catalog:execute", "module": "nodes", "submodule": "catalog", "target_layer": "both", "label": "Execute Standalone Node", "description": "Run isolated node executions"},
-    
-    # Admin Domain
-    {"id": "admin:dashboard:view", "module": "admin", "submodule": "dashboard", "target_layer": "both", "label": "View Admin Dashboard", "description": "Access admin dashboard overview"},
-    {"id": "admin:user_management:read", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "View Users", "description": "View list of users"},
-    {"id": "admin:user_management:manage", "module": "admin", "submodule": "user_management", "target_layer": "both", "label": "Manage Users", "description": "Invite, deactivate, and assign roles to users"},
-    {"id": "admin:role_management:view", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "View Roles", "description": "View custom roles and permissions"},
-    {"id": "admin:role_management:manage", "module": "admin", "submodule": "role_management", "target_layer": "both", "label": "Manage Roles", "description": "Create, edit, and assign roles and permissions"},
-
-    {"id": "admin:customer_management:view", "module": "admin", "submodule": "customer_management", "target_layer": "both", "label": "View System Customers", "description": "View system-wide customer tenants"},
-    {"id": "admin:customer_management:manage", "module": "admin", "submodule": "customer_management", "target_layer": "both", "label": "Manage System Customers", "description": "Create, edit, suspend, and delete customer tenants"},
-    {"id": "admin:node_management:view", "module": "admin", "submodule": "node_management", "target_layer": "both", "label": "View Node Registry", "description": "View global agent node catalog"},
-    {"id": "admin:node_management:manage", "module": "admin", "submodule": "node_management", "target_layer": "both", "label": "Configure Node Registry", "description": "Enable/disable & configure node properties"},
-    {"id": "admin:provider_presets:view", "module": "admin", "submodule": "provider_presets", "target_layer": "both", "label": "View Provider Presets", "description": "Access provider presets management portal"},
-    {"id": "admin:provider_presets:manage", "module": "admin", "submodule": "provider_presets", "target_layer": "both", "label": "Manage Provider Presets", "description": "Create and update provider presets"},
-    {"id": "admin:playground:view", "module": "admin", "submodule": "playground", "target_layer": "both", "label": "View Retrieval Playground", "description": "Access retrieval playground testing console"},
-    {"id": "admin:permissions:view", "module": "admin", "submodule": "permissions", "target_layer": "both", "label": "View Permissions", "description": "View system-wide permissions"},
-    {"id": "admin:permissions:manage", "module": "admin", "submodule": "permissions", "target_layer": "both", "label": "Manage Permissions", "description": "Manage system-wide permissions"},
-    {"id": "admin:backup:view", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "View SQL Backups", "description": "View system SQL data backup files"},
-    {"id": "admin:backup:manage", "module": "admin", "submodule": "backup", "target_layer": "both", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups"},
-    {"id": "admin:tenant_settings:configure", "module": "admin", "submodule": "tenant_settings", "target_layer": "both", "label": "Configure Tenant Settings", "description": "Configure settings and integrations for customer tenant"},
-    {"id": "admin:domains:view", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "View Domains", "description": "View registered system domains"},
-    {"id": "admin:domains:manage", "module": "admin", "submodule": "domains", "target_layer": "both", "label": "Manage Domains", "description": "Create and configure system domains"},
-
-    
-    # Wildcard Domain Scopes (xx:*:* & *:*:*)
-    {"id": "admin:*:*", "module": "admin", "submodule": "all", "target_layer": "both", "label": "Admin Domain Full Access", "description": "Full access to all admin submodules"},
-    {"id": "kb:*:*", "module": "knowledge", "submodule": "all", "target_layer": "both", "label": "Knowledge Domain Full Access", "description": "Full access to knowledge base submodules"},
-    {"id": "workflow:*:*", "module": "workflows", "submodule": "all", "target_layer": "both", "label": "Workflows Domain Full Access", "description": "Full access to workflow submodules"},
-    {"id": "legal:*:*", "module": "legal", "submodule": "all", "target_layer": "both", "label": "Legal Domain Full Access", "description": "Full access to all legal research & case submodules"},
-    {"id": "node:*:*", "module": "nodes", "submodule": "all", "target_layer": "both", "label": "Nodes Domain Full Access", "description": "Full access to node execution submodules"},
-    {"id": "*:*:*", "module": "admin", "submodule": "all", "target_layer": "both", "label": "Global System Super Admin", "description": "Unrestricted system super admin access"},
-]
-
+# Explicit role presets defining baseline capabilities
 ROLE_PRESETS = [
     {
         "role_type": "system_admin",
         "role_name": "System Super Admin",
-        "description": "Full system-wide administrative access across all tenants",
+        "description": "Full system-wide administrative access across all tenants and infrastructure",
         "is_system_preset": True,
         "permissions": ["*:*:*"]
     },
     {
         "role_type": "tenant_admin",
         "role_name": "Tenant Administrator",
-        "description": "Administrative access within assigned customer tenant",
+        "description": "Full administrative control within assigned customer tenant (Users, Roles, Knowledge, Profiles, Workflows, Logs, Settings, Legal)",
         "is_system_preset": True,
         "permissions": [
             "admin:dashboard:view",
             "admin:user_management:read",
+            "admin:user_management:create",
+            "admin:user_management:edit",
+            "admin:user_management:delete",
             "admin:user_management:manage",
             "admin:role_management:view",
+            "admin:role_management:create",
+            "admin:role_management:edit",
+            "admin:role_management:delete",
             "admin:role_management:manage",
+            "admin:knowledge:view",
+            "admin:knowledge:create",
+            "admin:knowledge:edit",
+            "admin:knowledge:delete",
+            "admin:knowledge:ingest",
+            "admin:knowledge:manage",
+            "admin:profiles:view",
+            "admin:profiles:create",
+            "admin:profiles:edit",
+            "admin:profiles:delete",
+            "admin:profiles:manage",
+            "workflows:builder:view",
+            "workflows:builder:create",
+            "workflows:builder:edit",
+            "workflows:builder:delete",
+            "workflows:builder:execute",
+            "workflows:builder:manage",
+            "nodes:catalog:view",
+            "nodes:catalog:execute",
+            "nodes:catalog:manage",
+            "admin:playground:view",
+            "admin:playground:query",
+            "admin:provider_presets:view",
+            "admin:provider_presets:manage",
+            "admin:logs:view",
+            "admin:logs:manage",
+            "admin:oauth:view",
+            "admin:oauth:manage",
+            "admin:metrics:view",
+            "admin:metrics:manage",
+            "admin:tenant_settings:view",
             "admin:tenant_settings:configure",
-            "legal:*:*",
-            "kb:*:*",
-            "workflow:*:*",
-            "node:*:*"
+            "legal:research:query",
+            "legal:research:view",
+            "legal:research:upload",
+            "legal:research:edit",
+            "legal:research:delete",
+            "legal:research:bookmark",
+            "legal:research:admin"
         ]
     },
     {
         "role_type": "para_legal",
         "role_name": "Paralegal / Legal Assistant",
-        "description": "Legal search, case view/upload, and bookmarking access. Restricted from workflow building & tenant admin.",
+        "description": "Legal research search, judgment view/upload, and bookmarking access.",
         "is_system_preset": True,
         "permissions": [
             "legal:research:query",
-            "legal:case_management:view",
-            "legal:case_management:upload",
-            "legal:case_management:bookmark",
-            "kb:base:view"
+            "legal:research:view",
+            "legal:research:upload",
+            "legal:research:bookmark",
+            "admin:knowledge:view",
+            "nodes:catalog:view"
         ]
     },
     {
         "role_type": "legal_analyst",
         "role_name": "Senior Legal Analyst",
-        "description": "Full legal domain research, advanced ingestion, and workflow execution access",
+        "description": "Full legal research, document ingestion, and workflow execution access",
         "is_system_preset": True,
         "permissions": [
             "legal:research:query",
-            "legal:case_management:view",
-            "legal:case_management:upload",
-            "legal:case_management:edit",
-            "legal:case_management:bookmark",
-            "kb:base:view",
-            "kb:document:ingest",
-            "workflow:builder:execute",
-            "node:catalog:view"
+            "legal:research:view",
+            "legal:research:upload",
+            "legal:research:edit",
+            "legal:research:bookmark",
+            "admin:knowledge:view",
+            "admin:knowledge:ingest",
+            "workflows:builder:view",
+            "workflows:builder:execute",
+            "nodes:catalog:view"
         ]
     },
     {
         "role_type": "tenant_user",
         "role_name": "Standard User",
-        "description": "Default least-privilege baseline access for new tenant members",
+        "description": "Baseline access for standard tenant users (Legal search, KB reading)",
         "is_system_preset": True,
         "permissions": [
             "legal:research:query",
-            "kb:base:view",
-            "node:catalog:view"
+            "legal:research:view",
+            "admin:knowledge:view",
+            "nodes:catalog:view"
         ]
     }
 ]
 
 
 async def seed_rbac(db: AsyncSession):
-    # 1. Seed Permissions Registry
-    for perm_data in PERMISSIONS_REGISTRY:
-        stmt = select(PermissionDB).where(PermissionDB.id == perm_data["id"])
+    # 1. Seed Canonical Modules (ModuleDB) and Auto-Generate Atomic Permissions (PermissionDB)
+    for mod_data in MODULES_REGISTRY:
+        stmt = select(ModuleDB).where(ModuleDB.id == mod_data["id"], ModuleDB.customer_id.is_(None))
         res = await db.execute(stmt)
-        existing_perm = res.scalar_one_or_none()
-        if not existing_perm:
-            db.add(PermissionDB(**perm_data))
+        existing_mod = res.scalar_one_or_none()
+
+        if not existing_mod:
+            existing_mod = ModuleDB(
+                id=mod_data["id"],
+                customer_id=None,
+                module=mod_data["module"],
+                submodule=mod_data.get("submodule"),
+                label=mod_data["label"],
+                description=mod_data.get("description"),
+                route_patterns=mod_data["route_patterns"],
+                icon=mod_data.get("icon"),
+                display_order=mod_data.get("display_order", 0)
+            )
+            db.add(existing_mod)
         else:
-            existing_perm.module = perm_data["module"]
-            existing_perm.submodule = perm_data.get("submodule")
-            existing_perm.label = perm_data["label"]
-            existing_perm.description = perm_data["description"]
+            existing_mod.module = mod_data["module"]
+            existing_mod.submodule = mod_data.get("submodule")
+            existing_mod.label = mod_data["label"]
+            existing_mod.description = mod_data.get("description")
+            existing_mod.route_patterns = mod_data["route_patterns"]
+            existing_mod.icon = mod_data.get("icon")
+            existing_mod.display_order = mod_data.get("display_order", 0)
+        await db.commit()
+
+        # Seed atomic action permissions for this module
+        for act in mod_data.get("actions", []):
+            perm_id = f"{mod_data['module']}:{mod_data.get('submodule', 'all')}:{act['action']}"
+            p_stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+            p_res = await db.execute(p_stmt)
+            existing_p = p_res.scalar_one_or_none()
+
+            if not existing_p:
+                db.add(PermissionDB(
+                    id=perm_id,
+                    module_id=mod_data["id"],
+                    module=mod_data["module"],
+                    submodule=mod_data.get("submodule"),
+                    action=act["action"],
+                    is_route_guard=act.get("is_route_guard", False),
+                    target_layer="both",
+                    label=act["label"],
+                    description=act.get("description")
+                ))
+            else:
+                existing_p.module_id = mod_data["id"]
+                existing_p.module = mod_data["module"]
+                existing_p.submodule = mod_data.get("submodule")
+                existing_p.action = act["action"]
+                existing_p.is_route_guard = act.get("is_route_guard", False)
+                existing_p.label = act["label"]
+                existing_p.description = act.get("description")
+        await db.commit()
+
+    # Also register wildcards if needed
+    wildcards = [
+        {"id": "*:*:*", "module": "admin", "submodule": "all", "action": "*", "label": "Global System Super Admin", "description": "Unrestricted system super admin access", "is_route_guard": True},
+        {"id": "admin:*:*", "module": "admin", "submodule": "all", "action": "*", "label": "Admin Domain Full Access", "description": "Full access to all admin submodules", "is_route_guard": True},
+        {"id": "legal:*:*", "module": "legal", "submodule": "all", "action": "*", "label": "Legal Domain Full Access", "description": "Full access to all legal submodules", "is_route_guard": True},
+        {"id": "kb:*:*", "module": "knowledge", "submodule": "all", "action": "*", "label": "Knowledge Domain Full Access", "description": "Full access to knowledge submodules", "is_route_guard": True},
+        {"id": "workflow:*:*", "module": "workflows", "submodule": "all", "action": "*", "label": "Workflows Domain Full Access", "description": "Full access to workflow submodules", "is_route_guard": True},
+        {"id": "node:*:*", "module": "nodes", "submodule": "all", "action": "*", "label": "Nodes Domain Full Access", "description": "Full access to node submodules", "is_route_guard": True},
+    ]
+    for w in wildcards:
+        w_stmt = select(PermissionDB).where(PermissionDB.id == w["id"])
+        w_res = await db.execute(w_stmt)
+        if not w_res.scalar_one_or_none():
+            db.add(PermissionDB(
+                id=w["id"],
+                module=w["module"],
+                submodule=w["submodule"],
+                action=w["action"],
+                is_route_guard=w["is_route_guard"],
+                target_layer="both",
+                label=w["label"],
+                description=w["description"]
+            ))
     await db.commit()
 
-    # 2. Seed System Preset Roles & Permissions
+    # 2. Seed System Preset Roles & Link Permissions
     for role_data in ROLE_PRESETS:
         perms_list = list(role_data.get("permissions", []))
         stmt = select(RoleDB).where(RoleDB.role_type == role_data["role_type"], RoleDB.customer_id.is_(None))
@@ -210,14 +527,17 @@ async def seed_rbac(db: AsyncSession):
         await db.commit()
 
         for p_id in perms_list:
-            # Ensure permission exists in PermissionDB to satisfy FK
+            # Ensure permission exists in PermissionDB
             chk_perm = await db.execute(select(PermissionDB).where(PermissionDB.id == p_id))
             if not chk_perm.scalar_one_or_none():
                 mod_key = p_id.split(":")[0] if ":" in p_id else "general"
+                sub_key = p_id.split(":")[1] if ":" in p_id and len(p_id.split(":")) > 1 else "general"
+                act_key = p_id.split(":")[2] if ":" in p_id and len(p_id.split(":")) > 2 else "view"
                 db.add(PermissionDB(
                     id=p_id,
                     module=mod_key,
-                    submodule="general",
+                    submodule=sub_key,
+                    action=act_key,
                     label=p_id,
                     description=p_id,
                     target_layer="both"
@@ -231,22 +551,37 @@ async def seed_rbac(db: AsyncSession):
             ))
         await db.commit()
 
-    # 3. Seed Route Permissions
-    for route_data in DEFAULT_ROUTE_PERMISSIONS:
-        stmt = select(RoutePermissionDB).where(RoutePermissionDB.pattern == route_data["pattern"])
-        res = await db.execute(stmt)
-        existing_rp = res.scalar_one_or_none()
-        if not existing_rp:
-            db.add(RoutePermissionDB(**route_data))
-        else:
-            existing_rp.permission_id = route_data["permission_id"]
-            existing_rp.module = route_data.get("module")
-            existing_rp.submodule = route_data.get("submodule")
-            existing_rp.label = route_data.get("label")
-            existing_rp.description = route_data.get("description")
+    # 3. Synchronize RoutePermissionDB from ModuleDB routes for gateway middleware
+    for mod_data in MODULES_REGISTRY:
+        # Find view action permission
+        view_action = next((a for a in mod_data.get("actions", []) if a.get("is_route_guard")), mod_data.get("actions", [{}])[0])
+        action_name = view_action.get("action", "view")
+        perm_id = f"{mod_data['module']}:{mod_data.get('submodule', 'all')}:{action_name}"
+
+        for pattern in mod_data.get("route_patterns", []):
+            stmt = select(RoutePermissionDB).where(RoutePermissionDB.pattern == pattern, RoutePermissionDB.customer_id.is_(None))
+            res = await db.execute(stmt)
+            existing_rp = res.scalar_one_or_none()
+            if not existing_rp:
+                db.add(RoutePermissionDB(
+                    id=generate_uuid(),
+                    customer_id=None,
+                    pattern=pattern,
+                    permission_id=perm_id,
+                    module=mod_data["module"],
+                    submodule=mod_data.get("submodule"),
+                    label=mod_data["label"],
+                    description=mod_data.get("description")
+                ))
+            else:
+                existing_rp.permission_id = perm_id
+                existing_rp.module = mod_data["module"]
+                existing_rp.submodule = mod_data.get("submodule")
+                existing_rp.label = mod_data["label"]
+                existing_rp.description = mod_data.get("description")
     await db.commit()
 
-    print("Successfully seeded 3-tier RBAC permissions, route permissions, and system preset roles.")
+    print("Successfully seeded canonical Module SOT, atomic permissions, and preset roles.")
 
 
 if __name__ == "__main__":

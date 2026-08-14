@@ -131,6 +131,49 @@ async def login(request: LoginRequest):
             perm_res = await session.execute(perm_stmt)
             permissions_list = [p for p in perm_res.scalars().all()]
 
+        if not permissions_list:
+            if user.role == "system_admin" or role_type_val == "system_admin":
+                permissions_list = ["*:*:*"]
+            elif user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
+                permissions_list = [
+                    "admin:dashboard:view",
+                    "admin:user_management:read",
+                    "admin:user_management:manage",
+                    "admin:role_management:view",
+                    "admin:role_management:manage",
+                    "admin:tenant_settings:configure",
+                    "legal:*:*",
+                    "kb:*:*",
+                    "workflow:*:*",
+                    "node:*:*",
+                ]
+            elif user.role == "para_legal" or role_type_val == "para_legal":
+                permissions_list = [
+                    "legal:research:query",
+                    "legal:case_management:view",
+                    "legal:case_management:upload",
+                    "legal:case_management:bookmark",
+                    "kb:base:view",
+                ]
+            elif user.role == "legal_analyst" or role_type_val == "legal_analyst":
+                permissions_list = [
+                    "legal:research:query",
+                    "legal:case_management:view",
+                    "legal:case_management:upload",
+                    "legal:case_management:edit",
+                    "legal:case_management:bookmark",
+                    "kb:base:view",
+                    "kb:document:ingest",
+                    "workflow:builder:execute",
+                    "node:catalog:view",
+                ]
+            else:
+                permissions_list = [
+                    "legal:research:query",
+                    "kb:base:view",
+                    "node:catalog:view",
+                ]
+
         # Resolve destination default route for redirection based on domain_schema default_path & role
         if (
             user.role in ["system_admin", "admin"]

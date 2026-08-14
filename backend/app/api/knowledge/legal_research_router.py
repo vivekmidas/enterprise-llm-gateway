@@ -43,6 +43,165 @@ class SavedQueryCreate(BaseModel):
     domain: str = "legal"
 
 
+class LegalIngestRequest(BaseModel):
+    title: Optional[str] = None
+    case_id: Optional[str] = None
+    document_text: Optional[str] = None
+    corpus_type: Optional[str] = "case_material"  # firm_corpus, case_material, statutory
+    metadata: Optional[Dict[str, Any]] = None
+
+
+# --- Tenant Workflow Dispatcher Helper ---
+
+async def _execute_tenant_workflow_if_configured(
+    webhook_path: str,
+    payload_data: Any,
+    current_user: User,
+    session: AsyncSession
+) -> Optional[Dict[str, Any]]:
+    """
+    Checks if tenant has a custom workflow registered for this webhook path / intent.
+    If found, executes the workflow via dynamic workflow execution engine.
+    """
+    tenant_id = getattr(current_user, "customer_id", None)
+    if not tenant_id:
+        return None
+
+    try:
+        from app.models.db_models import WorkflowDB, WorkflowNodePropertyDB
+        from app.workflows.store import load_workflow_from_store
+        from app.workflows.executor import execute_dynamic_agent
+        from app.nodes.registry import NodesRegistry
+        import time
+
+        normalized_path = webhook_path.strip("/")
+        stmt = (
+            select(WorkflowDB.id, WorkflowNodePropertyDB.agent_name, WorkflowNodePropertyDB.agent_node_id, WorkflowNodePropertyDB.properties)
+            .join(WorkflowNodePropertyDB, WorkflowNodePropertyDB.workflow_id == WorkflowDB.id)
+            .where(
+                WorkflowDB.customer_id == tenant_id,
+                WorkflowDB.is_enabled == True
+            )
+        )
+        res = await session.execute(stmt)
+        matched = None
+        for workflow_id, agent_name, agent_node_id, properties in res.all():
+            if not properties or not isinstance(properties, dict):
+                continue
+            base_path = properties.get("base_path", "").strip("/")
+            if base_path and (base_path == normalized_path or base_path == normalized_path.split("/")[-1]):
+                matched = (workflow_id, agent_name, agent_node_id, properties)
+                break
+
+        if not matched:
+            return None
+
+        workflow_id, agent_name, agent_node_id, properties = matched
+        workflow_def_obj = await load_workflow_from_store(workflow_id)
+        workflow_def = workflow_def_obj.model_dump()
+
+        raw_payload = json.dumps(payload_data) if not isinstance(payload_data, str) else payload_data
+        trace_id = f"{agent_name}-{int(time.time())}"
+
+        node_instance = NodesRegistry.get_node(agent_name)
+        if node_instance:
+            node_instance._workflows[agent_node_id] = workflow_def
+
+        user_data = {
+            "user_id": str(current_user.id),
+            "customer_id": current_user.customer_id,
+            "role": current_user.role,
+            "status": True
+        }
+        context = {"user_data": user_data}
+
+        result = await execute_dynamic_agent(
+            workflow_def,
+            raw_payload,
+            trace_id,
+            context=context
+        )
+        return {
+            "workflow_executed": True,
+            "workflow_id": workflow_id,
+            "result": result
+        }
+    except Exception as e:
+        logger.warning("tenant_workflow_execution_failed_fallback_to_default", error=str(e), path=webhook_path)
+        return None
+
+
+# --- Ingest Endpoint ---
+
+@router.post("/ingest")
+async def ingest_legal_document(
+    payload: LegalIngestRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Ingest legal documents/case files.
+    Dispatches to tenant-configured workflow if linked; otherwise runs standard extraction & audit logging.
+    """
+    user_tenant_id = getattr(current_user, "customer_id", None)
+    
+    # 1. Check for tenant-specific workflow
+    workflow_res = await _execute_tenant_workflow_if_configured(
+        webhook_path="legal/ingest",
+        payload_data=payload.model_dump(),
+        current_user=current_user,
+        session=db
+    )
+    if workflow_res:
+        # Log Audit entry for workflow execution
+        audit_entry = LegalAuditLogDB(
+            user_id=str(current_user.id),
+            customer_id=user_tenant_id,
+            role=current_user.role or "user",
+            action="WORKFLOW_INGEST",
+            query_text=payload.title or "Ingest Document",
+            results_count=1,
+            details_json={
+                "workflow_id": workflow_res.get("workflow_id"),
+                "case_id": payload.case_id,
+                "corpus_type": payload.corpus_type
+            }
+        )
+        db.add(audit_entry)
+        await db.commit()
+        return {
+            "status": "success",
+            "message": "Document processed via tenant workflow",
+            "workflow_result": workflow_res.get("result")
+        }
+
+    # 2. Default Ingestion Processing
+    doc_title = payload.title or f"Document-{len(payload.document_text or '')}chars"
+    audit_entry = LegalAuditLogDB(
+        user_id=str(current_user.id),
+        customer_id=user_tenant_id,
+        role=current_user.role or "user",
+        action="INGEST",
+        query_text=doc_title,
+        results_count=1,
+        details_json={
+            "case_id": payload.case_id,
+            "corpus_type": payload.corpus_type,
+            "char_count": len(payload.document_text or ""),
+            "metadata": payload.metadata or {}
+        }
+    )
+    db.add(audit_entry)
+    await db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Successfully indexed '{doc_title}' into firm legal corpus.",
+        "case_id": payload.case_id,
+        "corpus_type": payload.corpus_type,
+    }
+
+
 # --- Intent Parser Helper ---
 
 def parse_natural_language_intent(query_text: str) -> Dict[str, Any]:
@@ -86,8 +245,8 @@ def parse_natural_language_intent(query_text: str) -> Dict[str, Any]:
             intent["extracted_court_code"] = c_code
             break
 
-    # 3. Extract Statute / Section (e.g. CGST Sec 107, Article 226, IPC 498A)
-    statute_match = re.search(r"((?:CGST|IGST|CrPC|IPC|CPC|Arms Act|Customs Act|Finance Act)(?:\s+Act)?(?:\s+(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)?)", text, re.IGNORECASE)
+    # 3. Extract Statute / Section (e.g. CGST Sec 107, Article 226, IPC 498A, Section 148A)
+    statute_match = re.search(r"((?:CGST|IGST|CrPC|IPC|CPC|Arms Act|Customs Act|Finance Act|Income Tax Act|Income Tax)(?:\s+Act)?(?:\s+(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)?|(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)", text, re.IGNORECASE)
     if statute_match:
         intent["extracted_statute"] = statute_match.group(1).strip()
 
@@ -110,10 +269,37 @@ async def search_legal_cases(
 ):
     """
     Hybrid AI Semantic Search with Natural Language Query Intent Parsing.
-    Auto-extracts Judge, Court, Statute, and Concept from query text, executes search,
-    and logs accounting audit entry.
+    Dispatches to tenant-configured workflow if linked; otherwise executes default hybrid semantic search.
     """
-    user_tenant_id = current_user.customer_id
+    user_tenant_id = getattr(current_user, "customer_id", None)
+
+    # 1. Check for tenant-specific workflow
+    workflow_res = await _execute_tenant_workflow_if_configured(
+        webhook_path="legal/search",
+        payload_data=payload.model_dump(),
+        current_user=current_user,
+        session=db
+    )
+    if workflow_res:
+        audit_entry = LegalAuditLogDB(
+            user_id=str(current_user.id),
+            customer_id=user_tenant_id,
+            role=current_user.role or "user",
+            action="WORKFLOW_SEARCH",
+            query_text=payload.query,
+            results_count=1,
+            details_json={"workflow_id": workflow_res.get("workflow_id")}
+        )
+        db.add(audit_entry)
+        await db.commit()
+        return {
+            "query": payload.query,
+            "workflow_executed": True,
+            "workflow_id": workflow_res.get("workflow_id"),
+            "result": workflow_res.get("result")
+        }
+
+    # 2. Default Semantic + Intent Search
     intent = parse_natural_language_intent(payload.query)
 
     # Determine effective filters
@@ -125,7 +311,7 @@ async def search_legal_cases(
     # Load local JSON knowledge graph records
     results = []
     kg_files = glob.glob("data/extracted_judgments/*.json")
-    
+
     loaded_items = []
     for fpath in kg_files:
         try:

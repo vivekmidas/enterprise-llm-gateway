@@ -8,8 +8,9 @@ import uuid
 from app.core.database import get_db
 from app.api.auth.dependencies import get_current_user, require_admin_or_system_admin, require_system_admin
 from app.core.types.users import User
-from app.models.db_models import RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB
-from app.db.seed_rbac import PERMISSIONS_REGISTRY, DEFAULT_ROUTE_PERMISSIONS
+# BLOCK COMMENT: CANONICAL MODULE SOT & ROUTE MATRIX ENDPOINTS
+from app.models.db_models import ModuleDB, RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB
+from app.db.seed_rbac import MODULES_REGISTRY, ROLE_PRESETS
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +63,219 @@ class RoutePermissionCreateRequest(BaseModel):
     submodule: Optional[str] = None
     label: Optional[str] = None
     description: Optional[str] = None
+
+
+class ModuleActionItem(BaseModel):
+    action: str
+    is_route_guard: Optional[bool] = False
+    label: str
+    description: Optional[str] = None
+
+class CustomModuleCreateRequest(BaseModel):
+    id: str
+    customer_id: Optional[str] = None
+    module: str
+    submodule: Optional[str] = None
+    label: str
+    description: Optional[str] = None
+    route_patterns: List[str]
+    icon: Optional[str] = "Layers"
+    display_order: Optional[int] = 50
+    actions: Optional[List[ModuleActionItem]] = []
+
+
+@router.get("/modules", response_model=List[dict])
+async def list_modules_and_actions(
+    customer_id: Optional[str] = Query(None, description="Optional tenant customer_id filter"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns canonical modules, their route patterns, and their atomic capability action permissions.
+    Resolves tenant-specific overrides merged with global system defaults.
+    """
+    target_cid = None
+    if current_user.role == "system_admin":
+        if customer_id and str(customer_id).strip() not in ("all", "null", "None", "system", "system-wide", ""):
+            target_cid = str(customer_id).strip()
+    else:
+        target_cid = str(current_user.customer_id) if current_user.customer_id else None
+
+    # Query global default modules and tenant custom modules
+    filters = [ModuleDB.customer_id.is_(None)]
+    if target_cid:
+        filters.append(ModuleDB.customer_id == target_cid)
+
+    stmt = select(ModuleDB).where(or_(*filters)).order_by(ModuleDB.display_order, ModuleDB.module)
+    res = await db.execute(stmt)
+    all_mods = res.scalars().all()
+
+    # Deduplicate: tenant-specific module overrides global default with same id
+    mod_map = {}
+    for m in all_mods:
+        if m.id not in mod_map or m.customer_id is not None:
+            mod_map[m.id] = m
+
+    sorted_mods = sorted(mod_map.values(), key=lambda x: (x.display_order or 0, x.module, x.label))
+
+    # Fetch all permissions to attach actions to modules
+    p_res = await db.execute(select(PermissionDB))
+    all_perms = p_res.scalars().all()
+    perms_by_module_id = {}
+    perms_by_mod_submod = {}
+    for p in all_perms:
+        if p.module_id:
+            perms_by_module_id.setdefault(p.module_id, []).append(p)
+        key = f"{p.module}:{p.submodule or 'all'}"
+        perms_by_mod_submod.setdefault(key, []).append(p)
+
+    out = []
+    for m in sorted_mods:
+        # Match permissions by module_id or module:submodule
+        matched_perms = perms_by_module_id.get(m.id)
+        if not matched_perms:
+            matched_perms = perms_by_mod_submod.get(f"{m.module}:{m.submodule or 'all'}", [])
+
+        actions_list = [
+            {
+                "id": p.id,
+                "action": p.action or (p.id.split(":")[-1] if ":" in p.id else "view"),
+                "is_route_guard": p.is_route_guard or (p.action in ("view", "read", "query")),
+                "label": p.label,
+                "description": p.description or ""
+            }
+            for p in matched_perms
+        ]
+
+        out.append({
+            "id": m.id,
+            "customer_id": m.customer_id,
+            "module": m.module,
+            "submodule": m.submodule,
+            "label": m.label,
+            "description": m.description,
+            "route_patterns": m.route_patterns if isinstance(m.route_patterns, list) else [],
+            "icon": m.icon,
+            "display_order": m.display_order,
+            "actions": actions_list
+        })
+
+    return out
+
+
+@router.post("/modules/custom", response_model=dict, status_code=201)
+async def create_custom_module(
+    payload: CustomModuleCreateRequest,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Creates or updates a custom module with route patterns and action capabilities for a tenant."""
+    target_cid = current_user.customer_id
+    if current_user.role == "system_admin":
+        target_cid = payload.customer_id if payload.customer_id and str(payload.customer_id).strip() not in ("null", "None", "system") else None
+    elif payload.customer_id and str(payload.customer_id) != str(current_user.customer_id):
+        raise HTTPException(status_code=403, detail="Not authorized to create modules for another tenant")
+
+    mod_id = payload.id.strip().lower().replace(" ", "_")
+    stmt = select(ModuleDB).where(ModuleDB.id == mod_id, ModuleDB.customer_id == target_cid)
+    res = await db.execute(stmt)
+    existing_mod = res.scalar_one_or_none()
+
+    if not existing_mod:
+        existing_mod = ModuleDB(
+            id=mod_id,
+            customer_id=target_cid,
+            module=payload.module.strip().lower(),
+            submodule=payload.submodule.strip().lower() if payload.submodule else None,
+            label=payload.label.strip(),
+            description=payload.description or "",
+            route_patterns=payload.route_patterns,
+            icon=payload.icon or "Layers",
+            display_order=payload.display_order or 50
+        )
+        db.add(existing_mod)
+    else:
+        existing_mod.module = payload.module.strip().lower()
+        existing_mod.submodule = payload.submodule.strip().lower() if payload.submodule else None
+        existing_mod.label = payload.label.strip()
+        existing_mod.description = payload.description or ""
+        existing_mod.route_patterns = payload.route_patterns
+        existing_mod.icon = payload.icon or "Layers"
+        existing_mod.display_order = payload.display_order or 50
+    await db.commit()
+
+    # Seed action permissions for this module
+    actions_created = []
+    actions_to_seed = payload.actions if payload.actions else [
+        ModuleActionItem(action="view", is_route_guard=True, label=f"View {payload.label}"),
+        ModuleActionItem(action="create", label=f"Create {payload.label}"),
+        ModuleActionItem(action="edit", label=f"Edit {payload.label}"),
+        ModuleActionItem(action="delete", label=f"Delete {payload.label}")
+    ]
+
+    for act in actions_to_seed:
+        perm_id = f"{existing_mod.module}:{existing_mod.submodule or 'all'}:{act.action}"
+        p_stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
+        p_res = await db.execute(p_stmt)
+        existing_p = p_res.scalar_one_or_none()
+        if not existing_p:
+            db.add(PermissionDB(
+                id=perm_id,
+                module_id=existing_mod.id,
+                module=existing_mod.module,
+                submodule=existing_mod.submodule,
+                action=act.action,
+                is_route_guard=act.is_route_guard or (act.action in ("view", "read", "query")),
+                target_layer="both",
+                label=act.label,
+                description=act.description or ""
+            ))
+        else:
+            existing_p.module_id = existing_mod.id
+            existing_p.action = act.action
+            existing_p.is_route_guard = act.is_route_guard
+            if act.label:
+                existing_p.label = act.label
+            if act.description is not None:
+                existing_p.description = act.description
+        actions_created.append(perm_id)
+    await db.commit()
+
+    return {
+        "id": existing_mod.id,
+        "customer_id": existing_mod.customer_id,
+        "module": existing_mod.module,
+        "submodule": existing_mod.submodule,
+        "label": existing_mod.label,
+        "route_patterns": existing_mod.route_patterns,
+        "actions": actions_created
+    }
+
+
+@router.delete("/modules/{module_id}", status_code=204)
+async def delete_custom_module(
+    module_id: str,
+    current_user: User = Depends(get_current_user),
+    _: None = Depends(require_admin_or_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Deletes a custom module definition."""
+    stmt = select(ModuleDB).where(ModuleDB.id == module_id)
+    res = await db.execute(stmt)
+    mod = res.scalar_one_or_none()
+    if not mod:
+        raise HTTPException(status_code=404, detail="Module not found")
+
+    if mod.customer_id is None and current_user.role != "system_admin":
+        raise HTTPException(status_code=403, detail="System default modules can only be removed by System Admin")
+
+    if mod.customer_id is not None and current_user.role != "system_admin" and str(mod.customer_id) != str(current_user.customer_id):
+        raise HTTPException(status_code=403, detail="Not authorized to delete module for another tenant")
+
+    await db.delete(mod)
+    await db.commit()
+    return None
 
 
 @router.post("/modules", response_model=dict, status_code=201)
@@ -230,42 +444,70 @@ async def delete_permission(
     return {"status": "success", "message": f"Permission '{perm_id}' deleted successfully"}
 
 
+# BLOCK COMMENT: ROUTE PERMISSIONS REGISTRY & BINDINGS API
 @router.get("/route-permissions", response_model=List[dict])
-
-async def list_route_permissions(
+async def get_route_permissions(
+    customer_id: Optional[str] = Query(None, description="Optional tenant customer_id filter"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Returns the database registry of route patterns and required permission IDs
-    for dynamic frontend/gateway route authorization.
+    Returns active route permission rules resolved directly from the canonical ModuleDB registry.
     """
-    result = await db.execute(select(RoutePermissionDB))
-    routes = result.scalars().all()
-    if routes:
-        return [
-            {
-                "id": r.id,
-                "pattern": r.pattern,
-                "permission": r.permission_id,
-                "module": r.module,
-                "submodule": r.submodule,
-                "label": r.label,
-                "description": r.description,
-            }
-            for r in routes
-        ]
-    return [
-        {
-            "id": f"default_{idx}",
-            "pattern": r["pattern"],
-            "permission": r["permission_id"],
-            "module": r.get("module"),
-            "submodule": r.get("submodule"),
-            "label": r.get("label"),
-            "description": r.get("description"),
-        }
-        for idx, r in enumerate(DEFAULT_ROUTE_PERMISSIONS)
-    ]
+    target_cid = None
+    if current_user.role == "system_admin":
+        if customer_id and str(customer_id).strip() not in ("all", "null", "None", "system", "system-wide", ""):
+            target_cid = str(customer_id).strip()
+    else:
+        target_cid = str(current_user.customer_id) if current_user.customer_id else None
+
+    # Query modules for target tenant or global
+    filters = [ModuleDB.customer_id.is_(None)]
+    if target_cid:
+        filters.append(ModuleDB.customer_id == target_cid)
+
+    stmt = select(ModuleDB).where(or_(*filters)).order_by(ModuleDB.display_order)
+    res = await db.execute(stmt)
+    mods = res.scalars().all()
+
+    # Deduplicate by module ID
+    mod_map = {}
+    for m in mods:
+        if m.id not in mod_map or m.customer_id is not None:
+            mod_map[m.id] = m
+
+    # Fetch view action permissions
+    p_res = await db.execute(select(PermissionDB))
+    all_perms = p_res.scalars().all()
+    guard_perm_by_mod_id = {}
+    guard_perm_by_mod_sub = {}
+    for p in all_perms:
+        if p.is_route_guard or p.action in ("view", "read", "query"):
+            if p.module_id:
+                guard_perm_by_mod_id[p.module_id] = p
+            guard_perm_by_mod_sub[f"{p.module}:{p.submodule or 'all'}"] = p
+
+    routes = []
+    idx = 0
+    for m in mod_map.values():
+        guard_p = guard_perm_by_mod_id.get(m.id) or guard_perm_by_mod_sub.get(f"{m.module}:{m.submodule or 'all'}")
+        perm_id = guard_p.id if guard_p else f"{m.module}:{m.submodule or 'all'}:view"
+
+        for pattern in (m.route_patterns if isinstance(m.route_patterns, list) else []):
+            routes.append({
+                "id": f"{m.id}_{idx}",
+                "pattern": pattern,
+                "permission": perm_id,
+                "permission_id": perm_id,
+                "module": m.module,
+                "submodule": m.submodule,
+                "label": m.label,
+                "description": m.description,
+                "customer_id": m.customer_id
+            })
+            idx += 1
+
+    return routes
 
 
 @router.post("/route-permissions", response_model=dict, status_code=201)
@@ -285,6 +527,21 @@ async def create_route_permission_binding(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"Route pattern '{pattern}' is already bound")
 
+    # Ensure permission exists in PermissionDB to satisfy foreign key
+    chk_perm = await db.execute(select(PermissionDB).where(PermissionDB.id == permission_id))
+    if not chk_perm.scalar_one_or_none():
+        mod_key = payload.module or (permission_id.split(":")[0] if ":" in permission_id else "general")
+        submod_key = payload.submodule or (permission_id.split(":")[1] if permission_id.count(":") >= 2 else "general")
+        db.add(PermissionDB(
+            id=permission_id,
+            module=mod_key,
+            submodule=submod_key,
+            label=payload.label or permission_id,
+            description=payload.description or "",
+            target_layer="both"
+        ))
+        await db.commit()
+
     new_rp = RoutePermissionDB(
         id=str(uuid.uuid4()),
         pattern=pattern,
@@ -302,6 +559,7 @@ async def create_route_permission_binding(
         "id": new_rp.id,
         "pattern": new_rp.pattern,
         "permission": new_rp.permission_id,
+        "permission_id": new_rp.permission_id,
         "module": new_rp.module,
         "submodule": new_rp.submodule,
         "label": new_rp.label,
@@ -322,13 +580,40 @@ async def update_route_permission_binding(
     if not rp:
         raise HTTPException(status_code=404, detail="Route permission binding not found")
 
-    rp.pattern = payload.pattern.strip()
-    rp.permission_id = payload.permission_id.strip().lower()
-    if payload.module:
+    pattern = payload.pattern.strip()
+    permission_id = payload.permission_id.strip().lower()
+
+    if not pattern or not permission_id:
+        raise HTTPException(status_code=400, detail="pattern and permission_id are required")
+
+    # Check pattern conflict if pattern changed
+    if rp.pattern != pattern:
+        existing_pat = await db.execute(select(RoutePermissionDB).where(RoutePermissionDB.pattern == pattern))
+        if existing_pat.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Route pattern '{pattern}' is already in use")
+
+    # Ensure permission exists in PermissionDB
+    chk_perm = await db.execute(select(PermissionDB).where(PermissionDB.id == permission_id))
+    if not chk_perm.scalar_one_or_none():
+        mod_key = payload.module or (permission_id.split(":")[0] if ":" in permission_id else "general")
+        submod_key = payload.submodule or (permission_id.split(":")[1] if permission_id.count(":") >= 2 else "general")
+        db.add(PermissionDB(
+            id=permission_id,
+            module=mod_key,
+            submodule=submod_key,
+            label=payload.label or permission_id,
+            description=payload.description or "",
+            target_layer="both"
+        ))
+        await db.commit()
+
+    rp.pattern = pattern
+    rp.permission_id = permission_id
+    if payload.module is not None:
         rp.module = payload.module
-    if payload.submodule:
+    if payload.submodule is not None:
         rp.submodule = payload.submodule
-    if payload.label:
+    if payload.label is not None:
         rp.label = payload.label
     if payload.description is not None:
         rp.description = payload.description
@@ -340,6 +625,7 @@ async def update_route_permission_binding(
         "id": rp.id,
         "pattern": rp.pattern,
         "permission": rp.permission_id,
+        "permission_id": rp.permission_id,
         "module": rp.module,
         "submodule": rp.submodule,
         "label": rp.label,
@@ -362,6 +648,27 @@ async def delete_route_permission_binding(
     await db.delete(rp)
     await db.commit()
     return None
+
+
+# BLOCK COMMENT: SYNC / RESEED DEFAULT ROUTE PERMISSIONS TO DB ENDPOINT
+@router.post("/route-permissions/sync-defaults", response_model=dict)
+async def sync_default_route_permissions(
+    current_user: User = Depends(require_system_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Synchronizes default route permissions from seed definitions into RoutePermissionDB.
+    Creates or updates default route mappings. System Admin only.
+    """
+    from app.db.seed_rbac import seed_rbac
+    await seed_rbac(db)
+    result = await db.execute(select(RoutePermissionDB))
+    count = len(result.scalars().all())
+    return {
+        "status": "success",
+        "message": f"Successfully synchronized {count} route permissions to database.",
+        "total_route_permissions": count
+    }
 
 
 @router.get("/permissions", response_model=dict)

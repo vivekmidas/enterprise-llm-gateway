@@ -70,11 +70,30 @@ class RoleDB(Base):
     updated_at = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
 
+# BLOCK COMMENT: CANONICAL MODULE SOT & 3-TIER RBAC MODELS
+class ModuleDB(Base):
+    __tablename__ = "modules"
+    id = Column(String(50), primary_key=True, index=True)  # e.g., admin_knowledge, user_mgmt, etc.
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+    module = Column(String(50), nullable=False, index=True) # admin, knowledge, workflows, legal, etc.
+    submodule = Column(String(50), nullable=True, index=True) # knowledge, users, profiles, etc.
+    label = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    route_patterns = Column(JSON, nullable=False) # e.g. ["/admin/knowledge", "/knowledge"]
+    icon = Column(String(50), nullable=True) # Lucide icon name
+    display_order = Column(Integer, default=0)
+    created_at = Column(String(100), default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
+
+
 class PermissionDB(Base):
     __tablename__ = "permissions"
-    id = Column(String(100), primary_key=True, index=True)  # e.g., legal:case_management:view
+    id = Column(String(100), primary_key=True, index=True)  # e.g., admin:knowledge:view, admin:knowledge:create
+    module_id = Column(String(50), ForeignKey("modules.id", ondelete="CASCADE"), nullable=True, index=True)
     module = Column(String(50), nullable=False, index=True) # legal, knowledge, workflows, nodes, admin
     submodule = Column(String(50), nullable=True, index=True) # case_management, research, user_management, etc.
+    action = Column(String(50), nullable=True, index=True) # view, create, edit, delete, ingest, query, execute
+    is_route_guard = Column(Boolean, default=False) # True if this action grants navigation & entry to the route
     target_layer = Column(String(20), default="both")       # ui, api, both
     label = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
@@ -90,7 +109,8 @@ class RolePermissionDB(Base):
 class RoutePermissionDB(Base):
     __tablename__ = "route_permissions"
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
-    pattern = Column(String(150), nullable=False, unique=True, index=True)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+    pattern = Column(String(150), nullable=False, index=True)
     permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
     module = Column(String(50), nullable=True, index=True)
     submodule = Column(String(50), nullable=True, index=True)

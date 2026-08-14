@@ -94,6 +94,12 @@ def _refresh_permissions_table(sync_conn):
     columns = {column["name"] for column in inspector.get_columns("permissions")}
     if "submodule" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN submodule VARCHAR(50)")
+    if "module_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN module_id VARCHAR(50)")
+    if "action" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN action VARCHAR(50)")
+    if "is_route_guard" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN is_route_guard BOOLEAN DEFAULT 0")
 
 
 def _refresh_route_permissions_table(sync_conn):
@@ -102,6 +108,8 @@ def _refresh_route_permissions_table(sync_conn):
         return
 
     columns = {column["name"] for column in inspector.get_columns("route_permissions")}
+    if "customer_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN customer_id VARCHAR(36)")
     if "module" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN module VARCHAR(50)")
     if "submodule" not in columns:
@@ -245,6 +253,10 @@ async def seed_default_customer_and_admin(session: AsyncSession = None):
                 customer.name = "Default Customer"
             customer.status = "active"
             session.add(customer)
+
+        # 1.5. Seed Canonical Modules & RBAC Presets
+        from app.db.seed_rbac import seed_rbac
+        await seed_rbac(session)
 
         # 2. Seed default users with password "test" (admin@gateway.com, tenant_admin@gateway.com, user@gateway.com)
         default_users = [

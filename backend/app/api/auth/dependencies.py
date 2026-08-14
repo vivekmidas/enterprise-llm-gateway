@@ -83,9 +83,9 @@ async def resolve_role_for_user(
 
     # 5. Handle legacy role alias mappings
     alias_map = {
-        "admin": "tenant_admin",
+        "admin": "system_admin" if customer_id is None else "tenant_admin",
         "tenant_admin": "tenant_admin",
-        "administrator": "tenant_admin",
+        "administrator": "system_admin" if customer_id is None else "tenant_admin",
         "system_admin": "system_admin",
         "super_admin": "system_admin",
         "sysadmin": "system_admin",
@@ -226,6 +226,49 @@ async def get_current_user(
         perm_stmt = select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id)
         perm_res = await db.execute(perm_stmt)
         permissions_list = [p for p in perm_res.scalars().all()]
+
+    if not permissions_list:
+        if db_user.role == "system_admin" or role_type_val == "system_admin":
+            permissions_list = ["*:*:*"]
+        elif db_user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
+            permissions_list = [
+                "admin:dashboard:view",
+                "admin:user_management:read",
+                "admin:user_management:manage",
+                "admin:role_management:view",
+                "admin:role_management:manage",
+                "admin:tenant_settings:configure",
+                "legal:*:*",
+                "kb:*:*",
+                "workflow:*:*",
+                "node:*:*",
+            ]
+        elif db_user.role == "para_legal" or role_type_val == "para_legal":
+            permissions_list = [
+                "legal:research:query",
+                "legal:case_management:view",
+                "legal:case_management:upload",
+                "legal:case_management:bookmark",
+                "kb:base:view",
+            ]
+        elif db_user.role == "legal_analyst" or role_type_val == "legal_analyst":
+            permissions_list = [
+                "legal:research:query",
+                "legal:case_management:view",
+                "legal:case_management:upload",
+                "legal:case_management:edit",
+                "legal:case_management:bookmark",
+                "kb:base:view",
+                "kb:document:ingest",
+                "workflow:builder:execute",
+                "node:catalog:view",
+            ]
+        else:
+            permissions_list = [
+                "legal:research:query",
+                "kb:base:view",
+                "node:catalog:view",
+            ]
 
     # Compute default route
     if db_user.role == "system_admin" or role_type_val == "system_admin":
