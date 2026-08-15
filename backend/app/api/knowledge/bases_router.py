@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
-from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant, dynamic_api_guard
+from app.api.auth.dependencies import get_current_user, require_tenant, dynamic_api_guard
 from app.api.knowledge.schemas import KnowledgeBaseCreate, KnowledgeBaseResponse, KnowledgeBaseUpdate
 from app.core.config import get_settings
 from app.core.database import get_db

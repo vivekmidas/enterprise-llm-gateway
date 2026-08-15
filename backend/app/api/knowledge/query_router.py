@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_admin, get_current_user
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.core.database import get_db, AsyncSessionLocal
 from app.core.dependencies.retrieval import get_retrieval_service, get_response_generation_service
 from app.core.profile_resolver import ProfileResolver
@@ -153,7 +153,7 @@ async def rag_query(
 @router.post("/retrieve", response_model=RetrievalResponse, status_code=status.HTTP_200_OK)
 async def debug_retrieve(
     payload: DebugRetrievalRequest,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     db: AsyncSession = Depends(get_db),
 ):
@@ -202,7 +202,7 @@ async def debug_retrieve(
 @router.post("/generate", response_model=ResponseGenerationResult, status_code=status.HTTP_200_OK)
 async def debug_generate(
     payload: DebugGenerateRequest,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     generation_service: ResponseGenerationService = Depends(get_response_generation_service),
     db: AsyncSession = Depends(get_db),
 ):

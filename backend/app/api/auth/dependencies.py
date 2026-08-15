@@ -322,6 +322,8 @@ async def get_current_admin(
     if (
         current_user.role in ["system_admin", "admin", "tenant_admin"]
         or current_user.role_type in ["system_admin", "tenant_admin", "admin"]
+        or "*:*:*" in (current_user.permissions or [])
+        or has_permission_scope(current_user.permissions, "admin:*:*")
     ):
         return current_user
     raise HTTPException(status_code=403, detail="Admin or System Admin privileges required")
@@ -678,12 +680,21 @@ def require_system_admin(request: Request):
 
 @staticmethod
 def require_admin(request: Request):
-    user_role = (request.state.user.get("role") or "").lower()
-    if user_role not in ["admin", "tenant_admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
+    user_state = getattr(request.state, "user", None) or {}
+    user_role = (user_state.get("role") or "").lower()
+    role_type = (user_state.get("role_type") or "").lower()
+    permissions = user_state.get("permissions") or []
+    if (
+        user_role in ["admin", "tenant_admin"]
+        or role_type in ["admin", "tenant_admin"]
+        or "*:*:*" in permissions
+        or "admin:*:*" in permissions
+    ):
+        return user_state
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin privileges required",
+    )
 
 @staticmethod
 def require_admin_or_system_admin(request: Request):

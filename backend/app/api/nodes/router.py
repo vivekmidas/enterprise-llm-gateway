@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.models.db_models import CategoryDB, NodeDB, CustomerNodeDB
 from app.nodes.properties import property_entries_to_dict
 from app.workflows.store import propagate_node_defaults_to_workflows
-from app.api.auth.dependencies import get_current_user, get_current_admin, require_system_admin
+from app.api.auth.dependencies import get_current_user, require_system_admin, dynamic_api_guard
 from app.core.types.users import User
 from app.utils.json_sample_generator import generate_sample_json
 
@@ -938,7 +938,7 @@ async def get_json_samples(
 async def test_node_directly(
     payload: dict,
     node_name: Optional[str] = None,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db)
 ):
     """

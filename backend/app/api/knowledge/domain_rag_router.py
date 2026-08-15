@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_admin, require_tenant
+from app.api.auth.dependencies import require_tenant, dynamic_api_guard
 from app.core.config import get_settings
 from pathlib import Path
 from uuid import uuid4
@@ -48,7 +48,7 @@ async def direct_domain_rag_ingest(
     description: str | None = Form(None),
     tags: str | None = Form(None),
     doc_type: str | None = Form(None),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Development-friendly direct PDF upload + domain parsing endpoint.
@@ -144,7 +144,7 @@ async def process_domain_rag(
     kb_id: int,
     doc_id: int,
     domain: str = "legal",
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     customer_id = require_tenant(current_user)
@@ -191,7 +191,7 @@ async def process_domain_rag(
 async def get_domain_rag(
     kb_id: int,
     doc_id: int,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     customer_id = require_tenant(current_user)
@@ -209,7 +209,7 @@ async def get_domain_rag(
 async def approve_domain_rag(
     kb_id: int,
     doc_id: int,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     customer_id = require_tenant(current_user)

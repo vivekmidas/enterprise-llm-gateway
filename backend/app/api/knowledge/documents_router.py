@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant, dynamic_api_guard
+from app.api.auth.dependencies import get_current_user, require_tenant, dynamic_api_guard
 from app.api.knowledge.schemas import KnowledgeDocumentResponse, KnowledgeDocumentUpdate
 from app.core.database import get_db
 from app.core.types.users import User
