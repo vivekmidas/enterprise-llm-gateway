@@ -80,7 +80,8 @@ def project_profile_fields(
         "updated_at": profile.updated_at,
     }
 
-    is_admin = role in ("admin", "system_admin")
+    # BLOCK COMMENT: ADMIN CHECK INCLUDING TENANT ADMIN
+    is_admin = role in ("admin", "system_admin", "tenant_admin")
     if not is_admin:
         safe_settings = dict(active_settings)
         sensitive_keys = {"api_key", "llm_api_key", "secret", "password", "auth_token"}

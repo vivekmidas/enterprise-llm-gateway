@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path
+from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path, Query
 from typing import Optional, List, Tuple
 import structlog
 from app.core.types.users import User
@@ -26,13 +26,21 @@ def _mask_sensitive_properties(properties: dict) -> dict:
     # Do not mask sensitive properties on read to prevent auth issues on save
     return properties
 
+# BLOCK COMMENT: TENANT-SCOPED WORKFLOWS LIST ENDPOINT
 @router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflow:view"))])
-async def get_workflows(current_user: User = Depends(get_current_user)):
-    logger.info("get_workflows_request", tenant_id=current_user.customer_id)
-    if current_user.role == "system_admin":
-        workflows = await list_workflows_from_store(customer_id=None)
+async def get_workflows(
+    customer_id: Optional[int] = Query(None, description="Filter workflows by customer_id"),
+    current_user: User = Depends(get_current_user)
+):
+    logger.info("get_workflows_request", tenant_id=current_user.customer_id, query_customer_id=customer_id)
+    user_role = (current_user.role or "").lower()
+    user_role_type = (getattr(current_user, "role_type", "") or "").lower()
+
+    if user_role == "system_admin" or user_role_type == "system_admin":
+        workflows = await list_workflows_from_store(customer_id=customer_id)
     else:
-        workflows = await list_workflows_from_store(customer_id=current_user.customer_id)
+        target_cid = current_user.customer_id if current_user.customer_id is not None else customer_id
+        workflows = await list_workflows_from_store(customer_id=target_cid)
     logger.info("get_workflows_response", count=len(workflows))
     return workflows
 

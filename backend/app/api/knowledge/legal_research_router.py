@@ -18,7 +18,7 @@ from app.models.db_models import LegalAuditLogDB, SavedQueryDB
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/legal", tags=["Legal Research"])
+router = APIRouter(prefix="/legal", tags=["Legal"])
 
 
 # --- Schemas ---
@@ -329,9 +329,10 @@ async def search_legal_cases(
     for item in loaded_items:
         case_id = item.get("case_identity", {}) if "case_identity" in item else item
         title = case_id.get("title") or case_id.get("case_title") or ""
-        judge_name = case_id.get("judge") or case_id.get("bench_judge") or ""
-        disposition = item.get("disposition") or item.get("decision_and_holding", {}).get("disposition") or ""
-        cnr = case_id.get("cnr") or item.get("cnr", "")
+        raw_disp = item.get("disposition") or item.get("decision_and_holding", {}).get("disposition") or ""
+        disposition = str(raw_disp.get("outcome") or raw_disp.get("text") or raw_disp) if isinstance(raw_disp, dict) else str(raw_disp or "")
+        cnr = str(case_id.get("cnr") or item.get("cnr", ""))
+        judge_name = str(case_id.get("judge") or case_id.get("bench_judge") or "")
 
         # Matching logic
         match_score = 0.5
@@ -527,3 +528,5 @@ async def get_case_detail(
         except Exception:
             pass
     raise HTTPException(status_code=404, detail=f"Case details not found for CNR: {cnr}")
+
+

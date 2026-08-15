@@ -102,7 +102,7 @@ async def list_profiles(
     profiles = result.scalars().all()
 
     field_list = [f.strip() for f in fields.split(",")] if fields else None
-    if fields or role not in ("admin", "system_admin"):
+    if fields or role not in ("admin", "system_admin", "tenant_admin"):
         return [project_profile_fields(p, fields=field_list, role=role) for p in profiles]
 
     return profiles

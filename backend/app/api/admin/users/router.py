@@ -1,5 +1,5 @@
-from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
@@ -11,17 +11,26 @@ from app.core.security.hash import get_password_hash
 
 router = APIRouter(prefix="/admin/users", tags=["Admin"])
 
+# BLOCK COMMENT: TENANT-SCOPED LIST USERS ENDPOINT
 @router.get("", response_model=List[Dict[str, Any]])
 @router.get("/", response_model=List[Dict[str, Any]])
 async def list_users(
+    customer_id: Optional[str] = Query(None, description="Filter users by customer_id"),
     current_user: User = Depends(get_current_user),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Lists users, scoped by tenant for Company Admins, or all users for System Admin."""  
+    """Lists users, scoped by tenant for Company/Tenant Admins, or all/filtered users for System Admin."""  
     stmt = select(usersDb)
-    if current_user.role == "admin":
-        stmt = stmt.where(usersDb.customer_id == current_user.customer_id)
+    user_role = (current_user.role or "").lower()
+    user_role_type = (getattr(current_user, "role_type", "") or "").lower()
+    
+    if user_role in ["admin", "tenant_admin"] or user_role_type in ["admin", "tenant_admin"]:
+        target_cid = current_user.customer_id if current_user.customer_id is not None else customer_id
+        if target_cid is not None:
+            stmt = stmt.where(usersDb.customer_id == target_cid)
+    elif customer_id is not None:
+        stmt = stmt.where(usersDb.customer_id == customer_id)
         
     result = await db.execute(stmt)
     users = result.scalars().all()
@@ -119,7 +128,7 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
         
     # Company admins can only delete users in their own customer tenant
-    if current_user.role == "admin" and str(user.customer_id) != str(current_user.customer_id):
+    if current_user.role in ["admin", "tenant_admin"] and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="You do not have permission to delete this user")
         
     # Prevent deletion of system_admin users
@@ -147,7 +156,7 @@ async def update_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if current_user.role == "admin" and str(user.customer_id) != str(current_user.customer_id):
+    if current_user.role in ["admin", "tenant_admin"] and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to edit users outside your tenant")
 
     # BLOCK COMMENT: REASSIGN CUSTOMER_ID IF PROVIDED BY SYSTEM ADMIN

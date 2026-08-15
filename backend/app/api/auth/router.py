@@ -137,11 +137,18 @@ async def login(request: LoginRequest):
             elif user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
                 permissions_list = [
                     "admin:dashboard:view",
+                    "admin:profiles:view",
+                    "admin:profiles:manage",
+                    "admin:knowledge:view",
+                    "admin:knowledge:manage",
+                    "admin:playground:view",
                     "admin:user_management:read",
                     "admin:user_management:manage",
                     "admin:role_management:view",
                     "admin:role_management:manage",
                     "admin:tenant_settings:configure",
+                    "admin:workflows:view",
+                    "admin:nodes:view",
                     "legal:*:*",
                     "kb:*:*",
                     "workflow:*:*",

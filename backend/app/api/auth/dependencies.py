@@ -309,7 +309,8 @@ async def get_current_user(
 async def get_current_admin(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    if current_user.role not in ["system_admin", "admin"] and current_user.role_type not in ["system_admin", "tenant_admin"]:
+    # BLOCK COMMENT: ADMIN CHECK SUPPORTING TENANT ADMIN, SYSTEM ADMIN, AND ADMIN
+    if current_user.role not in ["system_admin", "admin", "tenant_admin"] and current_user.role_type not in ["system_admin", "tenant_admin", "admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
@@ -560,7 +561,8 @@ def require_system_admin(request: Request):
 
 @staticmethod
 def require_admin(request: Request):
-    if request.state.user["role"] != "admin":
+    user_role = (request.state.user.get("role") or "").lower()
+    if user_role not in ["admin", "tenant_admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
@@ -568,12 +570,26 @@ def require_admin(request: Request):
 
 @staticmethod
 def require_admin_or_system_admin(request: Request):
-    if request.state.user["role"] != "admin" and  request.state.user["role"]!="system_admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
-    return request.state.user
+    user_state = getattr(request.state, "user", None) or {}
+    user_role = (user_state.get("role") or "").lower()
+    role_type = (user_state.get("role_type") or "").lower()
+    permissions = user_state.get("permissions") or []
+
+    if (
+        user_role in ["admin", "system_admin", "tenant_admin"]
+        or role_type in ["admin", "system_admin", "tenant_admin"]
+        or "*:*:*" in permissions
+        or "admin:*:*" in permissions
+        or "tenant:admin:*" in permissions
+        or "admin:user_management:*" in permissions
+        or "admin:user_management:read" in permissions
+    ):
+        return user_state
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin privileges required",
+    )
 
 require_resource_access = _require_resource_access
 
