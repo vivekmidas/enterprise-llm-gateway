@@ -134,12 +134,12 @@ MODULES_REGISTRY = [
         "icon": "BookOpen",
         "display_order": 4,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Knowledge Bases", "description": "Access knowledge bases catalog"},
-            {"action": "create", "label": "Create Knowledge Base", "description": "Create new knowledge bases"},
-            {"action": "edit", "label": "Edit Knowledge Base", "description": "Update knowledge base settings"},
-            {"action": "delete", "label": "Delete Knowledge Base", "description": "Delete knowledge bases"},
-            {"action": "ingest", "label": "Ingest Documents", "description": "Upload and vectorize documents"},
-            {"action": "manage", "label": "Full Knowledge Management", "description": "Full administrative control over knowledge bases"}
+            {"action": "view", "is_route_guard": True, "label": "View Knowledge Bases", "description": "Access knowledge bases catalog", "api_path": "/api/knowledge/bases", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create Knowledge Base", "description": "Create new knowledge bases", "api_path": "/api/knowledge/bases", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Knowledge Base", "description": "Update knowledge base settings", "api_path": "/api/knowledge/bases/*", "http_methods": ["PUT"]},
+            {"action": "delete", "label": "Delete Knowledge Base", "description": "Delete knowledge bases", "api_path": "/api/knowledge/bases/*", "http_methods": ["DELETE"]},
+            {"action": "ingest", "label": "Ingest Documents", "description": "Upload and vectorize documents", "api_path": "/api/knowledge/bases/*/upload", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Full Knowledge Management", "description": "Full administrative control over knowledge bases", "api_path": "/api/knowledge/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]}
         ]
     },
     {
@@ -152,11 +152,11 @@ MODULES_REGISTRY = [
         "icon": "Brain",
         "display_order": 5,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View LLM Profiles", "description": "View LLM provider configurations"},
-            {"action": "create", "label": "Create LLM Profile", "description": "Create new LLM profiles"},
-            {"action": "edit", "label": "Edit LLM Profile", "description": "Update model parameters and keys"},
-            {"action": "delete", "label": "Delete LLM Profile", "description": "Delete LLM profiles"},
-            {"action": "manage", "label": "Full LLM Profiles Management", "description": "Full administrative control over LLM profiles"}
+            {"action": "view", "is_route_guard": True, "label": "View LLM Profiles", "description": "View LLM provider configurations", "api_path": "/api/profiles", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create LLM Profile", "description": "Create new LLM profiles", "api_path": "/api/profiles", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit LLM Profile", "description": "Update model parameters and keys", "api_path": "/api/profiles/*", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete LLM Profile", "description": "Delete LLM profiles", "api_path": "/api/profiles/*", "http_methods": ["DELETE"]},
+            {"action": "manage", "label": "Full LLM Profiles Management", "description": "Full administrative control over LLM profiles", "api_path": "/api/profiles/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]}
         ]
     },
     {
@@ -452,6 +452,10 @@ async def seed_rbac(db: AsyncSession):
             p_res = await db.execute(p_stmt)
             existing_p = p_res.scalar_one_or_none()
 
+            # ==============================================================================
+            # BLOCK COMMENT: ACTION-BOUND API ENDPOINTS & HTTP METHODS SYNC
+            # Stores api_path and http_methods in PermissionDB for dynamic API RBAC.
+            # ==============================================================================
             if not existing_p:
                 db.add(PermissionDB(
                     id=perm_id,
@@ -461,6 +465,8 @@ async def seed_rbac(db: AsyncSession):
                     action=act["action"],
                     is_route_guard=act.get("is_route_guard", False),
                     target_layer="both",
+                    api_path=act.get("api_path"),
+                    http_methods=act.get("http_methods") or ["GET"],
                     label=act["label"],
                     description=act.get("description")
                 ))
@@ -470,6 +476,8 @@ async def seed_rbac(db: AsyncSession):
                 existing_p.submodule = mod_data.get("submodule")
                 existing_p.action = act["action"]
                 existing_p.is_route_guard = act.get("is_route_guard", False)
+                existing_p.api_path = act.get("api_path") or existing_p.api_path
+                existing_p.http_methods = act.get("http_methods") or existing_p.http_methods
                 existing_p.label = act["label"]
                 existing_p.description = act.get("description")
         await db.commit()
@@ -551,15 +559,23 @@ async def seed_rbac(db: AsyncSession):
             ))
         await db.commit()
 
-    # 3. Synchronize RoutePermissionDB from ModuleDB routes for gateway middleware
+        # ==============================================================================
+        # BLOCK COMMENT: SYNCHRONIZE ROUTE_PERMISSIONS FOR UI & API ENDPOINTS
+        # Maps both UI route patterns (method='*') and Action API paths (method in methods).
+        # ==============================================================================
     for mod_data in MODULES_REGISTRY:
-        # Find view action permission
+        # Find view action permission for UI route guards
         view_action = next((a for a in mod_data.get("actions", []) if a.get("is_route_guard")), mod_data.get("actions", [{}])[0])
         action_name = view_action.get("action", "view")
         perm_id = f"{mod_data['module']}:{mod_data.get('submodule', 'all')}:{action_name}"
 
+        # 3a. Register UI route patterns
         for pattern in mod_data.get("route_patterns", []):
-            stmt = select(RoutePermissionDB).where(RoutePermissionDB.pattern == pattern, RoutePermissionDB.customer_id.is_(None))
+            stmt = select(RoutePermissionDB).where(
+                RoutePermissionDB.pattern == pattern,
+                RoutePermissionDB.http_method == "*",
+                RoutePermissionDB.customer_id.is_(None)
+            )
             res = await db.execute(stmt)
             existing_rp = res.scalar_one_or_none()
             if not existing_rp:
@@ -567,6 +583,7 @@ async def seed_rbac(db: AsyncSession):
                     id=generate_uuid(),
                     customer_id=None,
                     pattern=pattern,
+                    http_method="*",
                     permission_id=perm_id,
                     module=mod_data["module"],
                     submodule=mod_data.get("submodule"),
@@ -579,9 +596,39 @@ async def seed_rbac(db: AsyncSession):
                 existing_rp.submodule = mod_data.get("submodule")
                 existing_rp.label = mod_data["label"]
                 existing_rp.description = mod_data.get("description")
+
+        # 3b. Register Action API Endpoints with HTTP methods
+        for act in mod_data.get("actions", []):
+            api_path = act.get("api_path")
+            http_methods = act.get("http_methods") or []
+            if api_path:
+                act_perm_id = f"{mod_data['module']}:{mod_data.get('submodule', 'all')}:{act['action']}"
+                for meth in http_methods:
+                    norm_meth = meth.upper()
+                    stmt = select(RoutePermissionDB).where(
+                        RoutePermissionDB.pattern == api_path,
+                        RoutePermissionDB.http_method == norm_meth,
+                        RoutePermissionDB.customer_id.is_(None)
+                    )
+                    res = await db.execute(stmt)
+                    existing_api_rp = res.scalar_one_or_none()
+                    if not existing_api_rp:
+                        db.add(RoutePermissionDB(
+                            id=generate_uuid(),
+                            customer_id=None,
+                            pattern=api_path,
+                            http_method=norm_meth,
+                            permission_id=act_perm_id,
+                            module=mod_data["module"],
+                            submodule=mod_data.get("submodule"),
+                            label=f"{mod_data['label']} - {act['label']}",
+                            description=act.get("description")
+                        ))
+                    else:
+                        existing_api_rp.permission_id = act_perm_id
     await db.commit()
 
-    print("Successfully seeded canonical Module SOT, atomic permissions, and preset roles.")
+    print("Successfully seeded canonical Module SOT, atomic permissions, API routes, and preset roles.")
 
 
 if __name__ == "__main__":

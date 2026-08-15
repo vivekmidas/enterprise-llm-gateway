@@ -86,6 +86,11 @@ class ModuleDB(Base):
     updated_at = Column(String(100), default=lambda: datetime.utcnow().isoformat(), onupdate=lambda: datetime.utcnow().isoformat())
 
 
+# ==============================================================================
+# BLOCK COMMENT: ACTION CAPABILITY & API ENDPOINT RBAC MODELS
+# Adds api_path and http_methods to PermissionDB and http_method to RoutePermissionDB
+# for dynamic UI-configurable API verb/path authorization.
+# ==============================================================================
 class PermissionDB(Base):
     __tablename__ = "permissions"
     id = Column(String(100), primary_key=True, index=True)  # e.g., admin:knowledge:view, admin:knowledge:create
@@ -95,6 +100,8 @@ class PermissionDB(Base):
     action = Column(String(50), nullable=True, index=True) # view, create, edit, delete, ingest, query, execute
     is_route_guard = Column(Boolean, default=False) # True if this action grants navigation & entry to the route
     target_layer = Column(String(20), default="both")       # ui, api, both
+    api_path = Column(String(255), nullable=True)           # e.g., /api/knowledge/bases, /api/legal/bookmarks
+    http_methods = Column(JSON, nullable=True)             # e.g., ["GET", "POST", "DELETE"]
     label = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
 
@@ -104,18 +111,21 @@ class RolePermissionDB(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     role_id = Column(String(36), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
     permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    allowed_methods = Column(JSON, nullable=True) # e.g., ["GET", "POST"] method-level granular authorization
 
 
 class RoutePermissionDB(Base):
     __tablename__ = "route_permissions"
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
-    pattern = Column(String(150), nullable=False, index=True)
+    pattern = Column(String(150), nullable=False, index=True) # UI route or API path pattern
+    http_method = Column(String(20), default="*")             # "GET", "POST", "PUT", "DELETE", or "*"
     permission_id = Column(String(100), ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
     module = Column(String(50), nullable=True, index=True)
     submodule = Column(String(50), nullable=True, index=True)
     label = Column(String(150), nullable=True)
     description = Column(Text, nullable=True)
+# END BLOCK: ACTION CAPABILITY & API ENDPOINT RBAC MODELS
 
 
 

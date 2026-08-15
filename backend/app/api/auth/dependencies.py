@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status, Request, Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Tuple, Any, Optional
+from typing import Tuple, Any, Optional, List, Dict
 from app.core.database import get_db
 from app.core.security.jwt import decode_access_token
 from app.core.types.users import User
@@ -213,9 +213,10 @@ async def get_current_user(
             await db.commit()
 
     permissions_list = []
+    permission_methods_map = {}
     role_id_val = None
     role_name_val = None
-    role_type_val = db_user.role
+    role_type_val = None
 
     if role_obj:
         role_id_val = str(role_obj.id)
@@ -223,9 +224,11 @@ async def get_current_user(
         role_type_val = role_obj.role_type
         
         # Fetch permissions assigned to role
-        perm_stmt = select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id)
+        perm_stmt = select(RolePermissionDB).where(RolePermissionDB.role_id == role_obj.id)
         perm_res = await db.execute(perm_stmt)
-        permissions_list = [p for p in perm_res.scalars().all()]
+        rps = perm_res.scalars().all()
+        permissions_list = [p.permission_id for p in rps]
+        permission_methods_map = {p.permission_id: p.allowed_methods for p in rps if p.allowed_methods}
 
     if not permissions_list:
         if db_user.role == "system_admin" or role_type_val == "system_admin":
@@ -301,32 +304,37 @@ async def get_current_user(
         role_id=role_id_val,
         role_name=role_name_val,
         role_type=role_type_val,
-        permissions=permissions_list
+        permissions=permissions_list,
+        permission_methods=permission_methods_map
     )
 
 
+# ==============================================================================
+# BLOCK COMMENT: ADMIN & DYNAMIC ROUTE-PERMISSION INTERCEPTOR ENGINE
+# Supports role checks, wildcard and :manage capabilities, and dynamic in-memory
+# matching of HTTP method + API path against RoutePermissionDB entries.
+# ==============================================================================
 @staticmethod
 async def get_current_admin(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    # BLOCK COMMENT: ADMIN CHECK SUPPORTING TENANT ADMIN, SYSTEM ADMIN, AND ADMIN
-    if current_user.role not in ["system_admin", "admin", "tenant_admin"] and current_user.role_type not in ["system_admin", "tenant_admin", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
-    return current_user
+    # BLOCK COMMENT: ADMIN CHECK SUPPORTING TENANT ADMIN, SYSTEM ADMIN, ADMIN & WILDCARDS
+    if (
+        current_user.role in ["system_admin", "admin", "tenant_admin"]
+        or current_user.role_type in ["system_admin", "tenant_admin", "admin"]
+    ):
+        return current_user
+    raise HTTPException(status_code=403, detail="Admin or System Admin privileges required")
 
-# BLOCK COMMENT: 3-TIER PERMISSION MATCHING ENGINE (xx:yy:zzz FORMAT)
-# Evaluates exact permission keys, submodule wildcards (xx:yy:*), module wildcards (xx:*:*), and global super admin (*:*:*).
 
-def has_permission_scope(user_permissions: list, required_permission: str) -> bool:
+def has_permission_scope(user_permissions: List[str], required_permission: str) -> bool:
     """
-    Evaluates if user permissions satisfy required_permission with 3-tier xx:yy:zzz & wildcard support:
-    1. '*:*:*' matches everything.
-    2. 'xx:*:*' matches any key starting with 'xx:' (Module wildcard).
-    3. 'xx:yy:*' matches any key starting with 'xx:yy:' (Submodule wildcard).
-    4. Exact match 'xx:yy:zzz'.
+    Checks whether a user's permissions list satisfies a required permission.
+    Supports:
+    - full wildcard *:*:*
+    - exact permission match (e.g. admin:knowledge:create)
+    - action wildcards / manage (e.g. admin:knowledge:manage or admin:knowledge:*)
+    - submodule wildcards (e.g. admin:*:*)
     """
     if not user_permissions or not isinstance(user_permissions, list):
         return False
@@ -341,15 +349,124 @@ def has_permission_scope(user_permissions: list, required_permission: str) -> bo
     module = parts[0] if len(parts) > 0 else ""
     submodule = parts[1] if len(parts) > 1 else ""
 
-    # Check Module wildcard xx:*:* or xx:*
-    if f"{module}:*:*" in user_permissions or f"{module}:*" in user_permissions:
+    # Check Module wildcard xx:*:* or xx:* or xx:manage
+    if (
+        f"{module}:*:*" in user_permissions
+        or f"{module}:*" in user_permissions
+        or f"{module}:manage" in user_permissions
+        or f"{module}:all:manage" in user_permissions
+    ):
         return True
 
-    # Check Submodule wildcard xx:yy:*
-    if submodule and f"{module}:{submodule}:*" in user_permissions:
-        return True
+    # Check Submodule wildcard xx:yy:* or xx:yy:manage
+    if submodule:
+        if (
+            f"{module}:{submodule}:*" in user_permissions
+            or f"{module}:{submodule}:manage" in user_permissions
+        ):
+            return True
 
     return False
+
+
+import re
+from typing import List, Dict
+
+# In-memory cached route permission rules
+_CACHED_ROUTE_RULES: List[Dict[str, Any]] = []
+
+def _glob_to_regex(glob: str) -> re.Pattern:
+    """Converts glob pattern (e.g. /api/knowledge/bases/**) into compiled regex."""
+    escaped = re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]+")
+    return re.compile(f"^{escaped}$")
+
+
+async def reload_route_permissions_cache(db: AsyncSession):
+    """Reloads route permissions from RoutePermissionDB into memory cache."""
+    global _CACHED_ROUTE_RULES
+    from app.models.db_models import RoutePermissionDB
+    stmt = select(RoutePermissionDB)
+    res = await db.execute(stmt)
+    rules = res.scalars().all()
+
+    new_cache = []
+    for r in rules:
+        new_cache.append({
+            "id": r.id,
+            "pattern": r.pattern,
+            "http_method": (r.http_method or "*").upper(),
+            "permission_id": r.permission_id,
+            "regex": _glob_to_regex(r.pattern),
+            "customer_id": r.customer_id
+        })
+
+    # Sort order:
+    # 1. Exact HTTP method before wildcard '*'
+    # 2. Exact paths (no '*') before wildcard paths ('*', '**')
+    # 3. Longer pattern length first (most specific rule wins)
+    new_cache.sort(
+        key=lambda r: (
+            0 if r["http_method"] != "*" else 1,
+            0 if "*" not in r["pattern"] else (1 if "**" not in r["pattern"] else 2),
+            -len(r["pattern"])
+        )
+    )
+    _CACHED_ROUTE_RULES = new_cache
+
+
+def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optional[str] = None) -> Optional[str]:
+    """Finds required permission ID matching (method, path) against cached route rules. Supports (method, path) or (path, method)."""
+    if arg1.startswith("/"):
+        path, http_method = arg1, arg2
+    else:
+        http_method, path = arg1, arg2
+
+    norm_method = (http_method or "GET").upper()
+    for rule in _CACHED_ROUTE_RULES:
+        # Check customer scoping if tenant specific
+        if rule.get("customer_id") and customer_id and str(rule["customer_id"]) != str(customer_id):
+            continue
+        rule_meth = rule.get("http_method", "*")
+        if rule_meth == "*" or rule_meth == norm_method:
+            if rule["regex"].match(path):
+                return rule["permission_id"]
+    return None
+
+
+async def dynamic_api_guard(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Dynamic API route guard dependency.
+    Evaluates incoming request (method, path) against RoutePermissionDB live cache
+    and checks user granular permissions including method-level filtering.
+    """
+    global _CACHED_ROUTE_RULES
+    if not _CACHED_ROUTE_RULES:
+        await reload_route_permissions_cache(db)
+
+    path = request.url.path
+    method = request.method
+
+    # Super admins and system admins bypass
+    if (
+        current_user.role == "system_admin"
+        or current_user.role_type == "system_admin"
+        or "*:*:*" in (current_user.permissions or [])
+    ):
+        return current_user
+
+    required_perm = get_required_permission_for_request(method, path, current_user.customer_id)
+    if required_perm:
+        if not current_user.has_permission(required_perm, method):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access Denied: Missing required capability '{required_perm}' for {method} {path}"
+            )
+
+    return current_user
 
 
 def require_permission(required_permission: str):

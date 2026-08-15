@@ -100,6 +100,10 @@ def _refresh_permissions_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN action VARCHAR(50)")
     if "is_route_guard" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN is_route_guard BOOLEAN DEFAULT 0")
+    if "api_path" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN api_path VARCHAR(255)")
+    if "http_methods" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE permissions ADD COLUMN http_methods JSON")
 
 
 def _refresh_route_permissions_table(sync_conn):
@@ -116,6 +120,28 @@ def _refresh_route_permissions_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN submodule VARCHAR(50)")
     if "label" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN label VARCHAR(150)")
+    if "http_method" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE route_permissions ADD COLUMN http_method VARCHAR(20) DEFAULT '*'")
+
+    # Drop old unique index on pattern if it was uniquely constrained
+    indexes = inspector.get_indexes("route_permissions")
+    for idx in indexes:
+        if idx.get("name") == "ix_route_permissions_pattern" and idx.get("unique"):
+            try:
+                sync_conn.exec_driver_sql("DROP INDEX ix_route_permissions_pattern ON route_permissions")
+                sync_conn.exec_driver_sql("CREATE INDEX ix_route_permissions_pattern ON route_permissions (pattern)")
+            except Exception:
+                pass
+
+
+def _refresh_role_permissions_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("role_permissions"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("role_permissions")}
+    if "allowed_methods" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE role_permissions ADD COLUMN allowed_methods JSON")
 
 
 def _refresh_nodes_table(sync_conn):
@@ -208,6 +234,7 @@ async def init_db():
         await conn.run_sync(_refresh_customer_nodes_table)
         await conn.run_sync(_refresh_customers_table)
         await conn.run_sync(_refresh_permissions_table)
+        await conn.run_sync(_refresh_role_permissions_table)
         await conn.run_sync(_refresh_route_permissions_table)
         await conn.run_sync(_refresh_users_table)
         await conn.run_sync(_refresh_nodes_table)

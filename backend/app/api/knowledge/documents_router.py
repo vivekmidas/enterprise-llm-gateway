@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant
+from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant, dynamic_api_guard
 from app.api.knowledge.schemas import KnowledgeDocumentResponse, KnowledgeDocumentUpdate
 from app.core.database import get_db
 from app.core.types.users import User
@@ -41,7 +41,7 @@ async def upload_document(
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     doc_type: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and ingest a document into a specific knowledge base."""
@@ -213,7 +213,7 @@ async def update_document(
     kb_id: str,
     doc_id: str,
     payload: KnowledgeDocumentUpdate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a document's name or metadata."""
@@ -260,7 +260,7 @@ class BulkDeleteRequest(BaseModel):
 async def delete_document(
     kb_id: str,
     doc_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a specific document and perform cascading cleanup across disk storage, EKP tables, chunks, and vector embeddings."""
@@ -333,7 +333,7 @@ async def delete_document(
 async def bulk_delete_documents(
     kb_id: int,
     payload: BulkDeleteRequest,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk delete multiple documents with cascading cleanup across lib storage, EKP documents, EKP paragraphs, entities, and Vector DB."""
@@ -436,7 +436,7 @@ async def get_document_types(
 async def update_document_types(
     payload: List[str],
     customer_id: Optional[int] = Query(None),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Update custom document types for the current tenant (Admin only)."""

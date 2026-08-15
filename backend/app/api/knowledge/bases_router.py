@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
-from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant
+from app.api.auth.dependencies import get_current_admin, get_current_user, require_tenant, dynamic_api_guard
 from app.api.knowledge.schemas import KnowledgeBaseCreate, KnowledgeBaseResponse, KnowledgeBaseUpdate
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -32,11 +32,15 @@ settings = get_settings()
 router = APIRouter()
 
 
+# ==============================================================================
+# BLOCK COMMENT: DYNAMIC API RBAC PROTECTED ENDPOINTS
+# Uses dynamic_api_guard to validate user capabilities against RoutePermissionDB live cache.
+# ==============================================================================
 @router.post("/bases", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
     customer_id: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new knowledge base and provision its physical Qdrant collection."""
@@ -190,7 +194,7 @@ async def list_knowledge_bases(
 async def update_knowledge_base(
     kb_id: str,
     payload: KnowledgeBaseUpdate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a knowledge base's name, description, status, or settings."""
@@ -257,7 +261,7 @@ async def update_knowledge_base(
 @router.delete("/bases/{kb_id}", status_code=status.HTTP_200_OK)
 async def delete_knowledge_base(
     kb_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a Knowledge Base and clean up all metadata and physical collections."""
@@ -315,7 +319,7 @@ async def delete_knowledge_base(
 async def reprocess_document(
     kb_id: str,
     doc_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-queues a document for background reprocessing (domain knowledge re-extraction and re-embedding)."""

@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.api.auth.dependencies import get_current_user, require_admin_or_system_admin, require_system_admin
 from app.core.types.users import User
 # BLOCK COMMENT: CANONICAL MODULE SOT & ROUTE MATRIX ENDPOINTS
-from app.models.db_models import ModuleDB, RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB
+from app.models.db_models import ModuleDB, RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB, generate_uuid
 from app.db.seed_rbac import MODULES_REGISTRY, ROLE_PRESETS
 
 from pydantic import BaseModel, Field
@@ -65,11 +65,16 @@ class RoutePermissionCreateRequest(BaseModel):
     description: Optional[str] = None
 
 
+# ==============================================================================
+# BLOCK COMMENT: ACTION ITEM SCHEMA WITH API ENDPOINT & HTTP METHODS
+# ==============================================================================
 class ModuleActionItem(BaseModel):
     action: str
     is_route_guard: Optional[bool] = False
     label: str
     description: Optional[str] = None
+    api_path: Optional[str] = None           # e.g., /api/knowledge/bases
+    http_methods: Optional[List[str]] = []   # e.g., ["GET", "POST", "DELETE"]
 
 class CustomModuleCreateRequest(BaseModel):
     id: str
@@ -91,7 +96,7 @@ async def list_modules_and_actions(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Returns canonical modules, their route patterns, and their atomic capability action permissions.
+    Returns canonical modules, their route patterns, and their atomic capability action permissions with API path and HTTP method bindings.
     Resolves tenant-specific overrides merged with global system defaults.
     """
     target_cid = None
@@ -141,6 +146,8 @@ async def list_modules_and_actions(
                 "id": p.id,
                 "action": p.action or (p.id.split(":")[-1] if ":" in p.id else "view"),
                 "is_route_guard": p.is_route_guard or (p.action in ("view", "read", "query")),
+                "api_path": p.api_path or "",
+                "http_methods": p.http_methods if isinstance(p.http_methods, list) else ([] if not p.api_path else ["GET"]),
                 "label": p.label,
                 "description": p.description or ""
             }
@@ -170,7 +177,7 @@ async def create_custom_module(
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Creates or updates a custom module with route patterns and action capabilities for a tenant."""
+    """Creates or updates a custom module with route patterns, action capabilities, and API endpoint bindings for a tenant."""
     target_cid = current_user.customer_id
     if current_user.role == "system_admin":
         target_cid = payload.customer_id if payload.customer_id and str(payload.customer_id).strip() not in ("null", "None", "system") else None
@@ -214,8 +221,12 @@ async def create_custom_module(
         ModuleActionItem(action="delete", label=f"Delete {payload.label}")
     ]
 
+    guard_perm_id = None
     for act in actions_to_seed:
         perm_id = f"{existing_mod.module}:{existing_mod.submodule or 'all'}:{act.action}"
+        if act.is_route_guard:
+            guard_perm_id = perm_id
+
         p_stmt = select(PermissionDB).where(PermissionDB.id == perm_id)
         p_res = await db.execute(p_stmt)
         existing_p = p_res.scalar_one_or_none()
@@ -228,6 +239,8 @@ async def create_custom_module(
                 action=act.action,
                 is_route_guard=act.is_route_guard or (act.action in ("view", "read", "query")),
                 target_layer="both",
+                api_path=act.api_path if act.api_path else None,
+                http_methods=act.http_methods if act.http_methods else [],
                 label=act.label,
                 description=act.description or ""
             ))
@@ -235,12 +248,69 @@ async def create_custom_module(
             existing_p.module_id = existing_mod.id
             existing_p.action = act.action
             existing_p.is_route_guard = act.is_route_guard
+            existing_p.api_path = act.api_path if act.api_path else None
+            existing_p.http_methods = act.http_methods if act.http_methods else []
             if act.label:
                 existing_p.label = act.label
             if act.description is not None:
                 existing_p.description = act.description
         actions_created.append(perm_id)
+
+        # Sync RoutePermissionDB for this action's API path and HTTP methods
+        if act.api_path and act.http_methods:
+            for meth in act.http_methods:
+                norm_meth = meth.upper()
+                rp_stmt = select(RoutePermissionDB).where(
+                    RoutePermissionDB.pattern == act.api_path,
+                    RoutePermissionDB.http_method == norm_meth,
+                    RoutePermissionDB.customer_id == target_cid
+                )
+                rp_res = await db.execute(rp_stmt)
+                existing_rp = rp_res.scalar_one_or_none()
+                if not existing_rp:
+                    db.add(RoutePermissionDB(
+                        id=generate_uuid(),
+                        customer_id=target_cid,
+                        pattern=act.api_path,
+                        http_method=norm_meth,
+                        permission_id=perm_id,
+                        module=existing_mod.module,
+                        submodule=existing_mod.submodule,
+                        label=f"{existing_mod.label} - {act.label}"
+                    ))
+                else:
+                    existing_rp.permission_id = perm_id
+
+    # Sync UI route patterns
+    if guard_perm_id or actions_created:
+        effective_guard_id = guard_perm_id or actions_created[0]
+        for pattern in existing_mod.route_patterns:
+            ui_rp_stmt = select(RoutePermissionDB).where(
+                RoutePermissionDB.pattern == pattern,
+                RoutePermissionDB.http_method == "*",
+                RoutePermissionDB.customer_id == target_cid
+            )
+            ui_rp_res = await db.execute(ui_rp_stmt)
+            existing_ui_rp = ui_rp_res.scalar_one_or_none()
+            if not existing_ui_rp:
+                db.add(RoutePermissionDB(
+                    id=generate_uuid(),
+                    customer_id=target_cid,
+                    pattern=pattern,
+                    http_method="*",
+                    permission_id=effective_guard_id,
+                    module=existing_mod.module,
+                    submodule=existing_mod.submodule,
+                    label=existing_mod.label
+                ))
+            else:
+                existing_ui_rp.permission_id = effective_guard_id
+
     await db.commit()
+
+    # Invalidate and reload live in-memory route permissions cache
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await reload_route_permissions_cache(db)
 
     return {
         "id": existing_mod.id,
@@ -767,11 +837,13 @@ async def list_roles(
 
     roles_res = []
     for r in roles:
-        # Load permission IDs for this role
+        # Load permission IDs and method bindings for this role
         rp_res = await db.execute(
-            select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == r.id)
+            select(RolePermissionDB).where(RolePermissionDB.role_id == r.id)
         )
-        perm_ids = rp_res.scalars().all()
+        rps = rp_res.scalars().all()
+        perm_ids = [rp.permission_id for rp in rps]
+        methods_map = {rp.permission_id: rp.allowed_methods for rp in rps if rp.allowed_methods}
         roles_res.append({
             "id": r.id,
             "role_type": r.role_type,
@@ -781,7 +853,8 @@ async def list_roles(
             "customer_id": r.customer_id,
             "created_at": r.created_at,
             "updated_at": r.updated_at,
-            "permissions": perm_ids
+            "permissions": perm_ids,
+            "methods_by_permission": methods_map
         })
 
     return roles_res
@@ -820,6 +893,7 @@ async def create_role(
 
     description = payload.get("description", "")
     permission_ids = payload.get("permission_ids", [])
+    methods_by_permission = payload.get("methods_by_permission") or payload.get("permission_methods") or {}
 
     # Check for existing role with same type/name under target customer or system-wide
     # BLOCK COMMENT: DUPLICATE ROLE CHECK SUPPORTING SYSTEM-WIDE AND TENANT SCOPES
@@ -861,10 +935,12 @@ async def create_role(
             ))
             await db.flush()
 
+        allowed_meths = methods_by_permission.get(pid_clean) or methods_by_permission.get(pid)
         rp = RolePermissionDB(
             id=str(uuid.uuid4()),
             role_id=new_role.id,
-            permission_id=pid_clean
+            permission_id=pid_clean,
+            allowed_methods=allowed_meths
         )
         db.add(rp)
 
@@ -878,7 +954,8 @@ async def create_role(
         "description": new_role.description,
         "is_system_preset": new_role.is_system_preset,
         "customer_id": new_role.customer_id,
-        "permissions": permission_ids
+        "permissions": permission_ids,
+        "methods_by_permission": methods_by_permission
     }
 
 
@@ -916,6 +993,8 @@ async def update_role(
         raw_cid = payload.get("customer_id")
         role.customer_id = str(raw_cid) if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide") else None
 
+    methods_by_permission = payload.get("methods_by_permission") or payload.get("permission_methods") or {}
+
     if "permission_ids" in payload and isinstance(payload["permission_ids"], list):
         permission_ids = payload["permission_ids"]
         # Wipe existing role permissions
@@ -935,10 +1014,12 @@ async def update_role(
                 ))
                 await db.flush()
 
+            allowed_meths = methods_by_permission.get(pid_clean) or methods_by_permission.get(pid)
             rp = RolePermissionDB(
                 id=str(uuid.uuid4()),
                 role_id=role.id,
-                permission_id=pid_clean
+                permission_id=pid_clean,
+                allowed_methods=allowed_meths
             )
             db.add(rp)
 
@@ -946,9 +1027,11 @@ async def update_role(
     await db.refresh(role)
 
     rp_res = await db.execute(
-        select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role.id)
+        select(RolePermissionDB).where(RolePermissionDB.role_id == role.id)
     )
-    perm_ids = rp_res.scalars().all()
+    rps = rp_res.scalars().all()
+    out_perm_ids = [rp.permission_id for rp in rps]
+    out_methods_map = {rp.permission_id: rp.allowed_methods for rp in rps if rp.allowed_methods}
 
     return {
         "id": role.id,
@@ -957,7 +1040,8 @@ async def update_role(
         "description": role.description,
         "is_system_preset": role.is_system_preset,
         "customer_id": role.customer_id,
-        "permissions": perm_ids
+        "permissions": out_perm_ids,
+        "methods_by_permission": out_methods_map
     }
 
 
