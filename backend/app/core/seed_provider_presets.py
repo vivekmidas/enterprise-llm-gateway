@@ -158,7 +158,7 @@ STANDARD_PRESETS = [
             {
                 "name": "reranking",
                 "endpoint": "/chat/completions",
-                "models": ["gpt-4o-mini", "cohere-rerank-v3"],
+                "models": ["gpt-4o-mini", "gpt-4o"],
                 "default_model": "gpt-4o-mini",
                 "api_key": None,
                 "payload_structure": {"payload_format": "openai_chat_score"}
@@ -175,7 +175,7 @@ STANDARD_PRESETS = [
         "default_embedding_model": "text-embedding-3-small",
         "default_embedding_dimension": 1536,
         "embedding_endpoint": "/embeddings",
-        "rerank_models": ["gpt-4o-mini", "cohere-rerank-v3"],
+        "rerank_models": ["gpt-4o-mini", "gpt-4o"],
         "default_rerank_model": "gpt-4o-mini",
         "rerank_endpoint": "/chat/completions",
         "default_temperature": 0.7,
@@ -185,6 +185,65 @@ STANDARD_PRESETS = [
             "chat": {"payload_format": "openai", "messages_key": "messages"},
             "embeddings": {"payload_format": "openai", "input_key": "input"},
             "rerank": {"payload_format": "openai_chat_score"}
+        },
+        "is_active": True
+    },
+    {
+        "provider_key": "cohere",
+        "name": "cohere",
+        "display_name": "Cohere (Rerank & Embed)",
+        "description": "High-performance specialized reranking and embedding models from Cohere",
+        "base_url": "https://api.cohere.com/v2",
+        "model_types": [
+            {
+                "name": "search",
+                "endpoint": "/chat",
+                "models": ["command-r-plus", "command-r", "command-light"],
+                "default_model": "command-r",
+                "api_key": None,
+                "payload_structure": {"payload_format": "cohere"}
+            },
+            {
+                "name": "embedding",
+                "endpoint": "/embed",
+                "models": [
+                    {"model": "embed-english-v3.0", "dimension": 1024},
+                    {"model": "embed-multilingual-v3.0", "dimension": 1024},
+                    {"model": "embed-english-light-v3.0", "dimension": 384}
+                ],
+                "default_model": "embed-english-v3.0",
+                "api_key": None,
+                "payload_structure": {"payload_format": "cohere"}
+            },
+            {
+                "name": "reranking",
+                "endpoint": "/rerank",
+                "models": ["rerank-v3.5", "rerank-english-v3.0", "rerank-multilingual-v3.0"],
+                "default_model": "rerank-v3.5",
+                "api_key": None,
+                "payload_structure": {"payload_format": "cohere_rerank"}
+            }
+        ],
+        "chat_models": ["command-r-plus", "command-r", "command-light"],
+        "default_chat_model": "command-r",
+        "search_endpoint": "/chat",
+        "embedding_models": [
+            {"model": "embed-english-v3.0", "dimension": 1024},
+            {"model": "embed-multilingual-v3.0", "dimension": 1024},
+            {"model": "embed-english-light-v3.0", "dimension": 384}
+        ],
+        "default_embedding_model": "embed-english-v3.0",
+        "default_embedding_dimension": 1024,
+        "embedding_endpoint": "/embed",
+        "rerank_models": ["rerank-v3.5", "rerank-english-v3.0", "rerank-multilingual-v3.0"],
+        "default_rerank_model": "rerank-v3.5",
+        "rerank_endpoint": "/rerank",
+        "default_temperature": 0.3,
+        "default_max_tokens": 1024,
+        "api_key_header": "Authorization",
+        "capability_configs": {
+            "rerank": {"payload_format": "cohere_rerank"},
+            "embeddings": {"payload_format": "cohere"}
         },
         "is_active": True
     },

@@ -222,9 +222,30 @@ async def update_knowledge_base(
 
         # Sync collection embedding model & dimension based on profile
         from app.knowledge.embeddings import resolve_kb_embedding_config
-        from app.models.db_models import KnowledgeCollectionDB
+        from app.models.db_models import KnowledgeCollectionDB, KnowledgeChunkDB
+        from sqlalchemy import func
+
         emb_cfg = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
         provider_name, model_name, dimension = emb_cfg
+
+        coll_res = await db.execute(
+            select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb.id)
+        )
+        coll = coll_res.scalar_one_or_none()
+        if coll and coll.vector_dimension and int(dimension) != int(coll.vector_dimension):
+            chunk_cnt = await db.scalar(
+                select(func.count(KnowledgeChunkDB.id)).where(KnowledgeChunkDB.knowledge_base_id == kb.id)
+            ) or 0
+            if chunk_cnt > 0:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot change embedding model from {coll.embedding_model} ({coll.vector_dimension}d) "
+                        f"to {model_name} ({dimension}d). Knowledge Base '{kb.name}' already contains {chunk_cnt} indexed chunks in Qdrant. "
+                        f"Please create a new Knowledge Base for a different vector dimension."
+                    ),
+                )
 
         # ==============================================================================
         # BLOCK COMMENT: ORM JSON MUTATION TRACKING
@@ -233,18 +254,14 @@ async def update_knowledge_base(
         from sqlalchemy.orm.attributes import flag_modified
         curr_settings = dict(kb.settings or {})
         curr_settings["embedding_model"] = model_name
-        curr_settings["vector_dimension"] = dimension
+        curr_settings["vector_dimension"] = int(dimension)
         curr_settings["embedding_provider"] = provider_name
         kb.settings = curr_settings
         flag_modified(kb, "settings")
 
-        coll_res = await db.execute(
-            select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb.id)
-        )
-        coll = coll_res.scalar_one_or_none()
         if coll:
             coll.embedding_model = model_name
-            coll.vector_dimension = dimension
+            coll.vector_dimension = int(dimension)
         await db.commit()
         await db.refresh(kb)
 

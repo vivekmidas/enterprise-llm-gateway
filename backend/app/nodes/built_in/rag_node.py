@@ -231,18 +231,50 @@ class RAGNode(BaseNode):
                     return val
                 return default
 
+            # ==============================================================================
+            # BLOCK COMMENT: KB PROFILE INTEGRATION IN RAG NODE
+            # If explicit model/IP overrides are not provided in node config, resolves target
+            # execution parameters from the attached KnowledgeBase profile.
+            # ==============================================================================
+            raw_model = config.get("model") or self.properties.get("model")
+
+            # Determine Knowledge Bases to query
+            kb_ids = self._parse_kb_ids(kb_input)
+            if not kb_ids:
+                default_kb_val = get_resolved_val("knowledge_bases", "")
+                kb_ids = self._parse_kb_ids(default_kb_val)
+
+            target_kb_str = str(kb_ids[0]) if kb_ids else None
+            resolved_profile = None
+            if not raw_model and customer_id:
+                try:
+                    from app.core.profile_resolver import ProfileResolver
+                    async with AsyncSessionLocal() as db:
+                        resolved_profile = await ProfileResolver(db=db).resolve_for_knowledge_base(
+                            knowledge_base_id=target_kb_str,
+                            customer_id=customer_id,
+                        )
+                except Exception as ex:
+                    self.logger.warning("rag_node_profile_resolution_failed", error=str(ex))
+
+            prof_gen = resolved_profile.generation if resolved_profile else None
+
             # Resolve parameters
             ip = get_resolved_val("ip", "127.0.0.1")
             port = get_resolved_val("port", "11434")
             path = get_resolved_val("path", "/v1/chat/completions")
-            model_name = get_resolved_val("model", "qwen:0.5b")
+            model_name = raw_model or (prof_gen.model if prof_gen else None) or get_resolved_val("model", "llama3.2")
 
             try:
-                temperature = float(get_resolved_val("temperature", 0.7))
+                temperature = float(config.get("temperature") or (prof_gen.temperature if prof_gen else None) or get_resolved_val("temperature", 0.7))
             except (ValueError, TypeError):
                 temperature = 0.7
 
-            system_prompt = get_resolved_val("system_prompt", "You are a helpful assistant. Answer the user query using the provided context.")
+            system_prompt = (
+                config.get("system_prompt")
+                or (prof_gen.system_prompt if prof_gen and prof_gen.system_prompt else None)
+                or get_resolved_val("system_prompt", "You are a helpful assistant. Answer the user query using the provided context.")
+            )
 
             try:
                 top_k = int(get_resolved_val("top_k", 5))
@@ -275,12 +307,6 @@ class RAGNode(BaseNode):
                 top_k=top_k,
                 score_threshold=score_threshold,
             )
-
-            # Determine Knowledge Bases to query
-            kb_ids = self._parse_kb_ids(kb_input)
-            if not kb_ids:
-                default_kb_val = get_resolved_val("knowledge_bases", "")
-                kb_ids = self._parse_kb_ids(default_kb_val)
 
             # If still empty, query all active KBs for tenant
             if not kb_ids:

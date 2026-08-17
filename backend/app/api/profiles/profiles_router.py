@@ -74,12 +74,13 @@ async def get_catalog(
 
 # ==============================================================================
 # BLOCK COMMENT: UPDATED ROUTE - GET /api/profiles
-# Added optional ?customer_id= and ?fields= query params and role-based field filtering.
+# Added optional ?customer_id= and ?fields= query params and string-safe tenant isolation.
+# Ensures response returns full 4-section ProfileSettings for consistent UI rendering.
 # ==============================================================================
 @router.get("/", response_model=Union[List[LLMProfileResponse], List[Dict[str, Any]]])
 async def list_profiles(
     all_tenants: bool = False,
-    customer_id: Optional[int] = Query(None, description="Filter profiles by customer_id (system_admin only)"),
+    customer_id: Optional[str] = Query(None, description="Filter profiles by customer_id (system_admin only)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include e.g. id,name,url,model_name"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -88,24 +89,48 @@ async def list_profiles(
     List LLM profiles for tenant or all tenants if system_admin.
     Supports optional ?customer_id= filter, ?fields= projection parameter and role-based credential scrubbing.
     """
+    from app.schemas.profile_sections import ProfileSettings
+
     role = getattr(current_user, "role", "user")
     if role == "system_admin":
-        if customer_id is not None:
-            stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == customer_id).order_by(LLMProfileDB.id.desc())
+        if customer_id is not None and str(customer_id).lower() != "all":
+            stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == str(customer_id)).order_by(LLMProfileDB.id.desc())
         else:
             stmt = select(LLMProfileDB).order_by(LLMProfileDB.id.desc())
     else:
-        cid = current_user.customer_id
+        cid = str(current_user.customer_id)
         stmt = select(LLMProfileDB).where(LLMProfileDB.customer_id == cid).order_by(LLMProfileDB.id.desc())
 
     result = await db.execute(stmt)
     profiles = result.scalars().all()
 
     field_list = [f.strip() for f in fields.split(",")] if fields else None
-    if fields or role not in ("admin", "system_admin", "tenant_admin"):
+    if fields:
         return [project_profile_fields(p, fields=field_list, role=role) for p in profiles]
 
-    return profiles
+    # Normalize settings to guaranteed 4-section structure
+    normalized_list = []
+    for p in profiles:
+        try:
+            norm_st = ProfileSettings.from_db(p.settings or {}).model_dump()
+        except Exception:
+            norm_st = p.settings or {}
+        
+        normalized_list.append(
+            LLMProfileResponse(
+                id=str(p.id),
+                name=p.name,
+                description=p.description,
+                customer_id=str(p.customer_id),
+                created_by=str(p.created_by),
+                is_default=bool(p.is_default),
+                settings=norm_st,
+                created_at=str(p.created_at or ""),
+                updated_at=str(p.updated_at or ""),
+            )
+        )
+
+    return normalized_list
 
 
 @router.post("/", response_model=LLMProfileResponse, status_code=status.HTTP_201_CREATED)
@@ -117,9 +142,15 @@ async def create_profile(
     """Create a new LLM profile for the tenant."""
     role = current_user.get("role")
     if role == "system_admin" and payload.customer_id is not None:
-        customer_id = payload.customer_id
+        customer_id = str(payload.customer_id)
     else:
-        customer_id = current_user.get("tenant")
+        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required to create a profile.")
+
+    if not payload.name or not str(payload.name).strip():
+        raise HTTPException(status_code=400, detail="Profile name is required.")
 
     if payload.is_default:
         await db.execute(
@@ -135,11 +166,11 @@ async def create_profile(
     )
 
     profile = LLMProfileDB(
-        name=payload.name,
-        description=payload.description,
+        name=payload.name.strip(),
+        description=payload.description.strip() if payload.description else None,
         is_default=payload.is_default,
         customer_id=customer_id,
-        created_by=(current_user.get("id")),
+        created_by=str(current_user.get("id")),
         settings=settings_val,
     )
     db.add(profile)
@@ -162,7 +193,23 @@ async def create_profile(
             flag_modified(cust, "settings")
             await db.commit()
 
-    return profile
+    from app.schemas.profile_sections import ProfileSettings
+    try:
+        norm_st = ProfileSettings.from_db(profile.settings or {}).model_dump()
+    except Exception:
+        norm_st = profile.settings or {}
+
+    return LLMProfileResponse(
+        id=str(profile.id),
+        name=profile.name,
+        description=profile.description,
+        customer_id=str(profile.customer_id),
+        created_by=str(profile.created_by),
+        is_default=bool(profile.is_default),
+        settings=norm_st,
+        created_at=str(profile.created_at or ""),
+        updated_at=str(profile.updated_at or ""),
+    )
 
 
 @router.get("/{profile_id}", response_model=LLMProfileResponse)
@@ -172,19 +219,40 @@ async def get_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single LLM profile."""
+    from app.schemas.profile_sections import ProfileSettings
+
     role = getattr(current_user, "role", "user")
     if role == "system_admin":
-        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
+        customer_id = str(current_user.customer_id or "")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
-            LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == current_user.customer_id,
+            LLMProfileDB.id == str(profile_id),
+            LLMProfileDB.customer_id == customer_id,
         )
     result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="LLM profile not found.")
-    return profile
+        raise HTTPException(status_code=404, detail=f"LLM profile '{profile_id}' not found.")
+
+    try:
+        norm_st = ProfileSettings.from_db(profile.settings or {}).model_dump()
+    except Exception:
+        norm_st = profile.settings or {}
+
+    return LLMProfileResponse(
+        id=str(profile.id),
+        name=profile.name,
+        description=profile.description,
+        customer_id=str(profile.customer_id),
+        created_by=str(profile.created_by),
+        is_default=bool(profile.is_default),
+        settings=norm_st,
+        created_at=str(profile.created_at or ""),
+        updated_at=str(profile.updated_at or ""),
+    )
 
 
 @router.put("/{profile_id}", response_model=LLMProfileResponse)
@@ -197,21 +265,24 @@ async def update_profile(
     """Replace the settings of an existing LLM profile."""
     role = current_user.get("role")
     if role == "system_admin":
-        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
+        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
-            LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == current_user.get("tenant"),
+            LLMProfileDB.id == str(profile_id),
+            LLMProfileDB.customer_id == customer_id,
         )
     result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="LLM profile not found.")
+        raise HTTPException(status_code=404, detail=f"LLM profile '{profile_id}' not found.")
 
     if payload.name is not None:
-        profile.name = payload.name
+        profile.name = payload.name.strip()
     if payload.description is not None:
-        profile.description = payload.description
+        profile.description = payload.description.strip() if payload.description else None
     if payload.settings is not None:
         # ==============================================================================
         # BLOCK COMMENT: ORM JSON MUTATION TRACKING
@@ -237,7 +308,24 @@ async def update_profile(
     profile.updated_at = datetime.utcnow().isoformat()
     await db.commit()
     await db.refresh(profile)
-    return profile
+
+    from app.schemas.profile_sections import ProfileSettings
+    try:
+        norm_st = ProfileSettings.from_db(profile.settings or {}).model_dump()
+    except Exception:
+        norm_st = profile.settings or {}
+
+    return LLMProfileResponse(
+        id=str(profile.id),
+        name=profile.name,
+        description=profile.description,
+        customer_id=str(profile.customer_id),
+        created_by=str(profile.created_by),
+        is_default=bool(profile.is_default),
+        settings=norm_st,
+        created_at=str(profile.created_at or ""),
+        updated_at=str(profile.updated_at or ""),
+    )
 
 
 @router.delete("/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -249,16 +337,19 @@ async def delete_profile(
     """Delete an LLM profile."""
     role = current_user.get("role")
     if role == "system_admin":
-        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
+        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
-            LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == current_user.get("tenant"),
+            LLMProfileDB.id == str(profile_id),
+            LLMProfileDB.customer_id == customer_id,
         )
     result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="LLM profile not found.")
+        raise HTTPException(status_code=404, detail=f"LLM profile '{profile_id}' not found.")
 
     await db.delete(profile)
     await db.commit()
@@ -274,16 +365,19 @@ async def set_default_profile(
     """Set a profile as the tenant default."""
     role = current_user.get("role")
     if role == "system_admin":
-        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
+        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
-            LLMProfileDB.id == profile_id,
-            LLMProfileDB.customer_id == current_user.get("tenant"),
+            LLMProfileDB.id == str(profile_id),
+            LLMProfileDB.customer_id == customer_id,
         )
     result = await db.execute(stmt)
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="LLM profile not found.")
+        raise HTTPException(status_code=404, detail=f"LLM profile '{profile_id}' not found.")
 
     target_customer_id = profile.customer_id
     await db.execute(
@@ -310,4 +404,21 @@ async def set_default_profile(
 
     await db.commit()
     await db.refresh(profile)
-    return profile
+
+    from app.schemas.profile_sections import ProfileSettings
+    try:
+        norm_st = ProfileSettings.from_db(profile.settings or {}).model_dump()
+    except Exception:
+        norm_st = profile.settings or {}
+
+    return LLMProfileResponse(
+        id=str(profile.id),
+        name=profile.name,
+        description=profile.description,
+        customer_id=str(profile.customer_id),
+        created_by=str(profile.created_by),
+        is_default=bool(profile.is_default),
+        settings=norm_st,
+        created_at=str(profile.created_at or ""),
+        updated_at=str(profile.updated_at or ""),
+    )

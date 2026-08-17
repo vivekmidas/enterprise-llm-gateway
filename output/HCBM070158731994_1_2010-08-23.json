@@ -1,0 +1,302 @@
+{
+  "file name" : "HCBM070158731994_1_2010-08-23.pdf",
+  "number of pages" : 5,
+  "author" : null,
+  "title" : null,
+  "creation date" : "D:20100921113505+05'30'",
+  "modification date" : null,
+  "kids" : [ {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 19,
+    "page number" : 1,
+    "bounding box" : [ 85.2, 729.381, 100.2, 740.553 ],
+    "font" : "LiberationSans",
+    "font size" : 10.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "vss"
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 20,
+    "page number" : 1,
+    "bounding box" : [ 168.5, 674.257, 455.6, 729.063 ],
+    "font" : "LiberationSans",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "IN THE HIGH COURT OF JUDICATURE AT BOMBAY CIVIL APPELLATE JURISDICTION WRIT PETITION NO.348 OF 1998"
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 21,
+    "page number" : 1,
+    "bounding box" : [ 85.2, 577.657, 468.184, 646.263 ],
+    "font" : "LiberationSans",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "Maharashtra State Road Transport Corporation ... Petitioner V/s. Shri Madhukar Bhika Wani ... Respondent"
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 22,
+    "page number" : 1,
+    "bounding box" : [ 85.2, 494.857, 370.452, 535.863 ],
+    "font" : "LiberationSans",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "Mr.G.S. Hegde for Petitioner Mr.Ashishchandra Rao i/b M.M. Vashi for Respondent"
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 23,
+    "page number" : 1,
+    "bounding box" : [ 314.616, 453.457, 513.316, 466.863 ],
+    "font" : "LiberationSans-Bold",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "CORAM: SMT.NISHITA MHATRE, J."
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 24,
+    "page number" : 1,
+    "bounding box" : [ 85.2, 398.257, 469.456, 439.263 ],
+    "font" : "LiberationSans-Bold",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "DATED: AUGUST 23, 2010 ORAL JUDGMENT:"
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 25,
+    "level" : "1",
+    "page number" : 1,
+    "bounding box" : [ 85.2, 294.757, 538.7, 363.363 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 1,
+    "next list id" : 29,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 1,
+      "bounding box" : [ 85.2, 294.757, 538.7, 363.363 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "1. The petition has been preferred against the order of the Labour Court dated 27.2.1991 in complaint (ULP) No.45 of 1984 by which the Labour Court has granted the Respondent reinstatement with continuity of service and full backwages from",
+      "kids" : [ {
+        "type" : "list",
+        "pdfua_tag" : "L",
+        "id" : 17,
+        "level" : "1",
+        "page number" : 1,
+        "bounding box" : [ 85.2, 73.957, 538.896, 280.563 ],
+        "numbering style" : "arabic numbers",
+        "number of list items" : 2,
+        "next list id" : 28,
+        "list items" : [ {
+          "type" : "list item",
+          "pdfua_tag" : "LI",
+          "page number" : 1,
+          "bounding box" : [ 85.2, 211.957, 538.824, 280.563 ],
+          "font" : "LiberationSans",
+          "font size" : 12.0,
+          "text color" : "[0.0, 0.0, 0.0]",
+          "content" : "22.8.1980. The order of the Industrial Court in Revision application (ULP) No.74 of 1991 confirming the order of the Labour Court has also been challenged in this petition.",
+          "kids" : [ {
+            "type" : "paragraph",
+            "pdfua_tag" : "P",
+            "id" : 16,
+            "level" : "2",
+            "page number" : 1,
+            "bounding box" : [ 85.2, 156.757, 538.7, 170.163 ],
+            "font" : "LiberationSans",
+            "font size" : 12.0,
+            "text color" : "[0.0, 0.0, 0.0]",
+            "content" : "2. The Petitioners had employed the respondent as a bus conductor. On"
+          } ]
+        }, {
+          "type" : "list item",
+          "pdfua_tag" : "LI",
+          "page number" : 1,
+          "bounding box" : [ 85.2, 73.957, 538.896, 142.563 ],
+          "font" : "LiberationSans",
+          "font size" : 12.0,
+          "text color" : "[0.0, 0.0, 0.0]",
+          "content" : "23.2.1973, when the bus was checked, the ticket inspectors found that the Respondent had issued two tickets from a new block of tickets although 13 tickets remained in the old block. According to the Petitioners, the Respondent had not",
+          "kids" : [ ]
+        } ]
+      } ]
+    } ]
+  }, {
+    "type" : "paragraph",
+    "pdfua_tag" : "P",
+    "id" : 27,
+    "page number" : 2,
+    "bounding box" : [ 85.2, 699.557, 538.812, 740.563 ],
+    "font" : "LiberationSans",
+    "font size" : 12.0,
+    "text color" : "[0.0, 0.0, 0.0]",
+    "content" : "made an entry regarding the issuance of these two tickets in the way bill. He was therefore chargesheeted. The Respondent was then dismissed from service on"
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 28,
+    "level" : "1",
+    "page number" : 2,
+    "bounding box" : [ 85.2, 257.957, 538.824, 685.363 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 1,
+    "previous list id" : 17,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 2,
+      "bounding box" : [ 85.2, 257.957, 538.824, 685.363 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "24.11.1973 after holding an enquiry. The respondent challenged the order of dismissal by filing Regular Civil Suit No.57 of 1979. That suit was withdrawn for want of jurisdiction. The respondent then preferred complaint (ULP) No.45 of 1984 before the Labour Court on 22.8.1984. The complaint was filed under Item 1 of Schedule IV of the MRTU & PULP Act contending that the petitioners had indulged in an unfair labour practice by dismissing the Respondent from service. The Labour Court found that the enquiry held against the workman was fair and proper. However, it was of the view that the findings of the enquiry officer were perverse. The Labour Court concluded that the evidence on record led by the Respondent indicated that the enquiry was conducted in utter violation of the principles of natural justice. The reason for the Labour Court to arrive at this conclusion was that the enquiry officer himself had issued the chargesheet against the workman. The Labour Court also observed that the enquiry officer had acted as an enquiry officer and a representative of the management and the punishing authority as well. It was also of the view that the workman was not afforded a reasonable opportunity to defend himself at the enquiry.",
+      "kids" : [ ]
+    } ]
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 29,
+    "level" : "1",
+    "page number" : 2,
+    "bounding box" : [ 85.2, 64.757, 538.932, 216.163 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 1,
+    "previous list id" : 25,
+    "next list id" : 32,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 2,
+      "bounding box" : [ 85.2, 64.757, 538.932, 216.163 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "3. The Labour Court then observed that the Respondent had committed a mistake by issuing two tickets from the next block rather than completing the first block. According to the Labour Court this mistake could not be termed an act to defraud the Corporation but was rather an act of gross negligence. The Labour Court concluded that the evidence on record indicated that two tickets were found in possession of the passengers and they had been punched. It was observed that not",
+      "kids" : [ ]
+    } ]
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 32,
+    "level" : "1",
+    "page number" : 3,
+    "bounding box" : [ 85.2, 92.357, 538.932, 740.563 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 3,
+    "previous list id" : 29,
+    "next list id" : 34,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "id" : 31,
+      "page number" : 3,
+      "bounding box" : [ 85.2, 533.957, 538.776, 740.563 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "making an entry with respect to the two tickets in the way bill would not constitute an act of dishonesty. It could only be termed as negligence. The Labour Court therefore held that the respondent was entitled to reinstatement with continuity of service As regards the backwages the Labour Court found that the Respondent had been pursuing a wrong remedy before the civil Court and therefore held that the Petitioner should not be penalised by directing them to pay backwages for this period. The Labour Court therefore directed the payment of backwages from the date of filing of the complaint i.e. from 22.8.1984.",
+      "kids" : [ ]
+    }, {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 3,
+      "bounding box" : [ 85.2, 451.157, 538.28, 492.163 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "4. The revision has met with the same fate inasmuch as the Industrial Court has confirmed the order passed by the Labour Court.",
+      "kids" : [ ]
+    }, {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 3,
+      "bounding box" : [ 85.2, 92.357, 538.932, 409.363 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "5. Mr.Hegde, appearing for the Petitioners, submits that the dishonest intention of the Respondent has to be gathered from the circumstantial evidence on record. He urges that it is impossible to believe that the two tickets were issued from a fresh block by mistake. According to him, the natural reaction of a conductor in such a situation would be to issue the topmost ticket from the block, rather than the ticket which was in a block below. He then submits that no entry in respect of these two tickets has been made in the record which circumstance also indicates the intention of the Respondent to defraud the Petitioner. The last submission of Mr.Hegde is that assuming the act of misconduct was gross negligence, the Labour Court ought to have imposed some punishment. According to him, deprivation of 10 years backwages for the period when the respondent was pursuing a wrong remedy is not punishment imposed for the act of gross misconduct.",
+      "kids" : [ ]
+    } ]
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 34,
+    "level" : "1",
+    "page number" : 4,
+    "bounding box" : [ 85.2, 64.757, 538.884, 740.563 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 2,
+    "previous list id" : 32,
+    "next list id" : 37,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 4,
+      "bounding box" : [ 85.2, 478.757, 538.884, 740.563 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "6. The learned advocate for the Respondent submits that the Labour Court has considered the value which was involved in the act of the Respondent not issuing the tickets correctly. According to the learned advocate, since the value was negligible, the Labour Court had rightly granted reinstatement with continuity of service and backwages for a substantial period. He relies on the judgment of the Supreme Court in the case of Colour Chem vs. A.L. Alaspurkar, 1998 (3) SCC 192 in support of this submission that the punishment which is disproportionate to the alleged misconduct cannot be imposed on a workman. He also points out that the fresh block was adjacent to the old block in the ticket tray and, therefore, during rush, the respondent had mistakenly pulled two tickets from the fresh block rather than from the old block.",
+      "kids" : [ ]
+    }, {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 4,
+      "bounding box" : [ 85.2, 64.757, 538.74, 436.963 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "7. In my view, the order of the Labour Court directing reinstatement with continuity of service cannot be termed as illegal. The Labour Court has held that the findings of the enquiry were vitiated as the enquiry was not held in accordance with the rules of natural justice. The Labour Court considered the evidence before the enquiry officer and the material on record before it and found that the intention to misappropriate any amount was not established. The Labour Court has held that the issuance of the tickets from the fresh block without making any entries, would amount to gross negligence but could not be said to be an act of dishonesty, especially since the tickets had been issued to passengers and they were punched. In my view, in the present facts and circumstances the findings of the Labour Court are correct. There is no material on record to indicate that the two blocks of tickets were one below the other. According to the Respondent, the two blocks were adjacent. Therefore, it was necessary for the Petitioner to prove that the two blocks were in fact one below the other and that by issuing the tickets from the block below, the",
+      "kids" : [ ]
+    } ]
+  }, {
+    "type" : "list",
+    "pdfua_tag" : "L",
+    "id" : 37,
+    "level" : "1",
+    "page number" : 5,
+    "bounding box" : [ 85.2, 119.957, 538.908, 740.563 ],
+    "numbering style" : "arabic numbers",
+    "number of list items" : 3,
+    "previous list id" : 34,
+    "list items" : [ {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "id" : 36,
+      "page number" : 5,
+      "bounding box" : [ 85.2, 616.757, 538.824, 740.563 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "workman had committed an act of dishonesty. It is possible that in a rush if the ticket blocks are adjacent to each other that such a mistake could occur. However, there is no evidence on record either way as to how the blocks were positioned in the tray. Furthermore had the intention of the workman been to defraud the Petitioner, he would not have punched the tickets issued to the passengers.",
+      "kids" : [ ]
+    }, {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 5,
+      "bounding box" : [ 85.2, 175.157, 538.908, 574.963 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "8. In my view, the order of the Labour Court holding that the workman was entitled to reinstatement with continuity of service cannot be faulted. However, there is no reason as to why the Labour Court has not imposed any punishment on the workman when it has concluded there is an act of gross negligence on the part of the workman. The denial of backwages from 1973 to 1984 would not in my opinion constitute punishment being imposed. The denial of the wages for that period was because the workman had pursued a wrong remedy before the civil Court and for which the Corporation could not be penalised. In my view, therefore, it would be appropriate to reduce the backwages payable and to direct the Petitioner to pay 50% of the backwages from 22.8.1984 till the workman was reinstated. Admittedly, the workman has been reinstated in service pursuant to the orders of the Court and he worked there till his services were terminated again on 29.9.1998. The workman has already retired from service. Therefore, he would only be entitled to reinstatement with continuity of service and 50% backwages from 1984 till he was reinstated on 15.2.1992 pursuant to the order of the Industrial Court.",
+      "kids" : [ ]
+    }, {
+      "type" : "list item",
+      "pdfua_tag" : "LI",
+      "page number" : 5,
+      "bounding box" : [ 85.2, 119.957, 353.264, 133.363 ],
+      "font" : "LiberationSans",
+      "font size" : 12.0,
+      "text color" : "[0.0, 0.0, 0.0]",
+      "content" : "9. Rule made absolute accordingly. No costs.",
+      "kids" : [ ]
+    } ]
+  } ]
+}

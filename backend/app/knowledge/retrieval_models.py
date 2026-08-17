@@ -315,12 +315,25 @@ class RAGRequest(BaseModel):
     min_score: float = Field(default=0.0, ge=0.0, le=1.0)
     max_context_tokens: int = Field(default=6000, ge=500)
     enable_reranking: bool | None = None
+    rerank_url: str | None = None
+    rerank_model: str | None = None
+    rerank_limit: int | None = None
+    approach: str | None = None
+    enable_rrf: bool | None = None
 
     # Generation parameters
+    # ==============================================================================
+    # BLOCK COMMENT: OPTIONAL GENERATION SYNTHESIS FLAG
+    # When enable_generation is False, RAGService returns retrieved context directly.
+    # ==============================================================================
+    enable_generation: bool = True
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    system_prompt: str | None = None
     llm_config: dict[str, Any] | None = None
     llm_config_id: str | None = None
+    llm_profile_id: str | None = None
+    llm_profile: Any | None = None
 
     @field_validator("query")
     @classmethod

@@ -19,7 +19,8 @@ router = APIRouter(prefix="/api/llm-profiles", tags=["LLM Profiles"])
 
 # ==============================================================================
 # BLOCK COMMENT: HELPER FUNCTION - project_profile_fields
-# Projects requested fields and strips sensitive credentials for non-admin users.
+# Projects requested fields and scrubs sensitive credentials while preserving
+# the canonical 4-section structure (embedding, search, reranking, generation).
 # ==============================================================================
 def project_profile_fields(
     profile: LLMProfileDB,
@@ -31,53 +32,59 @@ def project_profile_fields(
     Extract profile fields and format payload based on role, requested model type, and requested projection fields.
     Non-admin users ('user') will have sensitive keys (e.g. api_key) automatically omitted.
     """
-    settings = dict(profile.settings or {}) if isinstance(profile.settings, dict) else {}
+    from app.schemas.profile_sections import ProfileSettings
+
+    raw_settings = dict(profile.settings or {}) if isinstance(profile.settings, dict) else {}
+    try:
+        norm_settings = ProfileSettings.from_db(raw_settings).model_dump()
+    except Exception:
+        norm_settings = raw_settings
 
     # Dynamic model type resolution
     type_key = type_param.strip() if type_param else None
 
     if type_key:
-        if isinstance(settings, dict) and type_key in settings and isinstance(settings[type_key], dict):
-            target_cfg = settings[type_key]
+        if isinstance(norm_settings, dict) and type_key in norm_settings and isinstance(norm_settings[type_key], dict):
+            target_cfg = norm_settings[type_key]
             active_settings = {type_key: target_cfg}
         else:
             target_cfg = {}
             active_settings = {}
     else:
-        target_cfg = settings.get("generation") or settings.get("llm_config") or {}
+        target_cfg = norm_settings.get("generation") or norm_settings.get("llm_config") or {}
         if not isinstance(target_cfg, dict):
             target_cfg = {}
-        active_settings = settings
+        active_settings = norm_settings
 
-    provider = target_cfg.get("provider") or settings.get("llm_provider") or ""
+    provider = target_cfg.get("provider") or norm_settings.get("llm_provider") or ""
     model_name = (
         target_cfg.get("model")
         or target_cfg.get("model_name")
-        or settings.get("llm_model")
+        or norm_settings.get("llm_model")
         or ""
     )
     url = (
         target_cfg.get("url")
         or target_cfg.get("base_url")
-        or settings.get("llm_base_url")
+        or norm_settings.get("llm_base_url")
         or ""
     )
 
     full_dump: Dict[str, Any] = {
-        "id": profile.id,
+        "id": str(profile.id),
         "name": profile.name,
         "description": profile.description,
-        "customer_id": profile.customer_id,
-        "created_by": profile.created_by,
-        "is_default": profile.is_default,
+        "customer_id": str(profile.customer_id) if profile.customer_id is not None else "",
+        "created_by": str(profile.created_by) if profile.created_by is not None else "",
+        "is_default": bool(profile.is_default),
         "provider": provider,
         "model_name": model_name,
         "model": model_name,
         "url": url,
         "base_url": url,
         "settings": active_settings,
-        "created_at": profile.created_at,
-        "updated_at": profile.updated_at,
+        "created_at": profile.created_at or "",
+        "updated_at": profile.updated_at or "",
     }
 
     # BLOCK COMMENT: ADMIN CHECK INCLUDING TENANT ADMIN
@@ -108,17 +115,6 @@ def project_profile_fields(
                 elif field_name in target_cfg:
                     projected[field_name] = target_cfg[field_name]
             return projected
-
-    if not is_admin and not fields and not type_param:
-        return {
-            "id": profile.id,
-            "name": profile.name,
-            "description": profile.description,
-            "is_default": profile.is_default,
-            "provider": provider,
-            "model_name": model_name,
-            "url": url,
-        }
 
     return full_dump
 

@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy import delete, select
 from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.core.database import get_db, AsyncSessionLocal
 from app.core.dependencies.retrieval import get_retrieval_service, get_response_generation_service
@@ -74,8 +74,11 @@ class DebugGenerateRequest(BaseModel):
     query: str = Field(min_length=1)
     context: Any
     profile_id: Optional[str] = None
+    llm_profile_id: Optional[str] = None
+    llm_config_id: Optional[Any] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_generation_tokens: int = Field(default=1024, ge=1)
+    system_prompt: Optional[str] = None
     llm_config: Optional[Dict[str, Any]] = None
 
 
@@ -95,6 +98,28 @@ async def rag_query(
     Pipeline settings are resolved from the active LLM profile.
     """
     customer_id = current_user.customer_id
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required.")
+
+    if not payload.knowledge_base_ids:
+        raise HTTPException(status_code=400, detail="At least one knowledge base ID is required.")
+
+    # ==============================================================================
+    # BLOCK COMMENT: VALIDATE KNOWLEDGE BASE EXISTENCE
+    # Ensure specified knowledge bases exist and belong to the tenant before query.
+    # ==============================================================================
+    from app.models.db_models import KnowledgeBaseDB
+    kb_stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id.in_([str(k) for k in payload.knowledge_base_ids]),
+        KnowledgeBaseDB.customer_id == str(customer_id),
+    )
+    kb_res = await db.execute(kb_stmt)
+    found_kbs = kb_res.scalars().all()
+    if not found_kbs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Knowledge base(s) {payload.knowledge_base_ids} not found or access denied for customer '{customer_id}'."
+        )
 
     logger.info(
         "query_router_rag_started",
@@ -104,30 +129,32 @@ async def rag_query(
         profile_id=payload.profile_id,
     )
 
-    # Resolve profile settings (derive from KB if profile_id omitted)
+    # ==============================================================================
+    # BLOCK COMMENT: KB-ATTACHED PROFILE RESOLUTION FOR RAG
+    # Resolves full pipeline profile from explicit profile_id or attached Knowledge Base.
+    # Disallows silent fallback: raises error if profile is missing/unconfigured.
+    # ==============================================================================
     target_profile_id = payload.profile_id
-    if not target_profile_id and payload.knowledge_base_ids:
-        from sqlalchemy import select
-        from app.models.db_models import KnowledgeBaseDB
-        kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(payload.knowledge_base_ids[0])))
-        kb = kb_res.scalar_one_or_none()
-        if kb and kb.settings and isinstance(kb.settings, dict):
-            target_profile_id = kb.settings.get("llm_profile_id")
+    target_kb_id = str(payload.knowledge_base_ids[0]) if payload.knowledge_base_ids else None
 
     resolver = ProfileResolver(db=db)
-    profile = await resolver.resolve(
-        profile_id=target_profile_id,
+    profile = await resolver.resolve_for_knowledge_base(
+        knowledge_base_id=target_kb_id,
         customer_id=customer_id,
+        profile_id=target_profile_id,
+        allow_fallback=False,
     )
+
+    top_k = payload.top_k or profile.search.top_k
 
     logger.info(
         "query_router_profile_resolved",
         customer_id=customer_id,
-        resolved_profile_id=profile.id if profile else None,
-        top_k=payload.top_k or profile.search.top_k,
+        target_kb_id=target_kb_id,
+        gen_model=profile.generation.model,
+        gen_provider=profile.generation.provider,
+        top_k=top_k,
     )
-
-    top_k = payload.top_k or profile.search.top_k
 
     request = RAGServiceRequest(
         customer_id=customer_id,
@@ -138,9 +165,18 @@ async def rag_query(
         min_score=profile.search.min_score,
         max_context_tokens=profile.search.max_context_tokens,
         enable_reranking=profile.reranking.enabled,
+        rerank_url=profile.reranking.url,
+        rerank_model=profile.reranking.model,
+        rerank_limit=profile.reranking.candidate_limit,
+        approach=profile.search.approach,
+        enable_rrf=profile.search.enable_rrf,
+        enable_generation=getattr(profile.generation, "enabled", True),
         temperature=profile.generation.temperature,
         max_generation_tokens=profile.generation.max_tokens,
+        system_prompt=profile.generation.system_prompt,
         llm_config=profile.generation.model_dump(),
+        llm_config_id=target_profile_id,
+        llm_profile_id=target_profile_id,
     )
 
     return await rag_service.process_query(request)
@@ -162,21 +198,33 @@ async def debug_retrieve(
     Useful for debugging search quality and reranking.
     """
     customer_id = current_user.customer_id
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required.")
 
-    # Resolve profile settings (derive from KB if profile_id omitted)
+    if not payload.knowledge_base_ids:
+        raise HTTPException(status_code=400, detail="At least one knowledge base ID is required.")
+
     target_profile_id = payload.profile_id
-    if not target_profile_id and payload.knowledge_base_ids:
-        from sqlalchemy import select
-        from app.models.db_models import KnowledgeBaseDB
-        kb_res = await db.execute(select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(payload.knowledge_base_ids[0])))
-        kb = kb_res.scalar_one_or_none()
-        if kb and kb.settings and isinstance(kb.settings, dict):
-            target_profile_id = kb.settings.get("llm_profile_id")
+    target_kb_id = str(payload.knowledge_base_ids[0]) if payload.knowledge_base_ids else None
+
+    from app.models.db_models import KnowledgeBaseDB
+    kb_stmt = select(KnowledgeBaseDB).where(
+        KnowledgeBaseDB.id.in_([str(k) for k in payload.knowledge_base_ids]),
+        KnowledgeBaseDB.customer_id == str(customer_id),
+    )
+    kb_res = await db.execute(kb_stmt)
+    if not kb_res.scalars().all():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Knowledge base(s) {payload.knowledge_base_ids} not found or access denied for customer '{customer_id}'."
+        )
 
     resolver = ProfileResolver(db=db)
-    profile = await resolver.resolve(
-        profile_id=target_profile_id,
+    profile = await resolver.resolve_for_knowledge_base(
+        knowledge_base_id=target_kb_id,
         customer_id=customer_id,
+        profile_id=target_profile_id,
+        allow_fallback=False,
     )
 
     request = RetrievalServiceRequest(
@@ -188,10 +236,10 @@ async def debug_retrieve(
         min_score=payload.min_score if payload.min_score is not None else profile.search.min_score,
         enable_reranking=payload.enable_reranking if payload.enable_reranking is not None else profile.reranking.enabled,
         rerank_url=profile.reranking.url,
-        rerank_model=profile.reranking.model,
-        rerank_limit=profile.reranking.candidate_limit,
+        rerank_model=payload.rerank_model if hasattr(payload, "rerank_model") and payload.rerank_model else profile.reranking.model,
+        rerank_limit=payload.rerank_limit if hasattr(payload, "rerank_limit") and payload.rerank_limit else profile.reranking.candidate_limit,
         approach=payload.approach or profile.search.approach,
-        enable_rrf=profile.search.enable_rrf,
+        enable_rrf=payload.enable_rrf if hasattr(payload, "enable_rrf") and payload.enable_rrf is not None else profile.search.enable_rrf,
         metadata=payload.metadata,
     )
 
@@ -208,19 +256,36 @@ async def debug_generate(
 ):
     """Admin-only: generate a response from a provided context object."""
     customer_id = current_user.customer_id
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required.")
+
+    target_profile_id = payload.profile_id or payload.llm_profile_id or (str(payload.llm_config_id) if payload.llm_config_id not in (None, "", "null", "undefined") else None)
+    target_kb_id = None
+    if not target_profile_id and payload.context:
+        chunks = getattr(payload.context, "chunks", None) or (payload.context.get("chunks") if isinstance(payload.context, dict) else [])
+        if chunks:
+            for c in chunks:
+                kb_id = getattr(c, "knowledge_base_id", None) or (c.get("knowledge_base_id") if isinstance(c, dict) else None)
+                if kb_id:
+                    target_kb_id = str(kb_id)
+                    break
 
     resolver = ProfileResolver(db=db)
-    profile = await resolver.resolve(
-        profile_id=payload.profile_id,
+    profile = await resolver.resolve_for_knowledge_base(
+        knowledge_base_id=target_kb_id,
         customer_id=customer_id,
+        profile_id=target_profile_id,
+        allow_fallback=False,
     )
 
     request = ResponseGenerationServiceRequest(
         query=payload.query,
         context=payload.context,
+        system_prompt=payload.system_prompt or profile.generation.system_prompt,
         temperature=payload.temperature,
         max_generation_tokens=payload.max_generation_tokens,
         customer_id=customer_id,
+        llm_profile_id=target_profile_id,
         llm_config=payload.llm_config or profile.generation.model_dump(),
     )
 

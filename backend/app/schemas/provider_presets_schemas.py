@@ -90,5 +90,10 @@ class ProviderPresetResponse(ProviderPresetBase):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def coerce_id_str(cls, v: Any) -> str:
+        return str(v) if v is not None else ""
+
     model_config = ConfigDict(from_attributes=True)
 

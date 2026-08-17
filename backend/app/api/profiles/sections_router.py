@@ -49,11 +49,11 @@ async def _patch_section(
 
     role = current_user.get("role")
     if role == "system_admin":
-        stmt = select(LLMProfileDB).where(LLMProfileDB.id == profile_id)
+        stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
-        customer_id = current_user.get("tenant")
+        customer_id = str(current_user.get("tenant") or current_user.get("customer_id"))
         stmt = select(LLMProfileDB).where(
-            LLMProfileDB.id == profile_id,
+            LLMProfileDB.id == str(profile_id),
             LLMProfileDB.customer_id == customer_id,
         )
     result = await db.execute(stmt)

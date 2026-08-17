@@ -101,6 +101,12 @@ class ResponseGenerationService:
             except Exception as ex:
                 logger.warning("failed_to_fetch_domain_system_prompt", error=str(ex))
 
+        # ==============================================================================
+        # BLOCK COMMENT: KNOWLEDGE BASE & PROFILE AWARE CONFIG RESOLUTION
+        # If effective_llm_config is missing or lacks model selection, resolves profile
+        # by explicit profile_id/config_id, attached KB profile from context chunks,
+        # or tenant default profile via ProfileResolver.
+        # ==============================================================================
         if llm_profile:
             if hasattr(llm_profile, "generation"):
                 gen = llm_profile.generation
@@ -108,21 +114,36 @@ class ResponseGenerationService:
                 effective_llm_config = {**gen_dict, **effective_llm_config}
                 if hasattr(gen, "system_prompt") and gen.system_prompt and not request.system_prompt:
                     system_prompt = gen.system_prompt
-        elif not effective_llm_config and request.customer_id and db:
+        elif db and (not effective_llm_config or not (effective_llm_config.get("model") or effective_llm_config.get("llm_model"))):
             try:
+                target_kb_id = None
+                target_customer_id = request.customer_id
+                if not llm_config_id and has_context and request.context.chunks:
+                    for chunk in request.context.chunks:
+                        kb_id = getattr(chunk, "knowledge_base_id", None) or (chunk.metadata.get("knowledge_base_id") if getattr(chunk, "metadata", None) else None)
+                        if kb_id:
+                            target_kb_id = str(kb_id)
+                            break
+
                 from app.core.profile_resolver import ProfileResolver
                 resolver = ProfileResolver(db=db)
-                # ==============================================================================
-                # BLOCK COMMENT: STRING-SAFE PROFILE RESOLUTION
-                # Pass string/UUID llm_config_id safely without int() ValueError crashes.
-                # ==============================================================================
-                profile = await resolver.resolve(
+                profile = await resolver.resolve_for_knowledge_base(
+                    knowledge_base_id=target_kb_id,
+                    customer_id=target_customer_id,
                     profile_id=str(llm_config_id) if llm_config_id else None,
-                    customer_id=request.customer_id,
                 )
-                effective_llm_config = profile.generation.model_dump()
-                if profile.generation.system_prompt and not request.system_prompt:
-                    system_prompt = profile.generation.system_prompt
+                if profile:
+                    gen_dict = profile.generation.model_dump()
+                    effective_llm_config = {**gen_dict, **effective_llm_config}
+                    if profile.generation.system_prompt and not request.system_prompt:
+                        system_prompt = profile.generation.system_prompt
+                    logger.info(
+                        "resolved_profile_for_generation",
+                        profile_id=llm_config_id,
+                        kb_id=target_kb_id,
+                        model=profile.generation.model,
+                        provider=profile.generation.provider,
+                    )
             except Exception as ex:
                 logger.warning("failed_to_resolve_profile_for_generation", error=str(ex))
 

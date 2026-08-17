@@ -36,13 +36,20 @@ class ProfileResolver:
     async def resolve(
         self,
         profile_id: Optional[Union[str, int]],
-        customer_id: Union[str, int],
+        customer_id: Optional[Union[str, int]],
+        allow_fallback: bool = False,
     ) -> ProfileSettings:
         """
         Return a fully-typed ProfileSettings for the given profile or tenant default.
-
-        Never raises — falls back gracefully to system defaults if nothing is found.
+        If allow_fallback is False, raises HTTPException if customer_id or profile is missing/not found.
         """
+        from fastapi import HTTPException
+
+        if not customer_id and not profile_id:
+            if not allow_fallback:
+                raise HTTPException(status_code=400, detail="Customer ID is required to resolve LLM profile.")
+            return self._system_defaults()
+
         raw = await self._load_raw(profile_id=profile_id, customer_id=customer_id)
         if raw:
             try:
@@ -52,8 +59,58 @@ class ProfileResolver:
                     "profile_parse_failed_using_defaults",
                     extra={"profile_id": profile_id, "error": str(exc)},
                 )
+                if not allow_fallback:
+                    raise HTTPException(status_code=422, detail=f"Failed to parse LLM profile configuration: {exc}")
+
+        if not allow_fallback:
+            if profile_id:
+                raise HTTPException(status_code=404, detail=f"LLM Profile '{profile_id}' not found for customer '{customer_id}'.")
+            raise HTTPException(status_code=404, detail=f"No active or default LLM Profile found for customer '{customer_id}'. Please configure a profile before running search or generation.")
 
         return self._system_defaults()
+
+    # ==============================================================================
+    # BLOCK COMMENT: KNOWLEDGE BASE ATTACHED PROFILE RESOLUTION
+    # Resolves ProfileSettings for a given Knowledge Base by inspecting KB settings
+    # for attached llm_profile_id, raising error if KB/profile is not present.
+    # ==============================================================================
+    async def resolve_for_knowledge_base(
+        self,
+        knowledge_base_id: Optional[Union[str, int]],
+        customer_id: Optional[Union[str, int]] = None,
+        profile_id: Optional[Union[str, int]] = None,
+        allow_fallback: bool = False,
+    ) -> ProfileSettings:
+        """Resolve ProfileSettings using explicit profile_id, KB attached profile, or tenant fallback."""
+        from fastapi import HTTPException
+        from app.models.db_models import KnowledgeBaseDB
+
+        target_profile_id = profile_id
+        target_customer_id = customer_id
+
+        if knowledge_base_id:
+            kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(knowledge_base_id))
+            if target_customer_id:
+                kb_stmt = kb_stmt.where(KnowledgeBaseDB.customer_id == str(target_customer_id))
+            kb_res = await self.db.execute(kb_stmt)
+            kb = kb_res.scalar_one_or_none()
+            if not kb:
+                if not allow_fallback:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Knowledge Base '{knowledge_base_id}' not found or access denied."
+                    )
+            elif not target_profile_id:
+                if target_customer_id is None:
+                    target_customer_id = kb.customer_id
+                if kb.settings and isinstance(kb.settings, dict):
+                    target_profile_id = kb.settings.get("llm_profile_id")
+
+        return await self.resolve(
+            profile_id=target_profile_id,
+            customer_id=target_customer_id,
+            allow_fallback=allow_fallback,
+        )
 
     async def resolve_section(
         self,
@@ -155,13 +212,15 @@ class ProfileResolver:
         # Try explicit profile
         if profile_id:
             str_pid = str(profile_id)
-            result = await self.db.execute(
-                select(LLMProfileDB).where(
-                    LLMProfileDB.id == str_pid,
-                    LLMProfileDB.customer_id == str_cid,
-                )
-            )
+            stmt = select(LLMProfileDB).where(LLMProfileDB.id == str_pid)
+            if str_cid:
+                stmt = stmt.where(LLMProfileDB.customer_id == str_cid)
+            result = await self.db.execute(stmt)
             profile = result.scalar_one_or_none()
+            if not profile and str_cid:
+                # Fallback to lookup without customer filter if shared or system-level profile
+                res_fallback = await self.db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str_pid))
+                profile = res_fallback.scalar_one_or_none()
             if profile and profile.settings:
                 logger.debug("profile_resolved_by_id", extra={"profile_id": str_pid})
                 return profile.settings

@@ -1,0 +1,146 @@
+erDiagram
+    CUSTOMERS ||--o{ KNOWLEDGE_BASES : "owns"
+    CUSTOMERS ||--o{ KNOWLEDGE_DOCUMENTS : "owns"
+    CUSTOMERS ||--o{ KNOWLEDGE_COLLECTIONS : "owns"
+    CUSTOMERS ||--o{ JOBS : "tracks"
+    
+    USERS ||--o{ KNOWLEDGE_BASES : "creates"
+    USERS ||--o{ KNOWLEDGE_DOCUMENTS : "uploads"
+    USERS ||--o{ JOBS : "triggers"
+
+    DOMAIN_SCHEMAS ||--o{ KNOWLEDGE_BASES : "configures schema"
+    
+    KNOWLEDGE_BASES ||--|| KNOWLEDGE_COLLECTIONS : "maps 1:1"
+    KNOWLEDGE_BASES ||--o{ KNOWLEDGE_DOCUMENTS : "contains"
+    KNOWLEDGE_BASES ||--o{ KNOWLEDGE_CHUNKS : "groups"
+    
+    KNOWLEDGE_COLLECTIONS ||--o{ KNOWLEDGE_DOCUMENTS : "indexes into"
+    
+    KNOWLEDGE_DOCUMENTS ||--o{ KNOWLEDGE_CHUNKS : "split into"
+    KNOWLEDGE_DOCUMENTS ||--o{ JOBS : "ingestion job"
+    
+    LLM_PROFILES ||--o{ KNOWLEDGE_DOCUMENTS : "provides embedding/chat config"
+    PROVIDER_PRESETS ||--o{ LLM_PROFILES : "preset configs"
+
+    KNOWLEDGE_COLLECTIONS ||--|| QDRANT_COLLECTION : "creates / mirrors"
+    KNOWLEDGE_CHUNKS ||--|| QDRANT_POINT : "vectorizes & upserts"
+
+    CUSTOMERS {
+        string id PK "UUIDv4"
+        string name
+        string domain
+        string status
+        json settings
+    }
+
+    USERS {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string username
+        string email_id
+        string role
+    }
+
+    DOMAIN_SCHEMAS {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string domain_key
+        string scope "SYSTEM | TENANT"
+        json schema_json
+    }
+
+    KNOWLEDGE_BASES {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string domain_id FK
+        string created_by FK
+        string name
+        string status
+        json settings
+    }
+
+    KNOWLEDGE_COLLECTIONS {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string knowledge_base_id FK "1:1 Unique"
+        string name "kb_collection_{kb_id}"
+        string embedding_model
+        int vector_dimension
+        string distance_metric "COSINE"
+        string status
+    }
+
+    KNOWLEDGE_DOCUMENTS {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string knowledge_base_id FK
+        string collection_id FK
+        string created_by FK
+        string name
+        string file_path
+        int file_size
+        string mime_type
+        string checksum
+        string status "pending | processing | completed | failed"
+        int chunk_count
+        string collection_name
+        string embedding_model
+        int vector_dimension
+        string distance_metric
+        json metadata_json
+    }
+
+    KNOWLEDGE_CHUNKS {
+        string id PK "UUIDv4"
+        string document_id FK
+        string knowledge_base_id FK
+        string customer_id FK
+        int chunk_index
+        text content
+        json metadata_json
+    }
+
+    JOBS {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string job_type "DOCUMENT_INGESTION"
+        string entity_type "DOCUMENT"
+        string entity_id FK "KnowledgeDocumentDB.id"
+        string status "QUEUED | PROCESSING | COMPLETED | FAILED"
+        int progress
+        text error
+        json metadata
+    }
+
+    LLM_PROFILES {
+        string id PK "UUIDv4"
+        string customer_id FK
+        string name
+        boolean is_default
+        json settings "embedding & LLM params"
+    }
+
+    PROVIDER_PRESETS {
+        string id PK "UUIDv4"
+        string provider_key
+        string base_url
+        json embedding_models
+        int default_embedding_dimension
+    }
+
+    QDRANT_COLLECTION {
+        string collection_name PK "kb_collection_{kb_id}"
+        int vector_size "e.g. 768 / 1536 / 3072"
+        string distance "COSINE"
+    }
+
+    QDRANT_POINT {
+        string point_id PK "UUIDv5(namespace, knowledge-chunk:{chunk_id})"
+        float_array vector "Dense vector embedding"
+        string chunk_id "KnowledgeChunkDB.id"
+        string document_id "KnowledgeDocumentDB.id"
+        string knowledge_base_id "KnowledgeBaseDB.id"
+        string customer_id "CustomerDB.id (Tenant Filter)"
+        int chunk_index "Ordering index"
+        json metadata "Chunk & doc level metadata"
+    }

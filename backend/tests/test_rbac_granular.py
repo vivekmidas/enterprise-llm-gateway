@@ -67,57 +67,54 @@ def test_user_has_permission_wildcards():
     assert standard_user.has_permission("workflow:execute") is False
 
 
-@pytest.fixture(scope="module")
-async def db_session():
-    from app.core.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        yield session
+@pytest.mark.asyncio(loop_scope="module")
+async def test_rbac_db_seeding_and_cascading_deletion():
+    from app.core.database import AsyncSessionLocal, engine
+    await engine.dispose()
+    async with AsyncSessionLocal() as db_session:
+        # Seed RBAC system roles & permissions
+        await seed_rbac(db_session)
+
+        # Verify preset roles exist
+        role_types = ["system_admin", "tenant_admin", "para_legal", "legal_analyst", "tenant_user"]
+        for rt in role_types:
+            from sqlalchemy import select
+            stmt = select(RoleDB).where(RoleDB.role_type == rt, RoleDB.customer_id.is_(None))
+            res = await db_session.execute(stmt)
+            role = res.scalar_one_or_none()
+            assert role is not None, f"System preset role '{rt}' should be seeded."
+
+        # Create test customer and custom role
+        cust_id = generate_uuid()
+        cust = CustomerDB(id=cust_id, name="Test Law Firm", email="info@firm.com")
+        db_session.add(cust)
+        await db_session.commit()
+
+        custom_role_id = generate_uuid()
+        custom_role = RoleDB(
+            id=custom_role_id,
+            customer_id=cust_id,
+            role_name="Custom Senior Partner",
+            role_type="custom",
+            is_system_preset=False
+        )
+        db_session.add(custom_role)
+        await db_session.commit()
+
+        # Verify custom role created
+        from sqlalchemy import select
+        res = await db_session.execute(select(RoleDB).where(RoleDB.id == custom_role_id))
+        assert res.scalar_one_or_none() is not None
+
+        # Delete Customer and verify custom role cascade deleted
+        await db_session.delete(cust)
+        await db_session.commit()
+
+        res = await db_session.execute(select(RoleDB).where(RoleDB.id == custom_role_id))
+        assert res.scalar_one_or_none() is None, "Custom customer role should cascade delete on customer deletion."
+
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_rbac_db_seeding_and_cascading_deletion(db_session):
-    # Seed RBAC system roles & permissions
-    await seed_rbac(db_session)
-
-    # Verify preset roles exist
-    role_types = ["system_admin", "tenant_admin", "para_legal", "legal_analyst", "tenant_user"]
-    for rt in role_types:
-        from sqlalchemy import select
-        stmt = select(RoleDB).where(RoleDB.role_type == rt, RoleDB.customer_id.is_(None))
-        res = await db_session.execute(stmt)
-        role = res.scalar_one_or_none()
-        assert role is not None, f"System preset role '{rt}' should be seeded."
-
-    # Create test customer and custom role
-    cust_id = generate_uuid()
-    cust = CustomerDB(id=cust_id, name="Test Law Firm", email="info@firm.com")
-    db_session.add(cust)
-    await db_session.commit()
-
-    custom_role_id = generate_uuid()
-    custom_role = RoleDB(
-        id=custom_role_id,
-        customer_id=cust_id,
-        role_name="Custom Senior Partner",
-        role_type="custom",
-        is_system_preset=False
-    )
-    db_session.add(custom_role)
-    await db_session.commit()
-
-    # Verify custom role created
-    from sqlalchemy import select
-    res = await db_session.execute(select(RoleDB).where(RoleDB.id == custom_role_id))
-    assert res.scalar_one_or_none() is not None
-
-    # Delete Customer and verify custom role cascade deleted
-    await db_session.delete(cust)
-    await db_session.commit()
-
-    res = await db_session.execute(select(RoleDB).where(RoleDB.id == custom_role_id))
-    assert res.scalar_one_or_none() is None, "Custom customer role should cascade delete on customer deletion."
-
-
-@pytest.mark.asyncio
 async def test_require_permission_dependency():
     paralegal = User(
         id="u3",
@@ -137,4 +134,4 @@ async def test_require_permission_dependency():
     with pytest.raises(HTTPException) as exc_info:
         await dep_workflow(current_user=paralegal)
     assert exc_info.value.status_code == 403
-    assert "Permission 'workflow:create' required" in exc_info.value.detail
+    assert "Missing required permission 'workflow:create'" in exc_info.value.detail

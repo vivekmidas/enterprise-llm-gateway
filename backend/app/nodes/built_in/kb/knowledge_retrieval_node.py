@@ -154,30 +154,13 @@ class KnowledgeRetrievalNode(BaseNode):
                     violations=["tenant_scope_missing"],
                 )
 
-            # Resolve profile — uses profile_id from config or falls back to tenant default
-            profile_id = data.get(
-                "llm_profile_id",
-                inp.config.get("llm_profile_id"),
-            )
-            if profile_id:
-                try:
-                    profile_id = int(profile_id)
-                except (ValueError, TypeError):
-                    profile_id = None
-
-            from app.core.profile_resolver import ProfileResolver
-            async with AsyncSessionLocal() as db:
-                profile = await ProfileResolver(db=db).resolve(
-                    profile_id=profile_id,
-                    customer_id=customer_id,
-                )
-
-            self.logger.info(
-                "knowledge_retrieval_profile_resolved",
-                trace_id=inp.trace_id,
-                profile_id=profile.id if profile else None,
-                customer_id=customer_id,
-            )
+            # ==============================================================================
+            # BLOCK COMMENT: STRING-SAFE & KB-ATTACHED PROFILE RESOLUTION
+            # Preserves UUID string profile_id without int() crash and inspects target
+            # Knowledge Base settings to derive attached llm_profile_id if not specified.
+            # ==============================================================================
+            raw_pid = data.get("llm_profile_id", inp.config.get("llm_profile_id"))
+            profile_id = str(raw_pid).strip() if raw_pid not in (None, "", "null", "undefined", "active") else None
 
             # Runtime input can override profile search settings
             knowledge_base_ids = self._normalise_int_list(
@@ -185,6 +168,24 @@ class KnowledgeRetrievalNode(BaseNode):
                     "knowledge_base_ids",
                     inp.config.get("knowledge_base_ids", []),
                 )
+            )
+
+            target_kb_for_profile = str(knowledge_base_ids[0]) if knowledge_base_ids else None
+
+            from app.core.profile_resolver import ProfileResolver
+            async with AsyncSessionLocal() as db:
+                profile = await ProfileResolver(db=db).resolve_for_knowledge_base(
+                    knowledge_base_id=target_kb_for_profile,
+                    customer_id=customer_id,
+                    profile_id=profile_id,
+                )
+
+            self.logger.info(
+                "knowledge_retrieval_profile_resolved",
+                trace_id=inp.trace_id,
+                profile_id=profile_id,
+                kb_id=target_kb_for_profile,
+                customer_id=customer_id,
             )
 
             document_ids = self._normalise_int_list(
@@ -290,9 +291,11 @@ class KnowledgeRetrievalNode(BaseNode):
             gen_req = ResponseGenerationServiceRequest(
                 query=query,
                 context=retrieval_result.response.context,
+                system_prompt=profile.generation.system_prompt,
                 temperature=profile.generation.temperature,
                 max_generation_tokens=profile.generation.max_tokens,
                 customer_id=customer_id,
+                llm_profile_id=profile_id,
                 llm_config=profile.generation.model_dump(),
             )
 

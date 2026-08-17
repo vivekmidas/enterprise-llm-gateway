@@ -218,7 +218,7 @@ async def test_end_to_end_rag_flow(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_response_generation_service_empty_context():
-    from app.services.response_generation_service import ResponseGenerationService
+    from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
     from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext
 
     service = ResponseGenerationService()
@@ -241,16 +241,16 @@ async def test_response_generation_service_empty_context():
 
 @pytest.mark.asyncio
 async def test_response_generation_service_no_answer_from_llm():
-    from app.services.response_generation_service import ResponseGenerationService
+    from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
     from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext, RetrievedChunk
 
     service = ResponseGenerationService()
     context = RetrievalContext(
         chunks=[
             RetrievedChunk(
-                chunk_id=1,
-                document_id=1,
-                knowledge_base_id=1,
+                chunk_id="1",
+                document_id="1",
+                knowledge_base_id="1",
                 content="SSO setup instructions...",
                 score=0.9,
                 chunk_index=0,
@@ -273,3 +273,110 @@ async def test_response_generation_service_no_answer_from_llm():
     with patch("app.core.llm_router.LLMRouter.get_llm", return_value=mock_llm):
         result = await service.generate_response(request)
         assert result.answer == "no answer"
+
+
+# ==============================================================================
+# BLOCK COMMENT: TEST KB ATTACHED PROFILE RESOLUTION
+# Validates that ResponseGenerationService resolves the attached profile model
+# from context chunk knowledge_base_id when llm_config is omitted.
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_response_generation_resolves_kb_attached_profile():
+    from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
+    from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext, RetrievedChunk
+    from app.models.db_models import LLMProfileDB, KnowledgeBaseDB, CustomerDB, UserDB
+
+    async with AsyncSessionLocal() as session:
+        # Create tenant
+        tenant = CustomerDB(name="KB Profile Tenant", domain="kb-profile-tenant.com", status="active")
+        session.add(tenant)
+        await session.flush()
+
+        user = UserDB(username="kb_prof_user", email_id="kb_prof@test.com", password="pwd", name="User", role="user", customer_id=tenant.id, status="active")
+        session.add(user)
+        await session.flush()
+
+        # Create custom LLM Profile
+        custom_profile = LLMProfileDB(
+            name="Custom GPT-4 Profile",
+            customer_id=tenant.id,
+            created_by=user.id,
+            is_default=False,
+            settings={
+                "generation": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo-custom",
+                    "temperature": 0.3,
+                    "max_tokens": 512,
+                    "system_prompt": "Custom system prompt for testing."
+                }
+            }
+        )
+        session.add(custom_profile)
+        await session.flush()
+
+        # Create KnowledgeBase with attached profile
+        kb = KnowledgeBaseDB(
+            name="Custom Profile KB",
+            customer_id=tenant.id,
+            created_by=user.id,
+            status="active",
+            settings={"llm_profile_id": custom_profile.id}
+        )
+        session.add(kb)
+        await session.commit()
+        await session.refresh(kb)
+        await session.refresh(custom_profile)
+
+        kb_id = kb.id
+        tenant_id = tenant.id
+        profile_id = custom_profile.id
+
+    try:
+        service = ResponseGenerationService()
+        context = RetrievalContext(
+            chunks=[
+                RetrievedChunk(
+                    chunk_id="chunk-1",
+                    document_id="doc-1",
+                    knowledge_base_id=kb_id,
+                    content="Relevant factual context about system security.",
+                    score=0.95,
+                    chunk_index=0,
+                    metadata={"knowledge_base_id": kb_id}
+                )
+            ],
+            context="Relevant factual context about system security.",
+            total_chunks=1,
+            total_tokens=15,
+        )
+
+        # Request WITHOUT explicit llm_config
+        request = ResponseGenerationRequest(
+            query="What is the security policy?",
+            context=context,
+            customer_id=tenant_id,
+        )
+
+        captured_config = {}
+        async def mock_get_llm(temperature=0.7, max_tokens=1024, customer_id=None, db=None, llm_config=None):
+            nonlocal captured_config
+            captured_config = llm_config or {}
+            return MockLLM("Relevant factual context about system security answer.")
+
+        with patch("app.core.llm_router.LLMRouter.get_llm", side_effect=mock_get_llm):
+            async with AsyncSessionLocal() as session:
+                result = await service.generate_response(request, db=session)
+                assert result.answer is not None
+
+            # Assert captured config used attached KB profile model
+            assert captured_config.get("llm_model") == "gpt-4-turbo-custom" or captured_config.get("model") == "gpt-4-turbo-custom"
+            assert captured_config.get("llm_provider") == "openai" or captured_config.get("provider") == "openai"
+
+    finally:
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(KnowledgeBaseDB).where(KnowledgeBaseDB.customer_id == tenant_id))
+            await session.execute(delete(LLMProfileDB).where(LLMProfileDB.customer_id == tenant_id))
+            await session.execute(delete(UserDB).where(UserDB.customer_id == tenant_id))
+            await session.execute(delete(CustomerDB).where(CustomerDB.id == tenant_id))
+            await session.commit()
