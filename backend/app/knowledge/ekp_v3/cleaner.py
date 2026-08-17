@@ -251,7 +251,7 @@ def get_default_pipeline(config_overrides: Optional[List[Dict[str, Any]]] = None
 
 # Legacy helper functions for backward compatibility with EKP V3 pipeline & CDM generator
 
-def clean_and_deduplicate_text(text: str) -> str:
+def clean_and_deduplicate_text(text: str, context: Optional[Dict[str, Any]] = None) -> str:
     """Legacy wrapper executing standard cleaning pipeline steps (excluding paragraph merging)."""
     if not text:
         return ""
@@ -263,13 +263,13 @@ def clean_and_deduplicate_text(text: str) -> str:
         MarkdownTableFormatStep(),
         ImageContextFormatStep(),
     ])
-    return pipeline.run(text)
+    return pipeline.run(text, context=context)
 
 
-def smart_paragraph_assembly(raw_text: str) -> List[str]:
+def smart_paragraph_assembly(raw_text: str, context: Optional[Dict[str, Any]] = None) -> List[str]:
     """Legacy wrapper returning clean paragraph strings."""
     if not raw_text:
         return []
     pipeline = get_default_pipeline()
-    full_cleaned = pipeline.run(raw_text)
+    full_cleaned = pipeline.run(raw_text, context=context)
     return [p.strip() for p in full_cleaned.split("\n\n") if p.strip()]

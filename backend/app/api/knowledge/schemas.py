@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -127,7 +127,19 @@ class RAGRequest(BaseModel):
     max_context_tokens: int = Field(default=6000, ge=500)
     enable_reranking: Optional[bool] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
-    max_generation_tokens: int = Field(default=1024, ge=1)
-    llm_config: Optional[Dict[str, Any]] = None
-    llm_config_id: Optional[str] = None
+class DocumentViewsResponse(BaseModel):
+    document_id: str
+    document_name: str
+    status: str
+    created_at: str
+    views: Dict[str, Any]
+    comparison_report: Optional[Dict[str, Any]] = None
+    entity_provenance: Optional[List[Dict[str, Any]]] = None
+    model_config = {"from_attributes": True}
+
+
+class DocumentViewsUpdate(BaseModel):
+    normalized_text: Optional[str] = None
+    structured_json: Optional[Dict[str, Any]] = None
+
 

@@ -52,7 +52,12 @@ def test_header_footer_filter_step():
 def test_ocr_deduplication_step():
     step = OCRDeduplicationStep()
     text = "THE HIGH COURT OF JUDICATURE AT BOMBAY THE HIGH COURT OF JUDICATURE AT BOMBAY\nCORAM CORAM: JUSTICE SMITH"
-    cleaned = step.process(text)
+    # When enable_dedup is False: step skips
+    skipped = step.execute(text, context={"enable_dedup": False})
+    assert skipped == text
+
+    # When enable_dedup is True: step executes
+    cleaned = step.execute(text, context={"enable_dedup": True})
     assert cleaned == "THE HIGH COURT OF JUDICATURE AT BOMBAY\nCORAM: JUSTICE SMITH"
 
 

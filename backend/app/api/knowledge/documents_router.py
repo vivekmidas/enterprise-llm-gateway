@@ -19,7 +19,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth.dependencies import get_current_user, require_tenant, dynamic_api_guard
-from app.api.knowledge.schemas import KnowledgeDocumentResponse, KnowledgeDocumentUpdate
+from app.api.knowledge.schemas import (
+    KnowledgeDocumentResponse,
+    KnowledgeDocumentUpdate,
+    DocumentViewsResponse,
+    DocumentViewsUpdate,
+)
 from app.core.database import get_db
 from app.core.types.users import User
 from app.models.db_models import CustomerDB, KnowledgeBaseDB, KnowledgeDocumentDB, KnowledgeChunkDB, JobDB
@@ -41,6 +46,8 @@ async def upload_document(
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     doc_type: Optional[str] = Form(None),
+    parser_strategy: Optional[str] = Form(None),
+    enable_dedup: Optional[bool] = Form(None),
     current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,7 +109,7 @@ async def upload_document(
         await db.commit()
 
         from app.nodes.built_in.kb.document_ingestion_service import document_ingestion_service
-        tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        tags_list = [t.strip().upper() for t in tags.split(",") if t.strip()] if tags else None
 
         return await document_ingestion_service.start_ingestion(
             db=db,
@@ -112,6 +119,8 @@ async def upload_document(
             description=description,
             tags=tags_list,
             doc_type=doc_type,
+            parser_strategy=parser_strategy,
+            enable_dedup=enable_dedup,
         )
 
     except Exception as exc:
@@ -206,6 +215,81 @@ async def get_document(
         doc_dict["job_message"] = job.message or (job.status.value if hasattr(job.status, "value") else str(job.status))
 
     return KnowledgeDocumentResponse(**doc_dict)
+
+
+# =============================================================================
+# BLOCK COMMENT: 3-TIER DOCUMENT DATA VIEWS ENDPOINTS
+# Endpoints:
+#   GET /bases/{kb_id}/documents/{doc_id}/views  (Retrieve Extracted, Normalized, JSON)
+#   PUT /bases/{kb_id}/documents/{doc_id}/views  (Update/Correct Normalized, JSON)
+# =============================================================================
+
+@router.get("/bases/{kb_id}/documents/{doc_id}/views", response_model=DocumentViewsResponse)
+async def get_document_views(
+    kb_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve 3 data views: 1. extracted (with comparison diff), 2. normalized, 3. json tree."""
+    if current_user.role == "system_admin":
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
+    else:
+        customer_id = require_tenant(current_user)
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
+
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    from app.knowledge.storage.views_manager import DocumentViewsManager
+    views_data = await DocumentViewsManager.get_views(db=db, document_id=doc.id)
+    return DocumentViewsResponse(**views_data)
+
+
+@router.put("/bases/{kb_id}/documents/{doc_id}/views", response_model=DocumentViewsResponse)
+async def update_document_views(
+    kb_id: str,
+    doc_id: str,
+    payload: DocumentViewsUpdate,
+    current_user: User = Depends(dynamic_api_guard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allow manual verification/correction of the normalized text or structural JSON views."""
+    if current_user.role == "system_admin":
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
+    else:
+        customer_id = require_tenant(current_user)
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+            KnowledgeDocumentDB.customer_id == customer_id,
+        )
+
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    from app.knowledge.storage.views_manager import DocumentViewsManager
+    await DocumentViewsManager.update_views(
+        db=db,
+        document_id=doc.id,
+        normalized_text=payload.normalized_text,
+        structured_json=payload.structured_json,
+    )
+    views_data = await DocumentViewsManager.get_views(db=db, document_id=doc.id)
+    return DocumentViewsResponse(**views_data)
+
 
 
 @router.put("/bases/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)

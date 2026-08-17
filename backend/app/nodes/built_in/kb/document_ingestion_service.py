@@ -37,6 +37,8 @@ class DocumentIngestionService:
         description: str | None = None,
         tags: list[str] | None = None,
         doc_type: str | None = None,
+        parser_strategy: str | None = None,
+        enable_dedup: bool | None = None,
     ) -> KnowledgeDocumentDB:
         # Read content and validate size
         content = await upload_file.read()
@@ -116,6 +118,10 @@ class DocumentIngestionService:
             metadata["tags"] = tags
         if doc_type:
             metadata["type"] = doc_type
+        if parser_strategy:
+            metadata["parser_strategy"] = parser_strategy
+        if enable_dedup is not None:
+            metadata["enable_dedup"] = enable_dedup
 
         document = KnowledgeDocumentDB(
             knowledge_base_id=knowledge_base_id,
@@ -191,102 +197,276 @@ class DocumentIngestionService:
             await db.commit()
 
             try:
-                # Extract Text
-                text = extract_text_from_file(file_path)
-                if not text.strip():
+                # =====================================================================
+                # BLOCK COMMENT: MODULAR DUAL EXTRACTION, NORMALIZATION, VIEWS & CHUNKING
+                # Purpose:
+                # 1. Dual PDF Parsing (Primary: Docling, Secondary: OpenDataLoader/PyMuPDF)
+                #    with cross-validation, missing span recovery, and visual provenance.
+                # 2. Deterministic Text Cleansing (reconstruct line wraps, filter noise, preserve citations).
+                # 3. Document Structure Tree Builder (Document -> Section -> Paragraph).
+                # 4. Persistence of 3 Data Views in Document DB (extracted, normalized, json).
+                # 5. Hierarchical Semantic Chunking with section context & bounding box metadata.
+                # =====================================================================
+                from app.knowledge.parsers.dual_parser import DualPDFParser
+                from app.knowledge.cleanser.pipeline import DocumentCleanser
+                from app.knowledge.chunkers.tree_builder import DocumentTreeBuilder
+                from app.knowledge.chunkers.hierarchical_chunker import HierarchicalSemanticChunker
+                from app.knowledge.storage.views_manager import DocumentViewsManager
+
+                # Resolve KB settings & document metadata switches
+                kb_stmt_pre = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
+                kb_res_pre = await db.execute(kb_stmt_pre)
+                pre_kb = kb_res_pre.scalar_one_or_none()
+                kb_settings = pre_kb.settings or {} if pre_kb else {}
+                doc_meta = document.metadata_json or {}
+
+                # Parser selection: when defining KB, enable both parsers or only 1
+                enable_docling = doc_meta.get(
+                    "enable_docling",
+                    kb_settings.get("enable_docling", True if kb_settings.get("parser_strategy") != "opendataloader_only" else False),
+                )
+                enable_opendataloader = doc_meta.get(
+                    "enable_opendataloader",
+                    kb_settings.get("enable_opendataloader", True if kb_settings.get("parser_strategy") != "docling_only" else False),
+                )
+                parser_strategy = doc_meta.get("parser_strategy") or kb_settings.get("parser_strategy")
+
+                # Deduplication toggle: True/False
+                enable_dedup = doc_meta.get("enable_dedup") if "enable_dedup" in doc_meta else kb_settings.get("enable_dedup", False)
+
+                # 1. Read file bytes and parse (runs in sequence if both enabled, or single parser if only 1 enabled)
+                with open(file_path, "rb") as fh:
+                    raw_file_bytes = fh.read()
+
+                dual_parser = DualPDFParser()
+                extracted_doc, comparison_report = dual_parser.parse_document(
+                    content=raw_file_bytes,
+                    filename=document.name,
+                    enable_docling=enable_docling,
+                    enable_opendataloader=enable_opendataloader,
+                    enable_dual_comparison=(enable_docling and enable_opendataloader),
+                    parser_strategy=parser_strategy,
+                )
+
+                # Fallback to extract_text_from_file if parser yielded empty
+                if not extracted_doc.raw_text.strip():
+                    fallback_text = extract_text_from_file(file_path)
+                    extracted_doc.raw_text = fallback_text
+
+                if not extracted_doc.raw_text.strip():
                     raise ValueError("No extractable text found in document")
+
+                # 2. Deterministic Normalization & Deduplication
+                cleanser = DocumentCleanser()
+                normalized_res = cleanser.clean(
+                    raw_text=extracted_doc.raw_text,
+                    spans=extracted_doc.spans,
+                    context={"enable_dedup": enable_dedup},
+                )
+                text = normalized_res.normalized_text
+
+                # 3. Build Document Tree (JSON Hierarchy)
+                tree_builder = DocumentTreeBuilder()
+                doc_tree = tree_builder.build_tree(
+                    document_name=document.name,
+                    spans=normalized_res.spans,
+                    normalized_text=text,
+                    page_count=extracted_doc.page_count,
+                )
+
+                # 4. Save 3 Data Views in Document DB
+                await DocumentViewsManager.save_views(
+                    db=db,
+                    document_id=document.id,
+                    extracted_doc=extracted_doc,
+                    normalized_result=normalized_res,
+                    document_tree=doc_tree,
+                    comparison_report=comparison_report,
+                )
 
                 # =====================================================================
                 # BLOCK: DOMAIN KNOWLEDGE EXTRACTION
                 # Purpose: Checks if the destination Knowledge Base is linked to a DomainSchemaDB.
-                # If linked, runs DomainExtractor to extract schema-defined fields + extra fields
-                # using the Domain's custom system_prompt & user_prompt templates.
-                # Extracted domain metadata & field weights are saved in document.metadata_json.
+                # =====================================================================
+                # BLOCK COMMENT: METADATA & DOMAIN EXTRACTION
+                # Purpose:
+                # 1. Resolves LLM Profile for the tenant (kb.settings.llm_profile_id -> default profile).
+                # 2. Resolves prompt hierarchy: KB extraction_prompt > Domain Schema prompt > Default.
+                # =====================================================================
+                # BLOCK COMMENT: METADATA & DOMAIN EXTRACTION (DOMAIN LINKED ONLY)
+                # Purpose:
+                # Runs ONLY if the Knowledge Base is linked to a Domain Schema (target_kb.domain_id).
+                # 1. Resolves LLM Profile for the tenant (kb.settings.llm_profile_id -> default profile).
+                # 2. Resolves prompt hierarchy: KB extraction_prompt > Domain Schema prompt > Default.
+                # 3. Executes DomainExtractor and records structured JSON in document.metadata_json.
+                # 4. Links extracted entities to visual provenance (spans, bounding boxes).
+                # If unlinked, skips LLM extraction and sets informative status_note.
                 # =====================================================================
                 kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
                 kb_res = await db.execute(kb_stmt)
                 target_kb = kb_res.scalar_one_or_none()
 
                 metadata = dict(document.metadata_json or {})
+                kb_settings = (target_kb.settings or {}) if target_kb else {}
 
                 if target_kb and target_kb.domain_id:
-                    await job_service.update_progress(job_id, 25, message="Extracting domain knowledge")
                     domain_stmt = select(DomainSchemaDB).where(DomainSchemaDB.id == target_kb.domain_id)
                     domain_res = await db.execute(domain_stmt)
                     domain_schema = domain_res.scalar_one_or_none()
 
                     if domain_schema:
-                            # Resolve LLM profile for this KB's tenant so extraction uses
-                            # the configured model (Claude, GPT-4o, etc.) not local Ollama
-                            llm_profile = None
-                            try:
-                                kb_settings = target_kb.settings or {}
-                                kb_profile_id = kb_settings.get("llm_profile_id")
-                                if kb_profile_id:
-                                    prof_res = await db.execute(
-                                        select(LLMProfileDB).where(LLMProfileDB.id == str(kb_profile_id))
-                                    )
-                                    llm_profile = prof_res.scalar_one_or_none()
-                                if not llm_profile:
-                                    cust_id = target_kb.customer_id
-                                    prof_res = await db.execute(
-                                        select(LLMProfileDB).where(
-                                            LLMProfileDB.customer_id == cust_id,
-                                            LLMProfileDB.is_default == True,
-                                        )
-                                    )
-                                    llm_profile = prof_res.scalar_one_or_none()
-                                if not llm_profile:
-                                    prof_res = await db.execute(
-                                        select(LLMProfileDB).where(LLMProfileDB.customer_id == cust_id)
-                                    )
-                                    llm_profile = prof_res.scalars().first()
-                            except Exception as prof_err:
-                                logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
+                        await job_service.update_progress(job_id, 25, message="Extracting metadata JSON")
 
-                            extractor = DomainExtractor.from_llm_profile(llm_profile)
-                            logger.info(
-                                "domain_extraction_llm_profile_resolved",
-                                profile_id=llm_profile.id if llm_profile else None,
-                                profile_name=llm_profile.name if llm_profile else "Ollama-default",
-                            )
-                            domain_info = await extractor.extract_domain_knowledge(
-                                text=text,
-                                filename=document.name,
-                                domain_name=domain_schema.name,
-                                domain_key=domain_schema.domain_key,
-                                schema_json=domain_schema.schema_json,
-                                system_prompt_template=domain_schema.system_prompt,
-                                user_prompt_template=domain_schema.user_prompt,
-                            )
-                            metadata["domain_info"] = domain_info
-                            document.metadata_json = metadata
-                            await db.commit()
+                        # Resolve LLM profile for this KB's tenant
+                        llm_profile = None
+                        try:
+                            kb_profile_id = kb_settings.get("llm_profile_id")
+                            cust_id = target_kb.customer_id if target_kb else customer_id
+                            if kb_profile_id:
+                                prof_res = await db.execute(
+                                    select(LLMProfileDB).where(LLMProfileDB.id == str(kb_profile_id))
+                                )
+                                llm_profile = prof_res.scalar_one_or_none()
+                            if not llm_profile:
+                                prof_res = await db.execute(
+                                    select(LLMProfileDB).where(
+                                        LLMProfileDB.customer_id == cust_id,
+                                        LLMProfileDB.is_default == True,
+                                    )
+                                )
+                                llm_profile = prof_res.scalar_one_or_none()
+                            if not llm_profile:
+                                prof_res = await db.execute(
+                                    select(LLMProfileDB).where(LLMProfileDB.customer_id == cust_id)
+                                )
+                                llm_profile = prof_res.scalars().first()
+                        except Exception as prof_err:
+                            logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
+
+                        # Prompt hierarchy: KB extraction_prompt > Domain schema prompt > None
+                        kb_custom_sys_prompt = kb_settings.get("extraction_prompt") or kb_settings.get("system_prompt")
+                        kb_custom_user_prompt = kb_settings.get("user_prompt")
+
+                        sys_prompt_template = kb_custom_sys_prompt or domain_schema.system_prompt
+                        user_prompt_template = kb_custom_user_prompt or domain_schema.user_prompt
+
+                        extractor = DomainExtractor.from_llm_profile(llm_profile)
+                        logger.info(
+                            "metadata_extraction_llm_profile_resolved",
+                            profile_id=llm_profile.id if llm_profile else None,
+                            profile_name=llm_profile.name if llm_profile else "Ollama-default",
+                            has_kb_prompt=bool(kb_custom_sys_prompt),
+                            domain_schema_name=domain_schema.name,
+                        )
+
+                        domain_info = await extractor.extract_domain_knowledge(
+                            text=text,
+                            filename=document.name,
+                            domain_name=domain_schema.name,
+                            domain_key=domain_schema.domain_key,
+                            schema_json=domain_schema.schema_json,
+                            system_prompt_template=sys_prompt_template,
+                            user_prompt_template=user_prompt_template,
+                        )
+                        metadata["domain_info"] = domain_info
+                        metadata["extracted_fields"] = domain_info.get("extracted_fields") or {}
+
+                        # Link entity provenance to spans and sections
+                        from app.knowledge.provenance.entity_linker import EntityProvenanceLinker
+                        entity_linker = EntityProvenanceLinker()
+                        combined_fields = {}
+                        if domain_info and isinstance(domain_info, dict):
+                            combined_fields.update(domain_info.get("extracted_fields") or {})
+                            combined_fields.update(domain_info.get("extra_fields") or {})
+
+                        linked_provenance = entity_linker.link_entities_to_spans(
+                            extracted_fields=combined_fields,
+                            spans=normalized_res.spans,
+                            doc_tree=doc_tree,
+                        )
+                        metadata["entity_provenance"] = [ep.model_dump() for ep in linked_provenance]
                 else:
+                    # Unlinked KB: Skip metadata extraction
+                    logger.info("metadata_extraction_skipped_unlinked_domain", knowledge_base_id=knowledge_base_id)
                     metadata["domain_info"] = {
                         "domain_name": None,
                         "domain_key": None,
                         "extracted_fields": {},
                         "extra_fields": {},
-                        "status_note": "No domain schema is linked to this Knowledge Base.",
-                        "debug_info": {
-                            "status_note": "No domain schema is linked to this Knowledge Base. Link a domain schema to enable domain knowledge extraction.",
-                        },
+                        "status_note": "No domain schema is linked to this Knowledge Base. Metadata extraction skipped.",
                     }
-                    document.metadata_json = metadata
-                    await db.commit()
+
+                document.metadata_json = metadata
+                await db.commit()
 
                 # Update progress to 35%
                 await job_service.update_progress(job_id, 35, message="Chunking text")
 
-                # Chunk
-                chunks = chunk_text(
-                    text,
+                # 3. Hierarchical Semantic Chunking
+                hierarchical_chunker = HierarchicalSemanticChunker()
+                semantic_chunks = hierarchical_chunker.chunk_from_tree(
+                    tree=doc_tree,
                     chunk_size=settings.KNOWLEDGE_CHUNK_SIZE,
                     chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
                 )
-                if not chunks:
+
+                if not semantic_chunks:
+                    # Fallback to standard text splitter if no semantic chunks
+                    raw_chunks = chunk_text(
+                        text,
+                        chunk_size=settings.KNOWLEDGE_CHUNK_SIZE,
+                        chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
+                    )
+                    from app.knowledge.chunkers.base import ChunkItem
+                    semantic_chunks = [
+                        ChunkItem(
+                            chunk_index=i,
+                            content=rc,
+                            page_number=1,
+                            metadata={"section_heading": None, "page_number": 1},
+                        )
+                        for i, rc in enumerate(raw_chunks)
+                    ]
+
+                if not semantic_chunks:
                     raise ValueError("Document produced no chunks")
+
+                # =====================================================================
+                # BLOCK: CHUNK DEDUPLICATION (IF ENABLED)
+                # Purpose: Deduplicate identical/near-identical chunks, record audit trail
+                # in document metadata for debugging and human inspection.
+                # =====================================================================
+                final_chunks = []
+                seen_chunk_hashes = set()
+                duplicate_chunks_audit = []
+
+                if enable_dedup:
+                    for s_chk in semantic_chunks:
+                        norm_content = " ".join(s_chk.content.lower().split())
+                        chk_hash = hashlib.sha256(norm_content.encode("utf-8")).hexdigest()
+                        if chk_hash in seen_chunk_hashes:
+                            duplicate_chunks_audit.append({
+                                "chunk_index": s_chk.chunk_index,
+                                "preview": s_chk.content[:100],
+                                "reason": "exact_or_normalized_hash_duplicate",
+                            })
+                        else:
+                            seen_chunk_hashes.add(chk_hash)
+                            final_chunks.append(s_chk)
+
+                    metadata["deduplication_audit"] = {
+                        "dedup_enabled": True,
+                        "total_chunks_before": len(semantic_chunks),
+                        "total_chunks_after": len(final_chunks),
+                        "duplicates_removed_count": len(duplicate_chunks_audit),
+                        "duplicates_removed": duplicate_chunks_audit,
+                    }
+                    document.metadata_json = metadata
+                    await db.commit()
+                else:
+                    final_chunks = semantic_chunks
+
+                chunk_texts = [c.content for c in final_chunks]
 
                 # Resolve Collection and Embedding Provider linked to KB
                 stmt_col_job = select(KnowledgeCollectionDB).where(
@@ -304,7 +484,7 @@ class DocumentIngestionService:
 
                 # Update progress to 50%
                 await job_service.update_progress(job_id, 50, message="Generating embeddings")
-                vectors = await provider.embed_documents(chunks)
+                vectors = await provider.embed_documents(chunk_texts)
 
                 # Update progress to 75%
                 await job_service.update_progress(job_id, 75, message="Indexing in Qdrant")
@@ -318,14 +498,16 @@ class DocumentIngestionService:
 
                 # Add new chunks to get auto-increment IDs
                 chunk_objects = []
-                for index, content_chunk in enumerate(chunks):
+                for index, s_chunk in enumerate(final_chunks):
+                    chunk_meta = dict(metadata)
+                    chunk_meta.update(s_chunk.metadata)
                     chunk_obj = KnowledgeChunkDB(
                         document_id=document.id,
                         knowledge_base_id=document.knowledge_base_id,
                         customer_id=document.customer_id,
                         chunk_index=index,
-                        content=content_chunk,
-                        metadata_json=metadata,
+                        content=s_chunk.content,
+                        metadata_json=chunk_meta,
                     )
                     db.add(chunk_obj)
                     chunk_objects.append(chunk_obj)
@@ -342,8 +524,8 @@ class DocumentIngestionService:
                     collection_name=col_name,
                 )
 
-                # Update MySQL
-                document.chunk_count = len(chunks)
+                # Update Document stats
+                document.chunk_count = len(chunk_objects)
                 document.status = "ready"
                 document.error_message = None
 

@@ -41,10 +41,22 @@ class CleanerStep(ABC):
     def execute(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
         Executes step if enabled, logging telemetry and execution timing.
+        Skips deduplication steps if de-dup is disabled for the KB.
         """
         if not self.enabled:
             logger.debug(f"CleanerStep '{self.name}' skipped (disabled)")
             return text
+
+        # Deduplication step guard: only execute if de-dup is enabled for the KB context/config
+        if "dedup" in self.name.lower():
+            enable_dedup = (
+                context.get("enable_dedup", False)
+                if context and "enable_dedup" in context
+                else self.config.get("enable_dedup", False)
+            )
+            if not enable_dedup:
+                logger.debug(f"CleanerStep '{self.name}' skipped (enable_dedup is disabled for this KB)")
+                return text
 
         start_len = len(text)
         start_time = time.perf_counter()

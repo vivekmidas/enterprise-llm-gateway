@@ -248,78 +248,102 @@ class DomainExtractor:
             "Return valid JSON only containing ONLY the fields you actually found."
         )
 
-        # Truncate content — 80K chars covers ~60-page judgments with 40+ connected cases
+        # Truncate content — 80K chars covers large multi-page documents
         max_chars = 80_000
         content_snippet = text[:max_chars]
-        logger.info(
-            "domain_extraction_text_snapshot",
-            filename=filename,
-            content_snippet_length=len(content_snippet),
-            content_preview=content_snippet[:200].replace("\n", " "),
-        )
 
-        # Skip schema-driven pass — go directly to free-extract.
-        # Schema field keys constrain and bias the LLM, causing null-filled responses
-        # or hallucinated values to fit schema keys. Free-extract lets the LLM discover
-        # what is actually in the document without field name anchoring.
-        logger.info(
-            "domain_extraction_skipping_schema_using_free_extract",
-            filename=filename,
-            domain_key=domain_key,
-            schema_field_count=len(fields),
-        )
-        return await self._free_extract(
-            text=text,
-            content_snippet=content_snippet,
-            filename=filename,
-            domain_name=domain_name,
-            domain_key=domain_key,
-            field_weights=field_weights,
-            sys_prompt=sys_prompt,
-        )
+        # =====================================================================
+        # BLOCK COMMENT: PROMPT RESOLUTION & EXTRACTION
+        # Purpose:
+        # 1. Resolves system and user prompts using hierarchy:
+        #    - If custom system_prompt_template provided -> use formatted template
+        #    - Else if legal domain -> use Legal SOT template
+        #    - Else -> use grounded generic extraction prompt
+        # 2. Applies user_prompt_template with placeholders ({filename}, {fields_summary}, {content})
+        # 3. Invokes LLM, parses JSON, and filters ungrounded fields.
+        # =====================================================================
+        fields_summary_lines = []
+        for f in fields:
+            f_key = f.get("key", "")
+            f_label = f.get("label", f_key)
+            f_type = f.get("type", "string")
+            fields_summary_lines.append(f"- {f_key}: {f_label} ({f_type})")
+        fields_summary = "\n".join(fields_summary_lines) if fields_summary_lines else "Extract all key entities, facts, and metadata."
 
-    async def _free_extract(
-        self,
-        *,
-        text: str,
-        content_snippet: str,
-        filename: str,
-        domain_name: str,
-        domain_key: str,
-        field_weights: dict[str, Any],
-        sys_prompt: str,
-    ) -> dict[str, Any]:
-        """
-        Schema-free comprehensive extraction.
-        Produces a richly nested JSON covering all key entities in the document.
-        The prompt adapts based on domain_key (legal = comprehensive judgment extraction).
-        """
-        if domain_key and "legal" in domain_key.lower():
-            # Use Legal SOT for prompt generation
-            free_sys_prompt, free_user_prompt = build_free_extract_prompts(filename, content_snippet)
+        if system_prompt_template and system_prompt_template.strip():
+            sys_prompt = system_prompt_template.replace("{domain_name}", domain_name or "").replace("{filename}", filename or "")
+        elif domain_key and "legal" in domain_key.lower():
+            legal_sys, _ = build_free_extract_prompts(filename, content_snippet)
+            sys_prompt = legal_sys
         else:
-            free_sys_prompt = sys_prompt
-            free_user_prompt = (
-                f"Document Filename: {filename}\n\n"
-                f"Document Content:\n{content_snippet}\n\n"
-                "Extract a comprehensive structured JSON of ALL key information in this document.\n"
-                "Include all entities, parties, dates, amounts, decisions, references, and any other significant data.\n"
-                "Use only what is explicitly stated. Omit fields not present.\n"
-                'Return JSON: {"extracted_fields": { ... }}'
+            sys_prompt = (
+                "You are a precise document entity extractor.\n"
+                "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
+                "RULE 2: If a field value is NOT found in the document text, OMIT that field entirely "
+                "— do NOT write null, do NOT write empty string.\n"
+                "RULE 3: DO NOT use training data, prior knowledge, or inferred values.\n"
+                "RULE 4: Use exact wording from the document for all extracted values.\n"
+                "Return valid JSON only containing ONLY the fields you actually found."
             )
 
+
+        if user_prompt_template and user_prompt_template.strip():
+            user_prompt = (
+                user_prompt_template
+                .replace("{filename}", filename or "")
+                .replace("{fields_summary}", fields_summary)
+                .replace("{content}", content_snippet)
+                .replace("{domain_name}", domain_name or "")
+            )
+        elif domain_key and "legal" in domain_key.lower() and not (system_prompt_template and system_prompt_template.strip()):
+            _, legal_user = build_free_extract_prompts(filename, content_snippet)
+            user_prompt = legal_user
+        else:
+            if fields:
+                user_prompt = (
+                    f"Document Filename: {filename}\n\n"
+                    f"Target Schema Fields:\n{fields_summary}\n\n"
+                    f"Document Content:\n{content_snippet}\n\n"
+                    "Extract all matching schema fields and any unmapped extra domain knowledge in valid JSON format matching:\n"
+                    '{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
+                )
+            else:
+                user_prompt = (
+                    f"Document Filename: {filename}\n\n"
+                    f"Document Content:\n{content_snippet}\n\n"
+                    "Extract a comprehensive structured JSON of ALL key information in this document.\n"
+                    "Include all entities, parties, dates, amounts, decisions, references, and any other significant data.\n"
+                    "Use only what is explicitly stated. Omit fields not present.\n"
+                    'Return valid JSON only matching:\n{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
+                )
+
+        logger.info(
+            "domain_extraction_executing",
+            filename=filename,
+            domain_key=domain_key,
+            has_custom_sys_prompt=bool(system_prompt_template),
+            has_custom_user_prompt=bool(user_prompt_template),
+        )
+
         try:
-            raw_response = await self.llm.complete(free_sys_prompt, free_user_prompt, temperature=0.0)
+            raw_response = await self.llm.complete(sys_prompt, user_prompt, temperature=0.0)
             cleaned = _clean_json_string(raw_response)
             parsed = json.loads(cleaned)
 
-            # For legal domain, the LLM returns the full object directly (not wrapped)
-            if domain_key and "legal" in domain_key.lower():
-                extracted_fields = parsed if isinstance(parsed, dict) else {}
-                extra_fields = {}
+            if isinstance(parsed, dict) and ("extracted_fields" in parsed or "extra_fields" in parsed):
+                extracted_fields = parsed.get("extracted_fields") or {}
+                extra_fields = parsed.get("extra_fields") or {}
+            elif isinstance(parsed, dict):
+                if fields:
+                    schema_field_keys = {f.get("key") for f in fields if f.get("key")}
+                    extracted_fields = {k: v for k, v in parsed.items() if k in schema_field_keys}
+                    extra_fields = {k: v for k, v in parsed.items() if k not in schema_field_keys}
+                else:
+                    extracted_fields = parsed
+                    extra_fields = {}
             else:
-                extracted_fields = parsed.get("extracted_fields", parsed if isinstance(parsed, dict) else {})
-                extra_fields = parsed.get("extra_fields", {}) if isinstance(parsed, dict) else {}
+                extracted_fields = {}
+                extra_fields = {}
 
             if not isinstance(extracted_fields, dict):
                 extracted_fields = {}
@@ -332,10 +356,11 @@ class DomainExtractor:
                 extra_fields = filter_ungrounded_fields(extra_fields, text)
 
             logger.info(
-                "domain_free_extraction_completed",
+                "domain_extraction_completed",
                 domain_key=domain_key,
                 filename=filename,
-                extracted_top_level_keys=list(extracted_fields.keys()),
+                extracted_keys_count=len(extracted_fields),
+                extra_keys_count=len(extra_fields),
             )
 
             return {
@@ -344,15 +369,15 @@ class DomainExtractor:
                 "extracted_fields": extracted_fields,
                 "extra_fields": extra_fields,
                 "field_weights": field_weights,
-                "extraction_mode": "schema_free_fallback",
+                "extraction_mode": "prompt_driven" if system_prompt_template else "domain_default",
                 "debug_info": {
-                    "system_prompt": free_sys_prompt,
-                    "user_prompt": free_user_prompt,
+                    "system_prompt": sys_prompt,
+                    "user_prompt": user_prompt,
                     "raw_response": raw_response,
                 },
             }
         except Exception as exc:
-            logger.warning("domain_free_extraction_failed", filename=filename, error=str(exc))
+            logger.warning("domain_extraction_failed", filename=filename, error=str(exc))
             return {
                 "domain_name": domain_name,
                 "domain_key": domain_key,
@@ -360,5 +385,10 @@ class DomainExtractor:
                 "extra_fields": {},
                 "field_weights": field_weights,
                 "error": str(exc),
-                "extraction_mode": "schema_free_fallback_failed",
+                "extraction_mode": "failed",
+                "debug_info": {
+                    "system_prompt": sys_prompt,
+                    "user_prompt": user_prompt,
+                },
             }
+

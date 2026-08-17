@@ -82,7 +82,7 @@ async def direct_domain_rag_ingest(
     if description:
         metadata["description"] = description
     if tags:
-        metadata["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+        metadata["tags"] = [t.strip().upper() for t in tags.split(",") if t.strip()]
     if doc_type:
         metadata["type"] = doc_type
 
