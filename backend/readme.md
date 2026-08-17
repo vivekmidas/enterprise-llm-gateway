@@ -39,6 +39,30 @@ curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
 curl -X DELETE "http://localhost:8000/admin/customers/<CUSTOMER_ID>" \
   -H "Authorization: Bearer $TOKEN"
 
+## ingestion 
+
+  curl -X POST "http://localhost:8000/api/knowledge/retrieve" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "query": "test search query",
+    "knowledge_base_ids": ["$KB_ID"],
+    "top_k": 5,
+    "min_score": 0.0,
+    "enable_reranking": true
+  }'
+
+
+  curl -X POST "http://localhost:8000/api/knowledge/query" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "query": "test search query",
+    "knowledge_base_ids": ["$KB_ID"],
+    "top_k": 5
+  }'
+
+
 cat > sample.txt <<'EOF'
 Enterprise LLM Gateway allows businesses to create AI agents that automate workflows.
 
