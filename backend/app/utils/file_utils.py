@@ -74,6 +74,8 @@ def load_file_bytes(content_or_path: Union[str, bytes]) -> Tuple[bytes, str]:
             ext = ".pdf"
         elif "word" in hl or "docx" in hl:
             ext = ".docx"
+        elif "markdown" in hl or "md" in hl:
+            ext = ".md"
         elif "text" in hl or "plain" in hl:
             ext = ".txt"
         return base64.b64decode(b64_data), ext
@@ -101,7 +103,7 @@ def load_file_bytes(content_or_path: Union[str, bytes]) -> Tuple[bytes, str]:
         elif (
             s.startswith(("/", "\\", "."))
             or (":" in s[:3])
-            or s.lower().endswith((".pdf", ".docx", ".doc"))
+            or s.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".md"))
         ):
             raise FileNotFoundError(
                 f"Document file not found: '{s}'. "
@@ -224,7 +226,7 @@ def extract_document_text(
             os.path.exists(path_like)
             or s.startswith(("/", "\\", "."))
             or (":" in s[:3])
-            or s.lower().endswith((".pdf", ".docx", ".doc"))
+            or s.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".md"))
             or filename_or_ext != ""
             or s.startswith("data:")
             or s.startswith("%PDF")

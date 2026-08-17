@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_ALLOWED_EXTENSIONS = {".txt", ".pdf", ".doc", ".docx"}
+_ALLOWED_EXTENSIONS = {".txt", ".pdf", ".doc", ".docx", ".md"}
 _MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 @router.post(
