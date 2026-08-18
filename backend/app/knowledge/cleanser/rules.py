@@ -1,238 +1,719 @@
 """
 ===============================================================================
-BLOCK COMMENT: DETERMINISTIC TEXT & OCR NORMALIZATION RULES
+DETERMINISTIC TEXT & OCR NORMALIZATION RULES
 Module: backend/app/knowledge/cleanser/rules.py
-Author: Antigravity Architecture Team
-Description:
-    Implements deterministic, non-destructive cleansing steps:
-    1. LineEndingNormalizer: Convert \r\n and \r -> \n
-    2. WhitespaceNormalizer: Collapse repeated spaces/tabs, preserve paragraphs
-    3. LineWrapReconstructor: Reconstruct hyphen breaks and soft line wraps
-    4. HeaderFooterFilter: Strip page numbers and repeating headers/footers
-    5. LegalCitationPreserver: Protect legal numbers, citations, sections, and dates
+
+Purpose:
+    Safe, deterministic, non-destructive normalization of extracted PDF/OCR
+    text before structure detection, chunking, embedding and LLM inference.
+
+Design principles:
+    1. Preserve semantic content.
+    2. Preserve meaningful paragraph/list/heading boundaries.
+    3. Normalize obvious OCR/PDF formatting noise only.
+    4. Never perform AI/LLM-based rewriting here.
+    5. Keep raw extracted text separately for audit/reprocessing.
+    6. Domain-specific transformations belong outside this generic layer.
+
+Pipeline:
+    Raw OCR
+        ↓
+    LineEndingNormalizer
+        ↓
+    HeaderFooterFilter
+        ↓
+    WhitespaceNormalizer
+        ↓
+    LineWrapReconstructor
+        ↓
+    Optional ParagraphDeduplicationRule
+        ↓
+    Domain-specific normalization
+        ↓
+    Structure detection / chunking / embedding
+
 ===============================================================================
 """
 
 from __future__ import annotations
+
 import re
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from app.knowledge.cleanser.base import BaseCleansingRule
 
 
+# =============================================================================
+# Common helpers
+# =============================================================================
+
+def _is_blank(line: str) -> bool:
+    return not line or not line.strip()
+
+
+def _is_list_item(line: str) -> bool:
+    """
+    Detect common numbered / bulleted list structures.
+
+    Examples:
+        1. Question
+        1) Question
+        A. Question
+        A) Question
+        - Question
+        * Question
+        • Question
+    """
+    return bool(
+        re.match(
+            r"^\s*(?:"
+            r"\d+[.)]"
+            r"|[A-Za-z][.)]"
+            r"|[-*•▪◦]"
+            r")\s+",
+            line,
+        )
+    )
+
+
+def _is_heading(line: str) -> bool:
+    """
+    Conservative heading detection.
+
+    We intentionally avoid classifying arbitrary short uppercase text
+    as a heading because OCR can produce misleading capitalization.
+    """
+    stripped = line.strip()
+
+    if not stripped:
+        return False
+
+    if stripped.startswith("#"):
+        return True
+
+    # Common textbook section labels.
+    if re.match(
+        r"^(?:"
+        r"Let us\b|"
+        r"Let’s\b|"
+        r"Activity\b|"
+        r"Preparation\b|"
+        r"Materials Needed\b|"
+        r"Step\s+\d+\b|"
+        r"Note to the Teacher\b"
+        r")",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return True
+
+    return False
+
+
+def _looks_like_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") or stripped.endswith("|")
+
+
+def _ends_sentence(line: str) -> bool:
+    """
+    Conservative sentence-ending check.
+
+    This is deliberately not used as the sole criterion for reconstructing
+    paragraphs. PDF line wrapping can occur after punctuation.
+    """
+    return bool(re.search(r"""[.!?]["'”’)]*$""", line.strip()))
+
+
+def _starts_with_lowercase(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped and stripped[0].islower())
+
+
+def _looks_like_continuation(line: str) -> bool:
+    """
+    Indicates that a new OCR line is likely a continuation of the previous
+    line rather than a new structural element.
+    """
+    stripped = line.strip()
+
+    if not stripped:
+        return False
+
+    if _is_list_item(stripped):
+        return False
+
+    if _is_heading(stripped):
+        return False
+
+    if _looks_like_table_row(stripped):
+        return False
+
+    if _starts_with_lowercase(stripped):
+        return True
+
+    # Common continuation punctuation / words.
+    if stripped.startswith(
+        (
+            ",",
+            ".",
+            ";",
+            ":",
+            ")",
+            "]",
+            "and ",
+            "or ",
+            "but ",
+            "because ",
+            "which ",
+            "that ",
+            "who ",
+            "when ",
+            "while ",
+            "although ",
+            "as ",
+            "of ",
+            "to ",
+            "for ",
+            "with ",
+        )
+    ):
+        return True
+
+    return False
+
+
+# =============================================================================
+# 1. Line Ending Normalizer
+# =============================================================================
+
 class LineEndingNormalizer(BaseCleansingRule):
-    """Converts all Windows (\\r\\n) and Mac Classic (\\r) line endings to standard Unix (\\n)."""
+    """
+    Normalize platform-specific line endings.
+
+    IMPORTANT:
+        This rule does NOT collapse blank lines or whitespace.
+        Paragraph structure must remain intact at this stage.
+    """
 
     @property
     def rule_name(self) -> str:
         return "line_ending_normalization"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
-        return text.replace("\r\n", "\n").replace("\r", "\n")
 
+        return (
+            text
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+
+
+# =============================================================================
+# 2. Whitespace Normalizer
+# =============================================================================
 
 class WhitespaceNormalizer(BaseCleansingRule):
     """
-    Collapses redundant spaces and tabs without breaking paragraph structures (\n\n).
-    Cleans leading/trailing space on individual lines while preserving indentation when relevant.
+    Safely normalize horizontal whitespace while preserving vertical structure.
+
+    Changes:
+        "hello     world" -> "hello world"
+        "hello\\tworld"    -> "hello world"
+
+    Preserves:
+        paragraph boundaries
+        list boundaries
+        headings
+        page/section structure
+
+    Does NOT:
+        remove newlines
+        remove punctuation
+        perform spelling correction
+        rewrite text
     """
 
     @property
     def rule_name(self) -> str:
         return "whitespace_normalization"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
 
-        # Collapse horizontal whitespace (spaces and tabs) to single space
-        text = re.sub(r'[ \t]+', ' ', text)
+        # Normalize horizontal whitespace only.
+        text = re.sub(r"[ \t]+", " ", text)
 
-        # Standardize excessive consecutive newlines to maximum 2 (standard markdown paragraph separator)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Remove trailing spaces while preserving the newline.
+        text = re.sub(r"[ \t]+\n", "\n", text)
 
-        # Remove spaces before standard punctuation
-        text = re.sub(r' +([,.;:!?])', r'\1', text)
+        # Remove leading horizontal whitespace.
+        # This is intentionally conservative for generic OCR text.
+        text = re.sub(r"\n[ \t]+", "\n", text)
 
-        # Clean spaces at the start and end of each line
-        lines = [line.strip() for line in text.split("\n")]
-        return "\n".join(lines).strip()
+        # Avoid huge blank-line runs but preserve paragraph separation.
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
+        # Safe punctuation spacing cleanup.
+        # Do NOT remove spaces around symbols globally.
+        text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+
+        return text.strip()
+
+
+# =============================================================================
+# 3. Line Wrap Reconstructor
+# =============================================================================
 
 class LineWrapReconstructor(BaseCleansingRule):
     """
-    Reconstructs PDF line-wrapped sentences:
-    1. Reconnects hyphenated words split across line breaks (e.g. 'de-\\nvelopment' -> 'development').
-    2. Stitches soft line wraps in paragraphs where a line does not terminate a sentence.
+    Reconstruct PDF/OCR line wrapping conservatively.
+
+    Handles:
+        word-\\ncontinuation -> wordcontinuation
+
+    And selected soft line wraps:
+
+        The child went to
+        the market.
+
+    becomes:
+
+        The child went to the market.
+
+    IMPORTANT:
+        Structural boundaries such as lists, headings and blank lines are
+        preserved.
+
+    The rule does NOT attempt spelling correction or semantic rewriting.
     """
 
     @property
     def rule_name(self) -> str:
         return "line_wrap_reconstruction"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
 
-        # 1. Hyphenated word break across lines
-        # Example: "juris-\nprudence" -> "jurisprudence"
-        text = re.sub(r'(\b[a-zA-Z]{2,})-\s*\n\s*([a-zA-Z]{2,}\b)', r'\1\2', text)
+        # ------------------------------------------------------------------
+        # 1. Reconnect hyphenated words split across PDF lines.
+        #
+        # Example:
+        #     develop-
+        #     ment
+        #
+        # becomes:
+        #     development
+        #
+        # Conservative:
+        #     requires alphabetic characters on both sides.
+        # ------------------------------------------------------------------
+        text = re.sub(
+            r"(?<=[A-Za-z]{2})-\n(?=[A-Za-z]{2})",
+            "",
+            text,
+        )
 
-        # 2. Soft line breaks within paragraphs
-        # If line ends without terminal punctuation (. ? ! : ; ") and next line starts with lowercase or continuation
-        # Keep double newlines (\n\n) as strict paragraph boundaries
-        paragraphs = text.split("\n\n")
-        stitched_paragraphs = []
+        # Split only on blank-line paragraph boundaries.
+        paragraphs = re.split(r"\n{2,}", text)
 
-        for para in paragraphs:
-            lines = para.split("\n")
-            if len(lines) <= 1:
-                stitched_paragraphs.append(para.strip())
+        reconstructed: List[str] = []
+
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+
+            if not paragraph:
                 continue
 
-            stitched_lines = []
-            for i, line in enumerate(lines):
-                line_str = line.strip()
-                if not line_str:
+            lines = [
+                line.strip()
+                for line in paragraph.split("\n")
+                if line.strip()
+            ]
+
+            if len(lines) <= 1:
+                reconstructed.append(paragraph)
+                continue
+
+            output: List[str] = []
+            current = lines[0]
+
+            for next_line in lines[1:]:
+                current_stripped = current.strip()
+                next_stripped = next_line.strip()
+
+                # Never merge structural elements.
+                structural_boundary = (
+                    _is_list_item(next_stripped)
+                    or _is_heading(next_stripped)
+                    or _looks_like_table_row(next_stripped)
+                    or _is_list_item(current_stripped)
+                    or _is_heading(current_stripped)
+                    or _looks_like_table_row(current_stripped)
+                )
+
+                if structural_boundary:
+                    output.append(current_stripped)
+                    current = next_stripped
                     continue
 
-                if not stitched_lines:
-                    stitched_lines.append(line_str)
+                # Strong indication that the current line is a complete
+                # standalone sentence AND the next line starts a new sentence.
+                #
+                # We preserve the line boundary rather than blindly merging.
+                if (
+                    _ends_sentence(current_stripped)
+                    and not _looks_like_continuation(next_stripped)
+                    and next_stripped[:1].isupper()
+                ):
+                    output.append(current_stripped)
+                    current = next_stripped
                     continue
 
-                prev = stitched_lines[-1]
+                # Otherwise assume PDF soft wrapping.
+                current = f"{current_stripped} {next_stripped}"
 
-                # Check if previous line ended a sentence or markdown element (table row, list item, heading)
-                prev_is_table = prev.startswith("|") or prev.endswith("|")
-                prev_is_list = re.match(r'^(?:[-*+]|\d+\.)\s+', prev)
-                prev_is_heading = prev.startswith("#")
-                curr_is_list = re.match(r'^(?:[-*+]|\d+\.)\s+', line_str)
-                curr_is_heading = line_str.startswith("#")
-                curr_is_table = line_str.startswith("|")
+            if current.strip():
+                output.append(current.strip())
 
-                if prev_is_table or prev_is_list or prev_is_heading or curr_is_list or curr_is_heading or curr_is_table:
-                    stitched_lines.append(line_str)
-                elif re.search(r'[.!?:;]$', prev):
-                    # Sentence finished, but keep in same paragraph with a space
-                    stitched_lines[-1] = f"{prev} {line_str}"
-                else:
-                    # Soft wrap within sentence - stitch with single space
-                    stitched_lines[-1] = f"{prev} {line_str}"
+            reconstructed.append("\n".join(output))
 
-            stitched_paragraphs.append("\n".join(stitched_lines) if any("|" in l or l.startswith("#") for l in stitched_lines) else " ".join(stitched_lines))
+        return "\n\n".join(reconstructed)
 
-        return "\n\n".join(p for p in stitched_paragraphs if p.strip())
 
+# =============================================================================
+# 4. Header / Footer Filter
+# =============================================================================
 
 class HeaderFooterFilter(BaseCleansingRule):
     """
-    Removes repeated headers, footers, page numbering noise, and horizontal separator artifacts.
+    Removes obvious page-number and repeated header/footer artifacts.
+
+    IMPORTANT:
+        This rule is intentionally conservative.
+
+    A standalone number can be legitimate educational/legal content, so
+    standalone page-number removal should ideally be enabled only when
+    page-aware metadata is available.
     """
 
     @property
     def rule_name(self) -> str:
         return "header_footer_filter"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
 
         lines = text.split("\n")
-        cleaned_lines = []
 
-        # Common page number regex patterns
         page_num_patterns = [
-            r'(?i)^\s*page\s+\d+(\s+of\s+\d+)?\s*$',
-            r'^\s*-\s*\d+\s*-\s*$',
-            r'^\s*\[\s*\d+\s*\]\s*$',
-            r'^\s*\d+\s*/\s*\d+\s*$',
-            r'^\s*\d{1,4}\s*$',  # Standalone page number
+            r"(?i)^\s*page\s+\d+(?:\s+of\s+\d+)?\s*$",
+            r"^\s*-\s*\d+\s*-\s*$",
+            r"^\s*\[\s*\d+\s*\]\s*$",
+            r"^\s*\d+\s*/\s*\d+\s*$",
         ]
 
-        # Artifact dividers (e.g. "________", "======")
-        divider_pattern = r'^\s*[_\-=*~]{4,}\s*$'
+        divider_pattern = r"^\s*[_\-=*~]{4,}\s*$"
+
+        # Only remove standalone page numbers when explicitly requested.
+        remove_standalone_numbers = bool(
+            context.get("remove_standalone_page_numbers", False)
+            if context
+            else False
+        )
+
+        cleaned: List[str] = []
 
         for line in lines:
             stripped = line.strip()
+
             if not stripped:
-                cleaned_lines.append("")
+                cleaned.append("")
                 continue
 
-            # Check page numbers
-            if any(re.match(p, stripped) for p in page_num_patterns):
+            if any(re.match(pattern, stripped) for pattern in page_num_patterns):
                 continue
 
-            # Check divider artifacts
+            if remove_standalone_numbers and re.match(
+                r"^\s*\d{1,4}\s*$",
+                stripped,
+            ):
+                continue
+
             if re.match(divider_pattern, stripped):
                 continue
 
-            cleaned_lines.append(line)
+            cleaned.append(line)
 
-        return "\n".join(cleaned_lines)
+        return "\n".join(cleaned)
 
+
+# =============================================================================
+# 5. Repeated Header/Footer Detection
+# =============================================================================
+
+class RepeatedHeaderFooterFilter(BaseCleansingRule):
+    """
+    Removes lines that repeat frequently throughout a document.
+
+    Intended primarily for page-aware OCR/PDF extraction where headers and
+    footers are repeated on many pages.
+
+    Safety:
+        Only removes a repeated line when it exceeds the configured frequency
+        threshold and is short enough to plausibly be a header/footer.
+
+    Default:
+        Disabled unless explicitly enabled through context.
+    """
+
+    @property
+    def rule_name(self) -> str:
+        return "repeated_header_footer_filter"
+
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        if not text:
+            return ""
+
+        enabled = bool(
+            context.get("enable_repeated_header_footer", False)
+            if context
+            else False
+        )
+
+        if not enabled:
+            return text
+
+        min_occurrences = int(
+            context.get("header_footer_min_occurrences", 3)
+            if context
+            else 3
+        )
+
+        max_length = int(
+            context.get("header_footer_max_length", 100)
+            if context
+            else 100
+        )
+
+        lines = text.split("\n")
+
+        normalized_lines = [
+            re.sub(r"\s+", " ", line.strip()).lower()
+            for line in lines
+            if line.strip()
+        ]
+
+        counts = Counter(normalized_lines)
+
+        candidates = {
+            line
+            for line, count in counts.items()
+            if count >= min_occurrences and len(line) <= max_length
+        }
+
+        if not candidates:
+            return text
+
+        cleaned = []
+
+        for line in lines:
+            normalized = re.sub(r"\s+", " ", line.strip()).lower()
+
+            if normalized in candidates:
+                continue
+
+            cleaned.append(line)
+
+        return "\n".join(cleaned)
+
+
+# =============================================================================
+# 6. Generic Citation / Number Preservation
+# =============================================================================
 
 class LegalCitationPreserver(BaseCleansingRule):
     """
-    Ensures legal citations, statutes, section symbols (§), case citations,
-    and date formats remain intact without accidental corruption.
+    Legacy/domain-specific rule retained for compatibility.
+
+    This rule performs only harmless spacing normalization around common legal
+    abbreviations. It does NOT attempt to interpret or rewrite citations.
+
+    Recommendation:
+        Register this rule only in the legal-domain cleanser, not in the
+        generic cleanser pipeline.
     """
 
     @property
     def rule_name(self) -> str:
         return "legal_citation_preserver"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
 
-        # Normalize spacing around section symbol: "§  123" -> "§ 123"
-        text = re.sub(r'§\s+', '§ ', text)
+        text = re.sub(r"§[ \t]+", "§ ", text)
+        text = re.sub(r"\bv\.[ \t]+", "v. ", text)
+        text = re.sub(r"\bNo\.[ \t]+", "No. ", text)
+        text = re.sub(r"\bArt\.[ \t]+", "Art. ", text)
+        text = re.sub(r"\bSec\.[ \t]+", "Sec. ", text)
 
-        # Standardize common legal abbreviation spacing: "v.   " -> "v. "
-        text = re.sub(r'\bv\.\s+', 'v. ', text)
-        text = re.sub(r'\bNo\.\s+', 'No. ', text)
-        text = re.sub(r'\bArt\.\s+', 'Art. ', text)
-        text = re.sub(r'\bSec\.\s+', 'Sec. ', text)
         return text
 
 
+# =============================================================================
+# 7. Paragraph Deduplication
+# =============================================================================
+
 class ParagraphDeduplicationRule(BaseCleansingRule):
     """
-    Deduplicates repetitive boilerplate, repeated textbook exercise prompts,
-    disclaimer repeats, and OCR duplicate paragraph blocks.
+    Optional exact paragraph deduplication.
+
+    IMPORTANT:
+        Disabled by default.
+
+    Educational material, legal documents and other structured documents can
+    legitimately repeat the same text. Therefore deduplication should only
+    happen when the caller explicitly enables it.
+
+    This rule performs exact normalized-text matching only.
+    It does NOT use fuzzy/semantic deduplication.
     """
 
     @property
     def rule_name(self) -> str:
         return "paragraph_deduplication"
 
-    def apply(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if not text:
             return ""
 
-        enabled = context.get("enable_dedup", False) if context else False
+        enabled = bool(
+            context.get("enable_dedup", False)
+            if context
+            else False
+        )
+
         if not enabled:
             return text
 
-        paragraphs = text.split("\n\n")
-        seen_hashes = set()
-        deduped = []
+        paragraphs = re.split(r"\n{2,}", text)
 
-        for p in paragraphs:
-            p_strip = p.strip()
-            if not p_strip:
+        seen = set()
+        deduped: List[str] = []
+
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+
+            if not paragraph:
                 continue
 
-            # Normalized fingerprint: alphanumeric tokens
-            norm_fp = " ".join(re.findall(r'\w+', p_strip.lower()))
-            if len(norm_fp) > 20:  # Only dedup non-trivial paragraphs
-                if norm_fp in seen_hashes:
-                    continue
-                seen_hashes.add(norm_fp)
+            fingerprint = " ".join(
+                re.findall(r"\w+", paragraph.lower())
+            )
 
-            deduped.append(p_strip)
+            # Don't deduplicate tiny fragments.
+            if len(fingerprint) >= 20:
+                if fingerprint in seen:
+                    continue
+
+                seen.add(fingerprint)
+
+            deduped.append(paragraph)
 
         return "\n\n".join(deduped)
 
+
+# =============================================================================
+# 8. Optional Safe Text Cleanup
+# =============================================================================
+
+class TrailingWhitespaceNormalizer(BaseCleansingRule):
+    """
+    Removes trailing whitespace without changing line structure.
+    """
+
+    @property
+    def rule_name(self) -> str:
+        return "trailing_whitespace_normalization"
+
+    def apply(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        if not text:
+            return ""
+
+        return "\n".join(
+            line.rstrip()
+            for line in text.split("\n")
+        ).strip()
+
+
+# =============================================================================
+# Recommended default pipeline
+# =============================================================================
+
+DEFAULT_CLEANSING_RULES = [
+    LineEndingNormalizer(),
+    HeaderFooterFilter(),
+    WhitespaceNormalizer(),
+    LineWrapReconstructor(),
+    TrailingWhitespaceNormalizer(),
+]
+
+
+# =============================================================================
+# Optional rules
+# =============================================================================
+
+OPTIONAL_CLEANSING_RULES = [
+    RepeatedHeaderFooterFilter(),
+    ParagraphDeduplicationRule(),
+]
+
+
+# =============================================================================
+# Domain-specific rules
+#
+# Keep these OUTSIDE the generic pipeline.
+# =============================================================================
+
+LEGAL_CLEANSING_RULES = [
+    LegalCitationPreserver(),
+]
