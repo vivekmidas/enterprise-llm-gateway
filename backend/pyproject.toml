@@ -26,6 +26,7 @@ dependencies = [
     "email-validator",
     "langgraph",
     "langchain",
+    "docling",
     "spacy",
     "rich",
     "imap-tools",
