@@ -127,9 +127,34 @@ class DoclingParser(BaseDocumentParser):
                             confidence=0.96,
                         ))
                     p_idx += 1
-
                 raw_md = doc.export_to_markdown() if hasattr(doc, "export_to_markdown") else "\n\n".join(s.text for s in spans)
-                num_pages = getattr(doc, "num_pages", len(set(s.page_number for s in spans)) or 1)
+
+                # Calculate page count safely (handling method vs attribute vs pages dict)
+                num_pages = 1
+                if hasattr(doc, "pages"):
+                    pages_val = doc.pages
+                    if callable(pages_val):
+                        try:
+                            num_pages = len(pages_val()) or 1
+                        except Exception:
+                            pass
+                    elif isinstance(pages_val, (dict, list, set, tuple)):
+                        num_pages = len(pages_val) or 1
+                elif hasattr(doc, "num_pages"):
+                    num_val = doc.num_pages
+                    if callable(num_val):
+                        try:
+                            num_pages = int(num_val())
+                        except Exception:
+                            pass
+                    elif isinstance(num_val, int):
+                        num_pages = num_val
+
+                if spans:
+                    max_span_page = max((s.page_number for s in spans if isinstance(s.page_number, int)), default=1)
+                    num_pages = max(num_pages, max_span_page)
+
+                num_pages = int(num_pages) if isinstance(num_pages, (int, float)) else 1
 
                 logger.info(
                     "docling_extraction_completed",
