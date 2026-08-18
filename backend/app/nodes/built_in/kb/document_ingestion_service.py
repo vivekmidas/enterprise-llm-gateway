@@ -386,15 +386,14 @@ class DocumentIngestionService:
                         )
                         metadata["entity_provenance"] = [ep.model_dump() for ep in linked_provenance]
                 else:
-                    # Unlinked KB: Skip metadata extraction
+                    # =====================================================================
+                    # BLOCK COMMENT: UNLINKED KB DOMAIN METADATA HANDLING
+                    # Knowledge Base is not linked to a domain schema.
+                    # Skip LLM metadata extraction and remove empty domain_info placeholders.
+                    # =====================================================================
                     logger.info("metadata_extraction_skipped_unlinked_domain", knowledge_base_id=knowledge_base_id)
-                    metadata["domain_info"] = {
-                        "domain_name": None,
-                        "domain_key": None,
-                        "extracted_fields": {},
-                        "extra_fields": {},
-                        "status_note": "No domain schema is linked to this Knowledge Base. Metadata extraction skipped.",
-                    }
+                    metadata.pop("domain_info", None)
+                    metadata.pop("extracted_fields", None)
 
                 document.metadata_json = metadata
                 await db.commit()
