@@ -399,36 +399,24 @@ class DocumentIngestionService:
                 await db.commit()
 
                 # Update progress to 35%
-                await job_service.update_progress(job_id, 35, message="Chunking text")
+                await job_service.update_progress(job_id, 35, message="Processing text (chunking skipped)")
 
-                # 3. Hierarchical Semantic Chunking
-                hierarchical_chunker = HierarchicalSemanticChunker()
-                semantic_chunks = hierarchical_chunker.chunk_from_tree(
-                    tree=doc_tree,
-                    chunk_size=settings.KNOWLEDGE_CHUNK_SIZE,
-                    chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
-                )
-
-                if not semantic_chunks:
-                    # Fallback to standard text splitter if no semantic chunks
-                    raw_chunks = chunk_text(
-                        text,
-                        chunk_size=settings.KNOWLEDGE_CHUNK_SIZE,
-                        chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
+                # =====================================================================
+                # BLOCK COMMENT: EXPERIMENTAL - SKIP / REMOVE CHUNKING STEP
+                # Purpose:
+                # Experimental test to evaluate retrieval and pipeline effectiveness
+                # without chunking. The entire cleansed and normalized document text
+                # is treated as a single retrieval unit.
+                # =====================================================================
+                from app.knowledge.chunkers.base import ChunkItem
+                semantic_chunks = [
+                    ChunkItem(
+                        chunk_index=0,
+                        content=text,
+                        page_number=1,
+                        metadata={"section_heading": None, "page_number": 1},
                     )
-                    from app.knowledge.chunkers.base import ChunkItem
-                    semantic_chunks = [
-                        ChunkItem(
-                            chunk_index=i,
-                            content=rc,
-                            page_number=1,
-                            metadata={"section_heading": None, "page_number": 1},
-                        )
-                        for i, rc in enumerate(raw_chunks)
-                    ]
-
-                if not semantic_chunks:
-                    raise ValueError("Document produced no chunks")
+                ]
 
                 # =====================================================================
                 # BLOCK: CHUNK DEDUPLICATION (IF ENABLED)
@@ -495,11 +483,42 @@ class DocumentIngestionService:
                     )
                 )
 
-                # Add new chunks to get auto-increment IDs
+                # =====================================================================
+                # BLOCK COMMENT: CHUNK METADATA SANITIZATION
+                # Purpose: Retains lightweight chunk attributes (page, section, tags)
+                # while excluding heavy raw texts, parser outputs, and bounding box spans.
+                # Full multi-view data is preserved in KnowledgeDocumentDB.metadata_json.
+                # =====================================================================
+                excluded_meta_keys = {
+                    "views",
+                    "raw_text",
+                    "docling_raw_text",
+                    "opendataloader_raw_text",
+                    "spans",
+                    "docling_spans",
+                    "opendataloader_spans",
+                    "bounding_boxes",
+                    "entity_provenance",
+                    "doc_tree",
+                    "tables",
+                    "deduplication_audit",
+                }
+                base_chunk_meta = {
+                    k: v for k, v in metadata.items()
+                    if k not in excluded_meta_keys
+                }
+                base_chunk_meta["document_name"] = document.name
+
                 chunk_objects = []
                 for index, s_chunk in enumerate(final_chunks):
-                    chunk_meta = dict(metadata)
-                    chunk_meta.update(s_chunk.metadata)
+                    chunk_meta = dict(base_chunk_meta)
+                    if s_chunk.metadata:
+                        chunk_meta.update({
+                            k: v for k, v in s_chunk.metadata.items()
+                            if k not in excluded_meta_keys
+                        })
+                    chunk_meta["chunk_index"] = index
+                    chunk_meta["page_number"] = s_chunk.page_number
                     chunk_obj = KnowledgeChunkDB(
                         document_id=document.id,
                         knowledge_base_id=document.knowledge_base_id,
@@ -517,6 +536,24 @@ class DocumentIngestionService:
                     dimension=provider.dimension,
                     collection_name=col_name,
                 )
+
+                # =====================================================================
+                # BLOCK COMMENT: CLEANUP PRIOR QDRANT EMBEDDINGS (RE-INGESTION SAFETY)
+                # Purpose: Prevent duplicate vector embeddings when re-processing document.
+                # =====================================================================
+                try:
+                    await vector_store.delete_document_points(
+                        collection_name=col_name,
+                        document_id=document.id,
+                    )
+                except Exception as del_err:
+                    logger.warning(
+                        "qdrant_pre_upsert_delete_skipped",
+                        document_id=document.id,
+                        collection_name=col_name,
+                        error=str(del_err),
+                    )
+
                 await vector_store.upsert_chunks(
                     chunks=chunk_objects,
                     vectors=vectors,

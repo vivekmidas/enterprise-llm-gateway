@@ -207,10 +207,14 @@ async def debug_retrieve(
     target_profile_id = payload.profile_id
     target_kb_id = str(payload.knowledge_base_ids[0]) if payload.knowledge_base_ids else None
 
+    from sqlalchemy import or_
     from app.models.db_models import KnowledgeBaseDB
     kb_stmt = select(KnowledgeBaseDB).where(
         KnowledgeBaseDB.id.in_([str(k) for k in payload.knowledge_base_ids]),
-        KnowledgeBaseDB.customer_id == str(customer_id),
+        or_(
+            KnowledgeBaseDB.customer_id == str(customer_id),
+            KnowledgeBaseDB.customer_id == customer_id,
+        )
     )
     kb_res = await db.execute(kb_stmt)
     if not kb_res.scalars().all():

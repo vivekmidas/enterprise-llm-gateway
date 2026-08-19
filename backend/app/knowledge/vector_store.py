@@ -33,10 +33,45 @@ class QdrantVectorStore:
             ),
         )
 
+    # ==============================================================================
+    # BLOCK COMMENT: DETERMINISTIC POINT ID & DEDUPLICATION ON REPROCESS
+    # Purpose:
+    # Generates deterministic UUID5 keyed on document_id + chunk_index.
+    # Prevents Qdrant point duplication when documents are re-ingested/reprocessed.
+    # ==============================================================================
     @staticmethod
-    def point_id(chunk_id: int) -> str:
-        """Stable UUID allows safe re-indexing of the same SQL chunk."""
+    def point_id(chunk_id: int | str, document_id: str | int | None = None, chunk_index: int | None = None) -> str:
+        """Stable UUID allows safe re-indexing and overwriting of document chunks."""
+        if document_id is not None and chunk_index is not None:
+            return str(uuid5(NAMESPACE_URL, f"doc:{document_id}:chunk:{chunk_index}"))
         return str(uuid5(NAMESPACE_URL, f"knowledge-chunk:{chunk_id}"))
+
+    # ==============================================================================
+    # BLOCK COMMENT: VECTOR DB METADATA SANITIZATION
+    # Purpose:
+    # Strips raw text, parser dumps, bounding boxes, spans, and full view trees
+    # from the vector payload. Heavy data views are retained in SQL document tables.
+    # ==============================================================================
+    @staticmethod
+    def sanitize_payload_metadata(metadata: dict | None) -> dict:
+        """Strip raw texts, spans, and heavy data views from vector DB payload."""
+        if not metadata or not isinstance(metadata, dict):
+            return {}
+        excluded_keys = {
+            "views",
+            "raw_text",
+            "docling_raw_text",
+            "opendataloader_raw_text",
+            "spans",
+            "docling_spans",
+            "opendataloader_spans",
+            "bounding_boxes",
+            "entity_provenance",
+            "doc_tree",
+            "tables",
+            "deduplication_audit",
+        }
+        return {k: v for k, v in metadata.items() if k not in excluded_keys}
 
     async def upsert_chunks(
         self,    
@@ -50,9 +85,10 @@ class QdrantVectorStore:
         points = []
 
         for chunk, vector in zip(chunks, vectors, strict=True):
+            clean_meta = self.sanitize_payload_metadata(getattr(chunk, "metadata_json", None) or {})
             points.append(
                 models.PointStruct(
-                    id=self.point_id(chunk.id),
+                    id=self.point_id(chunk.id, document_id=getattr(chunk, "document_id", None), chunk_index=getattr(chunk, "chunk_index", None)),
                     vector=vector,
                     payload={
                         "chunk_id": chunk.id,
@@ -60,7 +96,7 @@ class QdrantVectorStore:
                         "knowledge_base_id": chunk.knowledge_base_id,
                         "customer_id": chunk.customer_id,
                         "chunk_index": chunk.chunk_index,
-                        "metadata": chunk.metadata_json or {},
+                        "metadata": clean_meta,
                     },
                 )
             )
@@ -174,7 +210,11 @@ class QdrantVectorStore:
             logger.error("qdrant_collection_delete_failed", extra={"collection": collection_name, "error": str(e)})
             raise
 
-    async def delete_document_points(self, collection_name: str, document_id: int) -> None:
+    # ==============================================================================
+    # BLOCK COMMENT: ROBUST DOCUMENT POINTS CLEANUP
+    # Purpose: Matches document_id as raw value or string to purge old Qdrant vectors.
+    # ==============================================================================
+    async def delete_document_points(self, collection_name: str, document_id: int | str) -> None:
         """Delete points associated with a specific document from a Qdrant collection."""
         try:
             col_name = collection_name or self.collection
@@ -182,17 +222,22 @@ class QdrantVectorStore:
                 await self.client.delete(
                     collection_name=col_name,
                     points_selector=models.Filter(
-                        must=[
+                        should=[
                             models.FieldCondition(
                                 key="document_id",
                                 match=models.MatchValue(value=document_id),
-                            )
+                            ),
+                            models.FieldCondition(
+                                key="document_id",
+                                match=models.MatchValue(value=str(document_id)),
+                            ),
                         ]
                     ),
+                    wait=True,
                 )
-                logger.info("qdrant_document_points_deleted", extra={"collection": col_name, "document_id": document_id})
+                logger.info("qdrant_document_points_deleted", extra={"collection": col_name, "document_id": str(document_id)})
         except Exception as e:
-            logger.error("qdrant_document_points_delete_failed", extra={"collection": col_name, "document_id": document_id, "error": str(e)})
+            logger.error("qdrant_document_points_delete_failed", extra={"collection": col_name, "document_id": str(document_id), "error": str(e)})
             raise
 
     async def delete_customer_points(self, customer_id: str, collection_name: str | None = None) -> None:

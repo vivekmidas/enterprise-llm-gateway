@@ -19,13 +19,14 @@ from app.core.security.jwt import create_access_token
 
 
 class MockPoint:
-    def __init__(self, chunk_id, score, kb_id, doc_id):
+    def __init__(self, chunk_id, score, kb_id, doc_id, customer_id=1):
         self.score = score
+        self.id = chunk_id
         self.payload = {
             "chunk_id": chunk_id,
             "document_id": doc_id,
             "knowledge_base_id": kb_id,
-            "customer_id": 1,
+            "customer_id": customer_id,
             "chunk_index": 0,
             "metadata": {"document_name": f"Doc {doc_id}"},
         }
@@ -62,11 +63,27 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
         await session.commit()
         await session.refresh(tenant_admin)
 
+        from app.models.db_models import LLMProfileDB
+        tenant_profile = LLMProfileDB(
+            name="Default Test Profile",
+            customer_id=tenant.id,
+            created_by=tenant_admin.id,
+            is_default=True,
+            settings={
+                "provider": "ollama",
+                "model": "llama3",
+                "embedding": {"model": "all-minilm", "dimension": 768, "provider": "ollama"},
+            },
+        )
+        session.add(tenant_profile)
+        await session.commit()
+        await session.refresh(tenant_profile)
+
         tenant_admin_token = create_access_token({
             "user_id": str(tenant_admin.id),
             "email": tenant_admin.email_id,
             "role": tenant_admin.role,
-            "customer_id": tenant_admin.customer_id
+            "customer_id": str(tenant_admin.customer_id)
         })
         tenant_headers = {"Authorization": f"Bearer {tenant_admin_token}"}
 
@@ -88,19 +105,23 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
     # Mock dynamic search outputs per collection
     async def mock_query_points(collection_name, query, **kwargs):
         res = MagicMock()
-        if "kb_collection_1" in collection_name or "1" in collection_name:
+        kb1_id = seeded_ids.get("kb1_id")
+        cust_id = seeded_ids.get("customer_id", tenant.id)
+        if (kb1_id and str(kb1_id) in collection_name) or "kb_collection_1" in collection_name:
             res.points = [MockPoint(
                 chunk_id=seeded_ids.get("chunk1_id", 101), 
                 score=0.95, 
                 kb_id=seeded_ids.get("kb1_id", 1), 
-                doc_id=seeded_ids.get("doc1_id", 10)
+                doc_id=seeded_ids.get("doc1_id", 10),
+                customer_id=cust_id,
             )]
         else:
             res.points = [MockPoint(
                 chunk_id=seeded_ids.get("chunk2_id", 202), 
                 score=0.88, 
                 kb_id=seeded_ids.get("kb2_id", 2), 
-                doc_id=seeded_ids.get("doc2_id", 20)
+                doc_id=seeded_ids.get("doc2_id", 20),
+                customer_id=cust_id,
             )]
         return res
 
@@ -173,6 +194,7 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                 seeded_ids["chunk2_id"] = chunk2.id
                 seeded_ids["kb1_id"] = kb1["id"]
                 seeded_ids["kb2_id"] = kb2["id"]
+                seeded_ids["customer_id"] = tenant.id
 
             # 2. Search across both KBs
             search_payload = {
@@ -185,7 +207,7 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
                 json=search_payload,
                 headers=tenant_headers,
             )
-            assert search_res.status_code == 200
+            assert search_res.status_code == 200, f"Status: {search_res.status_code}, Body: {search_res.text}"
             search_data = search_res.json()
 
             # Verify RRF combined results from both collections
@@ -208,6 +230,7 @@ async def test_multi_collection_retrieval_flow(client: AsyncClient, system_admin
             await session.execute(delete(KnowledgeDocumentDB).where(KnowledgeDocumentDB.customer_id == tenant.id))
             await session.execute(delete(KnowledgeCollectionDB).where(KnowledgeCollectionDB.customer_id == tenant.id))
             await session.execute(delete(KnowledgeBaseDB).where(KnowledgeBaseDB.customer_id == tenant.id))
+            await session.execute(delete(LLMProfileDB).where(LLMProfileDB.customer_id == tenant.id))
             await session.execute(delete(UserDB).where(UserDB.id == tenant_admin.id))
             await session.execute(delete(CustomerDB).where(CustomerDB.id == tenant.id))
             await session.commit()

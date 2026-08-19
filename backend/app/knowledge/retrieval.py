@@ -68,7 +68,10 @@ async def retrieve(
     try:
         # Fetch customer settings
         from app.models.db_models import CustomerDB
-        cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+        from sqlalchemy import or_
+        cust_stmt = select(CustomerDB).where(
+            or_(CustomerDB.id == customer_id, CustomerDB.id == str(customer_id))
+        )
         cust_res = await db.execute(cust_stmt)
         customer = cust_res.scalar_one_or_none()
         tenant_settings = (customer.settings or {}) if customer else {}
@@ -82,7 +85,10 @@ async def retrieve(
         kb_result = await db.execute(
             select(KnowledgeBaseDB).where(
                 KnowledgeBaseDB.id.in_(knowledge_base_ids),
-                KnowledgeBaseDB.customer_id == customer_id,
+                or_(
+                    KnowledgeBaseDB.customer_id == customer_id,
+                    KnowledgeBaseDB.customer_id == str(customer_id),
+                ),
             )
         )
         validated_kbs = kb_result.scalars().all()
@@ -110,7 +116,10 @@ async def retrieve(
         col_result = await db.execute(
             select(KnowledgeCollectionDB).where(
                 KnowledgeCollectionDB.knowledge_base_id.in_(validated_kb_ids),
-                KnowledgeCollectionDB.customer_id == customer_id,
+                or_(
+                    KnowledgeCollectionDB.customer_id == customer_id,
+                    KnowledgeCollectionDB.customer_id == str(customer_id),
+                ),
                 KnowledgeCollectionDB.status == "active",
             )
         )
@@ -358,7 +367,10 @@ async def retrieve(
             .where(
                 KnowledgeChunkDB.id.in_(selected_chunk_ids),
                 # Mandatory isolation
-                KnowledgeChunkDB.customer_id == customer_id,
+                or_(
+                    KnowledgeChunkDB.customer_id == customer_id,
+                    KnowledgeChunkDB.customer_id == str(customer_id),
+                ),
                 KnowledgeChunkDB.knowledge_base_id.in_(validated_kb_ids),
             )
         )
@@ -379,6 +391,8 @@ async def retrieve(
         seen_contents = set()
         for rank, chunk_id in enumerate(selected_chunk_ids, start=1):
             record = records.get(chunk_id)
+            if not record:
+                record = records.get(int(chunk_id)) if str(chunk_id).isdigit() else records.get(str(chunk_id))
             if not record:
                 continue
 

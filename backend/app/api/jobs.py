@@ -41,7 +41,7 @@ async def list_jobs(
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(
-    job_id: int,
+    job_id: str,
     db: AsyncSession = Depends(get_db),
 ):
 
@@ -57,7 +57,7 @@ async def get_job(
 
 @router.post("/{job_id}/cancel")
 async def cancel_job(
-    job_id: int,
+    job_id: str,
     db: AsyncSession = Depends(get_db),
 ):
 
@@ -73,7 +73,7 @@ async def cancel_job(
 
 @router.delete("/{job_id}")
 async def delete_job(
-    job_id: int,
+    job_id: str,
     db: AsyncSession = Depends(get_db),
 ):
 
