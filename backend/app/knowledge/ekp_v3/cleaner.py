@@ -30,6 +30,79 @@ from app.knowledge.ekp_v3.cleaner_base import (
 logger = structlog.get_logger(__name__)
 
 
+@CleanerStepRegistry.register("clean_apostrophes")
+class CleanApostrophesStep(CleanerStep):
+    """Normalizes typographic curly apostrophes and backticks to standard single quotes."""
+
+    def __init__(self, name: str = "clean_apostrophes", enabled: bool = True, config: Optional[Dict[str, Any]] = None):
+        super().__init__(name, enabled, config)
+
+    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+        if not text:
+            return ""
+        # Normalize typographic single quotes and backticks used as apostrophes
+        cleaned = re.sub(r"[‘’ʼʻ`]", "'", text)
+        return cleaned
+
+
+@CleanerStepRegistry.register("special_character_sanitizer")
+@CleanerStepRegistry.register("special_character_escape")
+class SpecialCharacterSanitizerStep(CleanerStep):
+    """
+    Sanitizes and escapes problematic special characters:
+    - Normalizes or escapes backticks / markdown codeblock ticks
+    - Normalizes smart quotes ("" and '') and optionally escapes double quotes
+    - Normalizes colons and removes invalid control characters
+    - Normalizes newlines and carriage returns
+    """
+
+    def __init__(self, name: str = "special_character_sanitizer", enabled: bool = True, config: Optional[Dict[str, Any]] = None):
+        super().__init__(name, enabled, config)
+
+    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+        if not text:
+            return ""
+
+        cfg = self.config or {}
+        cleaned = text
+
+        # 1. Strip raw non-printable ASCII control characters (keep \t, \n)
+        if cfg.get("clean_control_chars", True):
+            cleaned = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", cleaned)
+
+        # 2. Normalize carriage returns
+        if cfg.get("normalize_newlines", True):
+            cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+
+        # 3. Normalize smart quotes to standard ASCII
+        if cfg.get("normalize_quotes", True):
+            cleaned = re.sub(r'[“”„‟]', '"', cleaned)
+            cleaned = re.sub(r"[‘’ʼʻ]", "'", cleaned)
+
+        # 4. Clean / normalize colons
+        if cfg.get("clean_colons", True):
+            cleaned = cleaned.replace("：", ":")
+            cleaned = re.sub(r":{2,}", ":", cleaned)
+
+        # 5. Handle backticks / code fences
+        if cfg.get("strip_code_fences", False):
+            cleaned = re.sub(r"```[a-zA-Z0-9_-]*\n?", "", cleaned)
+            cleaned = re.sub(r"```", "", cleaned)
+        elif cfg.get("escape_ticks", False):
+            cleaned = cleaned.replace("`", r"\`")
+
+        # 6. Escape double quotes if requested for JSON string safety
+        if cfg.get("escape_quotes", False):
+            # Avoid double-escaping already escaped quotes
+            cleaned = re.sub(r'(?<!\\)"', r'\"', cleaned)
+
+        # 7. Escape newlines if requested
+        if cfg.get("escape_newlines", False):
+            cleaned = cleaned.replace("\n", r"\n")
+
+        return cleaned
+
+
 @CleanerStepRegistry.register("hyphenation_repair")
 class HyphenationRepairStep(CleanerStep):
     """Rejoins words split across line breaks by hyphens (e.g. 'de-\\nvelopment' -> 'development')."""
@@ -239,6 +312,8 @@ def get_default_pipeline(config_overrides: Optional[List[Dict[str, Any]]] = None
         return CleanerPipeline.from_config(config_overrides)
 
     pipeline = CleanerPipeline()
+    # pipeline.add_step(CleanApostrophesStep())
+    pipeline.add_step(SpecialCharacterSanitizerStep())
     pipeline.add_step(HyphenationRepairStep())
     pipeline.add_step(WhitespaceNormalizationStep())
     pipeline.add_step(HeaderFooterFilterStep())
@@ -256,6 +331,8 @@ def clean_and_deduplicate_text(text: str, context: Optional[Dict[str, Any]] = No
     if not text:
         return ""
     pipeline = CleanerPipeline([
+        CleanApostrophesStep(),
+        SpecialCharacterSanitizerStep(),
         HyphenationRepairStep(),
         WhitespaceNormalizationStep(),
         HeaderFooterFilterStep(),
