@@ -14,9 +14,16 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/domains", tags=["Domain Schemas"])
 
+# ==============================================================================
+# BLOCK COMMENT: CANONICAL DEFAULT PROMPTS (SINGLE SOURCE OF TRUTH)
+# Purpose:
+# 1. System prompt defines extraction rules without duplicate hardcoded field lists.
+# 2. User prompt template uses placeholders ({filename}, {fields_summary}, {fields_json_schema}, {content}).
+# 3. schema_json['fields'] is the single authoritative source of truth.
+# ==============================================================================
 DEFAULT_SYSTEM_PROMPT = """You are an expert domain knowledge extractor.
 Extract structured field values accurately from the provided document content based on the target schema.
-Maintain precise names, dates, policy numbers, amounts, and citations.
+Maintain precise names, dates, identifiers, amounts, and citations.
 If you find additional relevant domain knowledge that is not covered by the target schema, output it under the 'extra_fields' key.
 Return valid JSON only."""
 
@@ -24,6 +31,9 @@ DEFAULT_USER_PROMPT = """Document Filename: {filename}
 
 Target Schema Fields:
 {fields_summary}
+
+Target JSON Structure:
+{fields_json_schema}
 
 Document Content:
 {content}

@@ -399,24 +399,37 @@ class DocumentIngestionService:
                 await db.commit()
 
                 # Update progress to 35%
-                await job_service.update_progress(job_id, 35, message="Processing text (chunking skipped)")
+                await job_service.update_progress(job_id, 35, message="Chunking text")
 
-                # =====================================================================
-                # BLOCK COMMENT: EXPERIMENTAL - SKIP / REMOVE CHUNKING STEP
-                # Purpose:
-                # Experimental test to evaluate retrieval and pipeline effectiveness
-                # without chunking. The entire cleansed and normalized document text
-                # is treated as a single retrieval unit.
-                # =====================================================================
-                from app.knowledge.chunkers.base import ChunkItem
-                semantic_chunks = [
-                    ChunkItem(
-                        chunk_index=0,
-                        content=text,
-                        page_number=1,
-                        metadata={"section_heading": None, "page_number": 1},
+                # 3. Hierarchical Semantic Chunking
+                hierarchical_chunker = HierarchicalSemanticChunker()
+                semantic_chunks = hierarchical_chunker.chunk_from_tree(
+                    tree=doc_tree,
+                    chunk_size=2000,
+                    chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
+                )
+
+                if not semantic_chunks:
+                    # Fallback to standard text splitter if no semantic chunks
+                    raw_chunks = chunk_text(
+                        text,
+                        chunk_size=settings.KNOWLEDGE_CHUNK_SIZE,
+                        chunk_overlap=settings.KNOWLEDGE_CHUNK_OVERLAP,
                     )
-                ]
+                    from app.knowledge.chunkers.base import ChunkItem
+                    semantic_chunks = [
+                        ChunkItem(
+                            chunk_index=i,
+                            content=rc,
+                            page_number=1,
+                            metadata={"section_heading": None, "page_number": 1},
+                        )
+                        for i, rc in enumerate(raw_chunks)
+                    ]
+
+                if not semantic_chunks:
+                    raise ValueError("Document produced no chunks")
+
 
                 # =====================================================================
                 # BLOCK: CHUNK DEDUPLICATION (IF ENABLED)

@@ -33,12 +33,13 @@ SCHEMAS_DIR = Path(__file__).parent / "schemas"
 
 
 def load_domain_schema(domain_id: Optional[str] = None) -> Dict[str, Any]:
-    """Loads target domain entity definition JSON schema dynamically based on domain_id."""
+    """Loads target domain entity definition schema dynamically from legal_sot or domain schema single source of truth."""
+    from app.knowledge.legal_sot import LEGAL_JUDGMENT_SCHEMA
+    if not domain_id or str(domain_id).lower() in ("legal", "domain_legal", "general"):
+        return LEGAL_JUDGMENT_SCHEMA
+
     domain_key = (domain_id or "legal").lower().replace(" ", "_")
     schema_file = SCHEMAS_DIR / f"domain_{domain_key}.json"
-    if not schema_file.exists():
-        schema_file = SCHEMAS_DIR / "domain_legal.json"
-
     if schema_file.exists():
         try:
             return json.loads(schema_file.read_text(encoding="utf-8"))
@@ -49,67 +50,71 @@ def load_domain_schema(domain_id: Optional[str] = None) -> Dict[str, Any]:
         "domain": domain_id or "general",
         "domain_id": domain_id or "general",
         "version": "1.3",
-        "field_groups": []
+        "fields": LEGAL_JUDGMENT_SCHEMA.get("fields", []),
+        "prompts": LEGAL_JUDGMENT_SCHEMA.get("prompts", {}),
     }
 
 
 def extract_target_field_definitions(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Dynamically flattens all target field definitions from schema field_groups without hardcoding."""
+    """Dynamically flattens all target field definitions from schema fields without hardcoding."""
     targets = []
-    field_groups = schema.get("field_groups", [])
-
-    for group in field_groups:
-        group_name = group.get("group", "general")
-        fields = group.get("fields", [])
-        for field in fields:
-            field_name = field.get("name")
-            if not field_name:
+    fields = schema.get("fields", [])
+    if isinstance(fields, list):
+        for f in fields:
+            k = f.get("key") or f.get("name")
+            if not k:
                 continue
             targets.append({
-                "entity_type": field_name,
-                "entity_key": f"{group_name}.{field_name}",
-                "type": field.get("type", "string"),
-                "description": field.get("description", f"Value for {field_name} in group {group_name}"),
-                "multiple": field.get("multiple", False),
-                "review": field.get("review", True)
+                "entity_type": k,
+                "entity_key": k,
+                "type": f.get("type", "string"),
+                "description": f.get("description", f"Value for {k}"),
+                "multiple": f.get("type") in ("array", "list"),
+                "review": True
             })
     return targets
 
 
-def build_dynamic_few_shot_prompt(cdm_doc: CDMDocument, schema: Dict[str, Any]) -> str:
-    """Constructs enhanced paralegal full-text extraction prompt for legal domain entity extraction."""
-    all_paras = cdm_doc.get_all_paragraphs()
+# ===============================================================================
+# BLOCK COMMENT: DYNAMIC DOMAIN SCHEMA PROMPT BUILDER
+# Purpose:
+# Constructs extraction prompts dynamically from Domain Schema & SOT.
+# Eliminates all hardcoded static prompt overrides so domain configurations apply 100%.
+# ===============================================================================
+def build_dynamic_few_shot_prompt(
+    cdm_doc: CDMDocument,
+    schema: Dict[str, Any],
+    domain: Optional[Any] = None,
+) -> tuple[str, str]:
+    """Constructs dynamic domain extraction prompts using domain schema from system as single source of truth."""
+    from app.knowledge.domain_extractor import format_fields_summary, format_fields_json_schema
+    from app.knowledge.legal_sot import LEGAL_SYSTEM_PROMPT, LEGAL_USER_PROMPT_TEMPLATE, LEGAL_FIELDS_SPEC
+
+    all_paras = cdm_doc.get_all_paragraphs() if cdm_doc else []
     full_text = "\n\n".join(p.text_content for p in all_paras if p.text_content)
 
-    return f"""You are a trained paralegal with deep knowledge of the judicial system, laws, constitution, statutory provisions, and legal documentation.
+    fields = schema.get("fields") if isinstance(schema, dict) and schema.get("fields") else None
+    if not fields and domain and hasattr(domain, "schema_json") and isinstance(domain.schema_json, dict):
+        fields = domain.schema_json.get("fields")
+    if not fields:
+        fields = LEGAL_FIELDS_SPEC
 
-Analyze the following legal document completely and provide a comprehensive structured legal analysis in JSON format containing the following entities. DO NOT MISS ANY HELPFUL OR MATERIAL INFORMATION:
-- executive_case_summary (one_line_summary, case_overview describing dispute between AAA vs BBB and key statutory sections e.g. IPC/BNS/CrPC/BNSS/Acts, favoured_party in whose favour case was decided, key_sections_involved)
-- case (case number, petition/suit title, court jurisdiction)
-- court (name of High Court / Supreme Court / Tribunal)
-- judge (coram / presiding judge names)
-- date (date of judgment / order)
-- parties (structured map of petitioners, respondents, appellants, defendants/accused, prosecutor/prosecution/State, and other parties/intervenors)
-- lawyers (advocates / counsel appearing for each side: prosecution, defense, appellant, respondent)
-- arguments (structured list/map of specific legal arguments submitted by prosecutor/prosecution, defendant/defense, petitioner/appellant, respondent, and other parties)
-- timeline_events (key events, dates, FIR dates, arrest dates, lower court proceedings)
-- procedural_history (impugned lower court orders, FIR details, bail orders, or revision applications)
-- charges_or_claims (statutory sections, offences, or civil claims alleged against the defendant/accused)
-- evidence_and_witnesses (prosecution witnesses PWs, defense witnesses DWs, physical & documentary exhibits)
-- act/article (statutes, acts, sections, rules, constitutional articles cited)
-- statutory_interpretations (specific interpretations of sections/rules given by the court)
-- ruling (specific holdings, decisions, and directions of the court)
-- decision (overall final outcome, e.g. Rule made absolute, dismissed, allowed, acquitted, convicted)
-- observation (judicial findings, factual observations, and legal reasoning)
-- punishment (penalties, disciplinary actions, sentence duration, fine, backwages, or relief modifications)
-- referenced_cases (precedents or other case citations referred to in the document)
-- additional_observations_and_notes (any other material factual or legal information present in the text)
+    fields_summary = format_fields_summary(fields)
+    fields_json_schema = format_fields_json_schema(fields)
 
-SOURCE DOCUMENT:
-{full_text}
+    sys_prompt = getattr(domain, "system_prompt", None) or schema.get("system_prompt") or schema.get("prompts", {}).get("system_prompt") or LEGAL_SYSTEM_PROMPT
+    user_template = getattr(domain, "user_prompt", None) or schema.get("user_prompt_template") or schema.get("prompts", {}).get("user_prompt_template") or LEGAL_USER_PROMPT_TEMPLATE
 
-Return ONLY valid JSON. DO NOT ADD ANY COMMENT OTHER THAN THE JSON, NO PLEASENTRIES , NO LEADING TEXT OR EXPLANATION, JUST THE RAW JSON YOU GENERATE AFTER ANALYSIS.
-"""
+    user_prompt = (
+        user_template
+        .replace("{filename}", getattr(cdm_doc, "document_name", "") or "document")
+        .replace("{fields_summary}", fields_summary)
+        .replace("{fields_json_schema}", fields_json_schema)
+        .replace("{content}", full_text)
+        .replace("{content_snippet}", full_text)
+    )
+
+    return sys_prompt, user_prompt
 
 
 def map_provenance_to_cdm_spans(
@@ -372,20 +377,36 @@ class EKPDomainExtractor:
                     function="_extract_entities_async"
                 )
 
+        # Resolve domain from DB if available
+        domain_db = None
+        if async_db and doc.domain_id:
+            try:
+                from app.models.db_models import DomainSchemaDB, EKPDomainDB
+                d_stmt = select(EKPDomainDB).where(EKPDomainDB.id == doc.domain_id)
+                d_res = await async_db.execute(d_stmt)
+                domain_db = d_res.scalars().first()
+                if not domain_db:
+                    ds_stmt = select(DomainSchemaDB).where((DomainSchemaDB.id == doc.domain_id) | (DomainSchemaDB.domain_key == doc.domain_id))
+                    ds_res = await async_db.execute(ds_stmt)
+                    domain_db = ds_res.scalars().first()
+            except Exception as e:
+                logger.warn("domain_lookup_in_extractor_failed", error=str(e))
+
         cust_id = active_profile.customer_id if active_profile else None
         llm_config = active_profile.settings if (active_profile and active_profile.settings) else None
 
         try:
             from app.core.llm_router import LLMRouter
             router = LLMRouter()
-            prompt = build_dynamic_few_shot_prompt(cdm_doc, schema)
+            sys_prompt, user_prompt = build_dynamic_few_shot_prompt(cdm_doc, schema, domain=domain_db)
             llm = await router.get_llm(
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=4096,
                 customer_id=cust_id,
                 llm_config=llm_config
             )
-            response = await llm.ainvoke(prompt)
+            combined_prompt = f"SYSTEM INSTRUCTIONS:\n{sys_prompt}\n\nUSER REQUEST:\n{user_prompt}"
+            response = await llm.ainvoke(combined_prompt)
             resp_text = str(getattr(response, "content", response))
 
             # Clean markdown formatting if present

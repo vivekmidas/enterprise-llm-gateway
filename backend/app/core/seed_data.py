@@ -80,6 +80,27 @@ DEFAULT_DOMAINS = [
             ],
         },
     },
+    {
+        "domain_key": "education",
+        "name": "Education & Academic Research",
+        "description": "Academic records, courses, student evaluations, and research papers schema",
+        "scope": "SYSTEM",
+        "schema_data": {
+            "default_path": "/education",
+            "icon": "AcademicCap",
+            "theme_color": "#8b5cf6",
+            "status": "active",
+            "fields": [
+                {"key": "professor", "label": "Professor / Instructor", "type": "entity", "weight": 2.5, "importance": "high", "required": False, "description": "Course instructor or professor"},
+                {"key": "student", "label": "Student Name", "type": "entity", "weight": 2.0, "importance": "high", "required": False, "description": "Student or candidate name"},
+                {"key": "course_code", "label": "Course Code", "type": "value", "weight": 2.0, "importance": "high", "required": False, "description": "Course identifier like CS101, PHY201"},
+                {"key": "grade", "label": "Grade / Score", "type": "value", "weight": 1.5, "importance": "medium", "required": False, "description": "Final score or letter grade"},
+                {"key": "department", "label": "Department / School", "type": "entity", "weight": 1.5, "importance": "medium", "required": False, "description": "Department or faculty"},
+                {"key": "syllabus", "label": "Syllabus / Curriculum", "type": "text", "weight": 1.0, "importance": "low", "required": False, "description": "Course curriculum narrative"},
+            ],
+            "noise_tokens": ["student", "students", "taught", "by", "prof", "professor", "course", "class", "scoring", "above", "in"],
+        },
+    },
 ]
 
 
@@ -100,6 +121,17 @@ async def seed_all_domains(session: AsyncSession, admin_user_id: str | None = No
 
         system_prompt = prompts.get("system_prompt")
         user_prompt = prompts.get("user_prompt_template")
+
+        # ==============================================================================
+        # BLOCK COMMENT: SEED PROMPTS RESOLUTION (SINGLE SOURCE OF TRUTH)
+        # Purpose:
+        # 1. Resolves system and user prompts from schema_data['prompts'] or canonical defaults.
+        # 2. Ensures schema_data['fields'] is preserved as the single source of truth.
+        # ==============================================================================
+        from app.api.knowledge.domain_schemas_router import DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT
+
+        resolved_sys_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        resolved_user_prompt = user_prompt or DEFAULT_USER_PROMPT
 
         # 1. Synchronize EKPDomainDB (ekp_domains table)
         ekp_stmt = select(EKPDomainDB).where(EKPDomainDB.id == domain_key)
@@ -135,8 +167,8 @@ async def seed_all_domains(session: AsyncSession, admin_user_id: str | None = No
                 description=description,
                 scope=scope,
                 schema_json=schema_data,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+                system_prompt=resolved_sys_prompt,
+                user_prompt=resolved_user_prompt,
                 created_by=admin_user_id,
             )
             session.add(schema_obj)
@@ -145,10 +177,8 @@ async def seed_all_domains(session: AsyncSession, admin_user_id: str | None = No
             existing_schema.name = name
             existing_schema.description = description
             existing_schema.schema_json = schema_data
-            if system_prompt:
-                existing_schema.system_prompt = system_prompt
-            if user_prompt:
-                existing_schema.user_prompt = user_prompt
+            existing_schema.system_prompt = resolved_sys_prompt
+            existing_schema.user_prompt = resolved_user_prompt
             session.add(existing_schema)
             logger.info(f"Updated DomainSchemaDB: {domain_key}")
 

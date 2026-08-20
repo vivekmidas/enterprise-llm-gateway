@@ -145,6 +145,66 @@ def filter_ungrounded_fields(fields_dict: dict[str, Any], raw_text: str) -> dict
     return filtered
 
 
+# =====================================================================
+# BLOCK COMMENT: DYNAMIC PROMPT BUILDERS (SINGLE SOURCE OF TRUTH)
+# Purpose:
+# 1. format_fields_summary: Generates human-readable field definitions.
+# 2. format_fields_json_schema: Generates dynamic target JSON structure from fields.
+# 3. Ensures schema_json['fields'] is the sole source of truth for prompts and extraction.
+# =====================================================================
+def format_fields_summary(fields: list[dict[str, Any]] | None) -> str:
+    """Format human-readable bullet list of schema fields."""
+    if not fields:
+        return "Extract all key entities, facts, and metadata."
+    lines = []
+    for f in fields:
+        k = f.get("key", "")
+        lbl = f.get("label", k)
+        t = f.get("type", "string")
+        d = f.get("description", "")
+        lines.append(f"- {k} ({lbl}, {t}): {d}" if d else f"- {k} ({lbl}, {t})")
+    return "\n".join(lines)
+
+
+def format_fields_json_schema(fields: list[dict[str, Any]] | None) -> str:
+    """Format target JSON schema structure dynamically from schema fields as single source of truth."""
+    if not fields:
+        return '{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
+
+    extracted_spec: dict[str, Any] = {}
+    for f in fields:
+        k = f.get("key")
+        if not k:
+            continue
+        ft = (f.get("type") or "string").lower()
+        desc = f.get("description") or f.get("label") or k
+        if k == "connected_cases":
+            extracted_spec[k] = [
+                {
+                    "case": "<case number e.g. 2981 OF 1989>",
+                    "plaintiff": "<petitioner/plaintiff name>",
+                    "respondent": "<respondent/defendant name>",
+                    "advocate": "<representing lawyer/advocate name if present>",
+                    "date": "<decision/order date if present>",
+                }
+            ]
+        elif ft in ("array", "list"):
+            extracted_spec[k] = [f"<{desc}>"]
+        elif ft in ("object", "dict"):
+            extracted_spec[k] = {"...": f"<{desc}>"}
+        elif ft in ("number", "integer", "float"):
+            extracted_spec[k] = f"0.0 (<{desc}>)"
+        elif ft in ("bool", "boolean"):
+            extracted_spec[k] = f"true/false (<{desc}>)"
+        else:
+            extracted_spec[k] = f"<{desc}>"
+
+    return json.dumps({
+        "extracted_fields": extracted_spec,
+        "extra_fields": {"<unmapped_extra_field>": "<value>"}
+    }, indent=2)
+
+
 class DomainExtractor:
     """Extracts domain knowledge from document text using an LLM.
     Supports schema-free comprehensive extraction with grounding verification.
@@ -154,19 +214,9 @@ class DomainExtractor:
         self.llm = llm or DomainLLM()
 
     @classmethod
-    def from_llm_profile(cls, llm_profile) -> "DomainExtractor":
+    def from_llm_profile(cls, llm_profile: Any = None) -> "DomainExtractor":
         """
-        Build a DomainExtractor using the tenant's LLMProfileDB settings.
-
-        LLMProfileDB.settings shape:
-          {
-            "generation": { "url": "...", "model": "...", "api_key": "...", "provider": "..." },
-            "search": { ... },
-            "embedding": { ... }
-          }
-
-        Reads from the 'generation' section. Converts Ollama native chat URLs
-        to OpenAI-compatible /v1 endpoint. Falls back to Ollama defaults on any error.
+        Factory method to instantiate DomainExtractor bound to a customer's LLMProfileDB.
         """
         try:
             if llm_profile is None:
@@ -238,44 +288,29 @@ class DomainExtractor:
             weight = f.get("weight", 1.0)
             field_weights[key] = float(weight)
 
-        sys_prompt = (
-            "You are a precise document entity extractor.\n"
-            "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
-            "RULE 2: If a field value is NOT found in the document text, OMIT that field entirely "
-            "— do NOT write null, do NOT write empty string.\n"
-            "RULE 3: DO NOT use training data, prior knowledge, or inferred values.\n"
-            "RULE 4: Use exact wording from the document for all extracted values.\n"
-            "Return valid JSON only containing ONLY the fields you actually found."
-        )
-
         # Truncate content — 80K chars covers large multi-page documents
         max_chars = 80_000
         content_snippet = text[:max_chars]
 
         # =====================================================================
-        # BLOCK COMMENT: PROMPT RESOLUTION & EXTRACTION
+        # BLOCK COMMENT: PROMPT RESOLUTION (SINGLE SOURCE OF TRUTH)
         # Purpose:
-        # 1. Resolves system and user prompts using hierarchy:
-        #    - If custom system_prompt_template provided -> use formatted template
-        #    - Else if legal domain -> use Legal SOT template
-        #    - Else -> use grounded generic extraction prompt
-        # 2. Applies user_prompt_template with placeholders ({filename}, {fields_summary}, {content})
-        # 3. Invokes LLM, parses JSON, and filters ungrounded fields.
+        # 1. Resolves system prompt (custom template or default precise extractor).
+        # 2. Dynamically derives fields_summary and fields_json_schema from fields.
+        # 3. Renders user prompt template with dynamic schema structure.
         # =====================================================================
-        fields_summary_lines = []
-        for f in fields:
-            f_key = f.get("key", "")
-            f_label = f.get("label", f_key)
-            f_type = f.get("type", "string")
-            fields_summary_lines.append(f"- {f_key}: {f_label} ({f_type})")
-        fields_summary = "\n".join(fields_summary_lines) if fields_summary_lines else "Extract all key entities, facts, and metadata."
+        fields_summary = format_fields_summary(fields)
+        fields_json_schema = format_fields_json_schema(fields)
 
         if system_prompt_template and system_prompt_template.strip():
-            sys_prompt = system_prompt_template.replace("{domain_name}", domain_name or "").replace("{filename}", filename or "")
-        elif domain_key and "legal" in domain_key.lower():
-            legal_sys, _ = build_free_extract_prompts(filename, content_snippet)
-            sys_prompt = legal_sys
+            logger.debug("domain_extractor_decision_sys_prompt", branch="custom_template", template_len=len(system_prompt_template))
+            sys_prompt = (
+                system_prompt_template
+                .replace("{domain_name}", domain_name or "")
+                .replace("{filename}", filename or "")
+            )
         else:
+            logger.debug("domain_extractor_decision_sys_prompt", branch="default_extractor")
             sys_prompt = (
                 "You are a precise document entity extractor.\n"
                 "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
@@ -286,28 +321,30 @@ class DomainExtractor:
                 "Return valid JSON only containing ONLY the fields you actually found."
             )
 
-
         if user_prompt_template and user_prompt_template.strip():
+            logger.debug("domain_extractor_decision_user_prompt", branch="custom_template", template_len=len(user_prompt_template))
             user_prompt = (
                 user_prompt_template
                 .replace("{filename}", filename or "")
                 .replace("{fields_summary}", fields_summary)
+                .replace("{fields_json_schema}", fields_json_schema)
                 .replace("{content}", content_snippet)
+                .replace("{content_snippet}", content_snippet)
                 .replace("{domain_name}", domain_name or "")
             )
-        elif domain_key and "legal" in domain_key.lower() and not (system_prompt_template and system_prompt_template.strip()):
-            _, legal_user = build_free_extract_prompts(filename, content_snippet)
-            user_prompt = legal_user
         else:
             if fields:
+                logger.debug("domain_extractor_decision_user_prompt", branch="dynamic_schema_fields", field_count=len(fields))
                 user_prompt = (
                     f"Document Filename: {filename}\n\n"
                     f"Target Schema Fields:\n{fields_summary}\n\n"
+                    f"Target JSON Structure:\n{fields_json_schema}\n\n"
                     f"Document Content:\n{content_snippet}\n\n"
                     "Extract all matching schema fields and any unmapped extra domain knowledge in valid JSON format matching:\n"
                     '{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
                 )
             else:
+                logger.debug("domain_extractor_decision_user_prompt", branch="schemaless_comprehensive")
                 user_prompt = (
                     f"Document Filename: {filename}\n\n"
                     f"Document Content:\n{content_snippet}\n\n"
@@ -331,17 +368,21 @@ class DomainExtractor:
             parsed = json.loads(cleaned)
 
             if isinstance(parsed, dict) and ("extracted_fields" in parsed or "extra_fields" in parsed):
+                logger.debug("domain_extractor_decision_payload_parse", branch="canonical_wrapper")
                 extracted_fields = parsed.get("extracted_fields") or {}
                 extra_fields = parsed.get("extra_fields") or {}
             elif isinstance(parsed, dict):
                 if fields:
+                    logger.debug("domain_extractor_decision_payload_parse", branch="root_dict_split_by_schema_keys")
                     schema_field_keys = {f.get("key") for f in fields if f.get("key")}
                     extracted_fields = {k: v for k, v in parsed.items() if k in schema_field_keys}
                     extra_fields = {k: v for k, v in parsed.items() if k not in schema_field_keys}
                 else:
+                    logger.debug("domain_extractor_decision_payload_parse", branch="root_dict_all_extracted")
                     extracted_fields = parsed
                     extra_fields = {}
             else:
+                logger.debug("domain_extractor_decision_payload_parse", branch="unrecognized_structure")
                 extracted_fields = {}
                 extra_fields = {}
 

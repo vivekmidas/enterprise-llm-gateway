@@ -47,6 +47,47 @@ class EntityProvenanceLinker:
             return str(val)
         return str(val).strip()
 
+    # ===============================================================================
+    # BLOCK COMMENT: 1-TO-1 ENTITY FLATTENING & LINKING
+    # Purpose:
+    # Recursively flattens nested dicts and list items (e.g. 41 connected cases)
+    # into individual (field_key, field_label, scalar_value) tuples so that every
+    # single extracted item has an exact 1-to-1 EntityProvenance record.
+    # ===============================================================================
+    @classmethod
+    def _flatten_fields(cls, obj: Any, prefix: str = "", label_prefix: str = "") -> List[tuple[str, str, Any]]:
+        flat: List[tuple[str, str, Any]] = []
+        if obj is None or obj == "" or obj == [] or obj == {}:
+            logger.debug("entity_linker_decision_flatten_empty", prefix=prefix)
+            return flat
+
+        if isinstance(obj, dict):
+            logger.debug("entity_linker_decision_flatten_dict", prefix=prefix, keys=list(obj.keys()))
+            for k, v in obj.items():
+                curr_key = f"{prefix}.{k}" if prefix else str(k)
+                clean_lbl = str(k).replace("_", " ").title()
+                curr_lbl = f"{label_prefix} → {clean_lbl}" if label_prefix else clean_lbl
+                flat.extend(cls._flatten_fields(v, curr_key, curr_lbl))
+        elif isinstance(obj, list):
+            logger.debug("entity_linker_decision_flatten_list", prefix=prefix, item_count=len(obj))
+            for idx, item in enumerate(obj):
+                curr_key = f"{prefix}[{idx}]"
+                curr_lbl = f"{label_prefix} #{idx + 1}" if label_prefix else f"Item #{idx + 1}"
+                if isinstance(item, (dict, list)):
+                    flat.extend(cls._flatten_fields(item, curr_key, curr_lbl))
+                else:
+                    val_clean = cls._clean_str(item)
+                    if val_clean and len(val_clean) >= 2:
+                        flat.append((curr_key, curr_lbl, item))
+        else:
+            val_clean = cls._clean_str(obj)
+            if val_clean and len(val_clean) >= 2:
+                lbl = label_prefix or prefix.replace("_", " ").title()
+                logger.debug("entity_linker_decision_flatten_scalar", key=prefix, value_len=len(val_clean))
+                flat.append((prefix, lbl, obj))
+
+        return flat
+
     def link_entities_to_spans(
         self,
         extracted_fields: Dict[str, Any],
@@ -55,40 +96,36 @@ class EntityProvenanceLinker:
     ) -> List[EntityProvenance]:
         """
         Scans spans and document tree to attach paragraph, section, page, and bbox provenance
-        to each extracted entity field.
+        to each extracted entity field with strict 1-to-1 correspondence.
         """
         provenance_records: List[EntityProvenance] = []
 
         if not extracted_fields or not spans:
+            logger.debug("entity_linker_decision_skip", reason="missing_fields_or_spans", fields_present=bool(extracted_fields), spans_present=bool(spans))
             return provenance_records
 
-        for field_key, field_value in extracted_fields.items():
-            if field_value is None or field_value == "" or field_value == []:
-                continue
+        flattened_entities = self._flatten_fields(extracted_fields)
 
+        for field_key, field_label, field_value in flattened_entities:
             val_str = self._clean_str(field_value)
             if not val_str or len(val_str) < 2:
                 continue
 
             # Generate search terms from the entity value
-            search_terms = []
-            if isinstance(field_value, list):
-                search_terms = [self._clean_str(v) for v in field_value if len(self._clean_str(v)) > 2]
-            else:
-                # Take key phrase or full string
-                search_terms = [val_str]
-                # If value is long (e.g. multi-sentence holding), take first 60 chars
-                if len(val_str) > 60:
-                    search_terms.append(val_str[:60])
+            search_terms = [val_str]
+            if len(val_str) > 60:
+                search_terms.append(val_str[:60])
 
             matched_span: Optional[SpanItem] = None
+            match_branch = "UNMATCHED"
 
             # 1. Exact or substring match in spans
             for term in search_terms:
                 term_lower = term.lower()
                 for span in spans:
-                    if term_lower in span.text.lower():
+                    if span.text and term_lower in span.text.lower():
                         matched_span = span
+                        match_branch = "EXACT_SUBSTRING"
                         break
                 if matched_span:
                     break
@@ -100,6 +137,8 @@ class EntityProvenanceLinker:
                 best_span = None
 
                 for span in spans:
+                    if not span.text:
+                        continue
                     span_tokens = set(re.findall(r'\w+', span.text.lower()))
                     if not span_tokens:
                         continue
@@ -111,19 +150,34 @@ class EntityProvenanceLinker:
 
                 if best_span:
                     matched_span = best_span
+                    match_branch = "TOKEN_OVERLAP"
 
-            # Format human label (e.g. "case_number" -> "Case Number")
-            field_label = field_key.replace("_", " ").title()
+            logger.debug(
+                "entity_linker_decision_match_path",
+                field_key=field_key,
+                match_branch=match_branch,
+                matched_span_p_idx=matched_span.paragraph_index if matched_span else None,
+            )
 
             if matched_span:
                 # Resolve section heading
                 sec_heading = matched_span.heading
+                heading_source = "SPAN_HEADING"
                 if not sec_heading and doc_tree:
-                    # Look up section in doc_tree
                     for sec in doc_tree.sections:
                         if any(p.paragraph_index == matched_span.paragraph_index for p in sec.paragraphs):
                             sec_heading = sec.heading
+                            heading_source = "DOC_TREE_LOOKUP"
                             break
+                if not sec_heading:
+                    heading_source = "DEFAULT_GENERAL"
+
+                logger.debug(
+                    "entity_linker_decision_heading_resolution",
+                    field_key=field_key,
+                    heading_source=heading_source,
+                    sec_heading=sec_heading,
+                )
 
                 provenance_records.append(EntityProvenance(
                     field_key=field_key,
@@ -138,22 +192,27 @@ class EntityProvenanceLinker:
                     confidence=0.95,
                 ))
             else:
-                # Fallback record if span not found
+                logger.debug(
+                    "entity_linker_decision_fallback_head",
+                    field_key=field_key,
+                    field_value_preview=val_str[:50],
+                )
                 provenance_records.append(EntityProvenance(
                     field_key=field_key,
                     field_label=field_label,
                     extracted_value=field_value,
-                    section_heading="Document Metadata",
+                    section_heading="Document Head",
                     page_number=1,
                     paragraph_index=0,
-                    source_parser="domain_extractor",
-                    confidence=0.70,
+                    bbox=None,
+                    source_text_snippet=None,
+                    source_parser="llm_direct",
+                    confidence=0.85,
                 ))
 
         logger.info(
             "entity_provenance_linking_completed",
-            total_entities=len(extracted_fields),
-            linked_provenance_count=len(provenance_records),
+            total_extracted_fields=len(flattened_entities),
+            linked_records_count=len(provenance_records),
         )
-
         return provenance_records

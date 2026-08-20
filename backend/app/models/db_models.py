@@ -724,18 +724,23 @@ class SavedQueryDB(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-class LegalAuditLogDB(Base):
-    __tablename__ = "legal_audit_logs"
+class KnowledgeAuditLogDB(Base):
+    __tablename__ = "knowledge_audit_logs"
 
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     user_id = Column(String(36), nullable=False, index=True)
     customer_id = Column(String(36), nullable=True, index=True)
+    domain = Column(String(50), nullable=True, index=True)
     role = Column(String(50), nullable=True)
-    action = Column(String(64), nullable=False, index=True)  # SEARCH, EXPORT_BRIEF, SAVE_QUERY, EDIT_CASE
+    action = Column(String(64), nullable=False, index=True)  # SEARCH, INGEST, SYNTHESIZE, EXPORT_BRIEF, SAVE_QUERY
     query_text = Column(Text, nullable=True)
     results_count = Column(Integer, default=0)
     details_json = Column(JSON, nullable=True, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# Backward-compatible alias
+LegalAuditLogDB = KnowledgeAuditLogDB
 
 
 

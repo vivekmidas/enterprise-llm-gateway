@@ -24,6 +24,7 @@ LEGAL_DOMAIN_DESCRIPTION = (
 LEGAL_SECTIONS = [
     "executive_case_summary",
     "document",
+    "connected_cases",
     "parties",
     "procedural_history",
     "facts",
@@ -62,7 +63,16 @@ LEGAL_FIELDS_SPEC = [
         "weight": 2.0,
         "importance": "high",
         "required": False,
-        "description": "Title, court, jurisdiction, case number, citation, decision date, coram, judgment type",
+        "description": "Title, court, jurisdiction, primary case number, connected cases, citation, decision date, coram, judgment type",
+    },
+    {
+        "key": "connected_cases",
+        "label": "Connected & Consolidated Cases",
+        "type": "array",
+        "weight": 2.5,
+        "importance": "high",
+        "required": False,
+        "description": "Array of case objects pairing each connected case/petition to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
     },
     {
         "key": "parties",
@@ -222,6 +232,8 @@ LEGAL_FIELDS = {
         "court": "Court or tribunal name",
         "location": "Court location / jurisdiction if explicitly available",
         "case_number": "Primary case number",
+        "connected_cases": "Array of paired case objects linking each case to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
+        "number_of_connected_cases": "Integer count of all connected cases in this proceeding",
         "report_number": "Report / reference number if present",
         "case_date": "Date of the judgment/order/case document",
         "judge": "Judge, justice, bench or coram",
@@ -280,6 +292,21 @@ LEGAL_EXTRACTION_SCHEMA = {
                 "court": {"type": ["string", "null"]},
                 "location": {"type": ["string", "null"]},
                 "case_number": {"type": ["string", "null"]},
+                "connected_cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "case": {"type": ["string", "null"]},
+                            "case_number": {"type": ["string", "null"]},
+                            "plaintiff": {"type": ["string", "null"]},
+                            "respondent": {"type": ["string", "null"]},
+                            "advocate": {"type": ["string", "null"]},
+                            "date": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+                "number_of_connected_cases": {"type": ["integer", "number", "null"]},
                 "report_number": {"type": ["string", "null"]},
                 "case_date": {"type": ["string", "null"]},
                 "judge": {"type": ["string", "null"]},
@@ -338,75 +365,36 @@ LEGAL_SYSTEM_PROMPT = (
     "RULE 3: NEVER write bracketed placeholders like '[Name]', '[Judge]', '[Advocate]', or '[Title]'. Extract exact real proper names or omit.\n"
     "RULE 4: For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
     "RULE 5: Capture specific arguments made by the Prosecutor/Prosecution/State, Defendant/Accused/Defense counsel, Petitioner/Appellant, Respondent, and Other Parties (Intervenors/Amicus Curiae).\n"
-    "RULE 6: Use exact wording from the document for all values.\n"
-    "RULE 7: DO NOT MISS ANY HELPFUL INFORMATION. Capture all timeline events, evidence, lower court details, judicial observations, statutory interpretations, and additional data points present in the text.\n"
+    "RULE 6: When multiple cases/petitions are decided together, DO NOT separate plaintiffs and case numbers into separate detached lists. Pair each case directly with its respective plaintiff and respondent in 'connected_cases': [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}].\n"
+    "RULE 7: Use exact wording from the document for all values.\n"
+    "RULE 8: DO NOT MISS ANY HELPFUL INFORMATION. Capture all timeline events, evidence, lower court details, judicial observations, statutory interpretations, and additional data points present in the text.\n"
     "Return a single valid JSON object only."
 )
 
+# ==============================================================================
+# BLOCK COMMENT: PROMPT TEMPLATES & HELPER FUNCTIONS (SINGLE SOURCE OF TRUTH)
+# Purpose:
+# 1. System prompt defines extraction rules without duplicate hardcoded field lists.
+# 2. User prompt uses placeholders ({filename}, {fields_summary}, {fields_json_schema}, {content}).
+# 3. Dynamic prompt builder constructs field summaries and target JSON directly from LEGAL_FIELDS_SPEC / fields.
+# ==============================================================================
+
 LEGAL_USER_PROMPT_TEMPLATE = (
-        "Document Filename: {filename}\n\n"
-        "Document Content:\n{content_snippet}\n\n"
-        "Extract a comprehensive structured JSON from the above legal document.\n"
-        "CRITICAL INSTRUCTIONS:\n"
-        "- Omit any field not found in the document.\n"
-        "- NEVER output bracketed placeholders like '[Name]', '[Advocate]', '[Judge]', or '[Date]'.\n"
-        "- For parties, extract exact names of entities/people (e.g., 'State of Maharashtra', 'John Doe'), not just role labels.\n"
-        "- 'arguments' MUST map specific arguments to the party making them:\n"
-        "  - 'prosecutor': arguments by Prosecution, State, Public Prosecutor, or Complainant.\n"
-        "  - 'defendant': arguments by Defendant, Accused, or Defense Counsel.\n"
-        "  - 'appellant': arguments by Appellant or Petitioner.\n"
-        "  - 'respondent': arguments by Respondent.\n"
-        "  - 'other_parties': arguments by Intervenors, Amicus Curiae, Co-accused, or 3rd Parties.\n"
-        "- DO NOT MISS ANY HELPFUL INFORMATION. Include all key dates, facts, evidence items, statutory interpretations, and observations.\n"
-        "- 'legal_principles' must be legal propositions EXPLICITLY STATED or CONFIRMED by the court in this document only — not inferred.\n"
-        "- 'number_of_connected_cases' must be an integer (number), not a string.\n\n"
-        "Structure (omit any section not present):\n"
-        "{\n"
-        '  "executive_case_summary": {\n'
-        '    "one_line_summary": "High-level single line summary (e.g. Case of AAA v. BBB regarding XYZ decided in favour of AAA under Section 302 IPC / Section 103 BNS)",\n'
-        '    "case_overview": "Natural language narrative describing dispute, main parties (AAA v. BBB), core subject matter, key statutory sections (IPC/BNS/CrPC/BNSS/Acts), final outcome, and favoured party",\n'
-        '    "favoured_party": "Name and role of party in whose favour the ruling was decided",\n'
-        '    "key_sections_involved": ["IPC 302 / BNS 103", "..."]\n'
-        '  },\n'
-        '  "document": {"title": "...", "document_type": "...", "court": "...", "jurisdiction": "...", "case_number": "...", "citation": "...", "decision_date": "...", "coram": ["..."], "judgment_type": "..."},\n'
-        '  "parties": {\n'
-        '    "petitioner": {"name": "...", "type": "..."}, "respondent": {"name": "...", "type": "..."},\n'
-        '    "prosecutor": {"name": "...", "type": "..."}, "defendant": {"name": "...", "type": "..."},\n'
-        '    "advocates": {"petitioner": ["..."], "respondent": ["..."], "prosecutor": ["..."], "defense": ["..."]}\n'
-        '  },\n'
-        '  "procedural_history": [{"date": "...", "event": "..."}],\n'
-        '  "facts": {\n'
-        '    "summary": "...",\n'
-        '    "employment": {"designation": "...", "employer": "..."},\n'
-        '    "incident": {"inspection_date": "...", "allegation": "..."},\n'
-        '    "disciplinary_action": {"charge_sheet_issued": true, "departmental_enquiry": true, "dismissal_date": "..."}\n'
-        '  },\n'
-        '  "legal_provisions": {"statutes": [{"name": "...", "abbreviation": "..."}], "sections": [], "schedule_items": ["..."]},\n'
-        '  "issues": [{"id": 1, "issue": "..."}],\n'
-        '  "labour_court_findings": {"enquiry": {}, "natural_justice": {}, "misconduct": {}, "relief": {}},\n'
-        '  "industrial_court": {"revision_application": "...", "decision": "..."},\n'
-        '  "high_court_arguments": {\n'
-        '    "petitioner": ["..."],\n'
-        '    "respondent": ["..."],\n'
-        '    "prosecutor": ["..."],\n'
-        '    "defendant": ["..."]\n'
-        '  },\n'
-        '  "arguments": {\n'
-        '    "prosecutor": ["..."],\n'
-        '    "defendant": ["..."],\n'
-        '    "petitioner": ["..."],\n'
-        '    "respondent": ["..."]\n'
-        '  },\n'
-        '  "evidence": {"documentary": ["..."], "inspection": ["..."]},\n'
-        '  "legal_concepts": ["..."],\n'
-        '  "research_topics": ["..."],\n'
-        '  "keywords": ["..."],\n'
-        '  "citations": {"cases_referred": [], "statutes_referred": ["..."]},\n'
-        '  "judgment_status": {"portion_available": "...", "final_decision": "...", "ratio_decidendi": "... "},\n'
-        '  "knowledge_graph_entities": {"persons": ["..."], "organizations": ["..."], "dates": ["..."]},\n'
-        '  "embedding_metadata": {"document_domain": "...", "practice_area": ["..."], "confidence": 0.95}\n'
-        "}\n"
-        "Output ONLY the JSON. Omit fields not present in the document."
+    "Document Filename: {filename}\n\n"
+    "Target Schema Fields:\n"
+    "{fields_summary}\n\n"
+    "Target JSON Structure:\n"
+    "{fields_json_schema}\n\n"
+    "Document Content:\n"
+    "{content}\n\n"
+    "Extract a comprehensive structured JSON from the above legal document matching the target schema.\n"
+    "CRITICAL INSTRUCTIONS:\n"
+    "- Extract ONLY factual information explicitly present in the document.\n"
+    "- Omit any field not found — do NOT write null, empty strings, or bracketed placeholders like '[Name]' or '[Judge]'.\n"
+    "- For connected/consolidated cases: DO NOT separate plaintiffs and case numbers into separate detached lists. Extract each case as a paired object in 'connected_cases' array: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}].\n"
+    "- For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
+    "- Capture specific arguments mapped to the party making them where present.\n"
+    "- Output valid JSON only matching: {\"extracted_fields\": { ... }, \"extra_fields\": { ... }}."
 )
 
 # Evidence RAG Prompts (for Block-level provenance in Domain RAG V1)
@@ -434,43 +422,17 @@ LEGAL_RAG_USER_TEMPLATE = """
 SOURCE DOCUMENT: {{DOCUMENT_ID}}
 FILENAME: {{FILENAME}}
 
+TARGET SCHEMA STRUCTURE:
+{{TARGET_SCHEMA}}
+
 SOURCE BLOCKS:
 {{BLOCKS}}
 
-Return exactly:
-{
-  "executive_case_summary": {"one_line_summary": null, "case_overview": null, "favoured_party": null, "key_sections_involved": []},
-  "case_identity": {"case_number": null, "title": null, "court": null, "bench": null, "judgment_date": null, "citation": null},
-  "parties": [],
-  "timeline_and_key_dates": [],
-  "procedural_history": [],
-  "charges_or_claims": [],
-  "evidence_and_witnesses": [],
-  "facts": [],
-  "issues": [],
-  "arguments": {"prosecutor_or_state": [], "defendant_or_accused": [], "appellant_or_petitioner": [], "respondent_or_opponent": [], "other_parties": []},
-  "statutes_and_provisions": [],
-  "statutory_interpretations": [],
-  "precedents_cited": [],
-  "decision": {"disposition": null, "holding": [], "sentence_or_penalty": null, "relief": [], "orders": []},
-  "reasoning": [],
-  "key_principles": [],
-  "additional_observations": [],
-  "outcome_factors": [],
-  "extraction_notes": []
-}
-
-For list items:
-{"text":"...", "evidence_block_ids":["docX-p0001-b0001"], "evidence_type":"FACT"}
-
-For scalar fields:
-{"value":"...", "evidence_block_ids":["docX-p0001-b0001"]}
-
-Use null/[] when the document does not support the field.
-Do NOT return page numbers or quotes.
+Extract all verifiable entities and factual claims referencing valid block IDs.
 Allowed evidence_type: CASE_IDENTITY, PARTY, PROCEDURAL_HISTORY, FACT, ISSUE,
 ARGUMENT, STATUTE, PRECEDENT, COURT_FINDING, HOLDING, RELIEF, ORDER, REASONING,
 LEGAL_PRINCIPLE, OUTCOME_FACTOR, NOTE.
+Return JSON only.
 """
 
 # ==============================================================================
@@ -490,30 +452,93 @@ LEGAL_JUDGMENT_SCHEMA = {
 }
 
 # ==============================================================================
-# 6. HELPER FUNCTIONS FOR PROMPT BUILDERS
+# 6. HELPER FUNCTIONS FOR PROMPT BUILDERS (DYNAMIC SINGLE SOURCE OF TRUTH)
 # ==============================================================================
-def build_free_extract_prompts(filename: str, content_snippet: str) -> tuple[str, str]:
-    """Build system and user prompts for free-form legal document extraction."""
+def format_legal_fields_summary(fields: list[dict[str, Any]] | None = None) -> str:
+    """Format human-readable bullet list of legal schema fields from SOT."""
+    target_fields = fields if fields is not None else LEGAL_FIELDS_SPEC
+    if not target_fields:
+        return "Extract all key legal entities, facts, citations, and findings."
+    lines = []
+    for f in target_fields:
+        k = f.get("key", "")
+        lbl = f.get("label", k)
+        t = f.get("type", "string")
+        d = f.get("description", "")
+        lines.append(f"- {k} ({lbl}, {t}): {d}" if d else f"- {k} ({lbl}, {t})")
+    return "\n".join(lines)
+
+
+def format_legal_fields_json_structure(fields: list[dict[str, Any]] | None = None) -> str:
+    """Format target JSON schema structure dynamically from schema fields list."""
+    target_fields = fields if fields is not None else LEGAL_FIELDS_SPEC
+    extracted_spec: dict[str, Any] = {}
+    for f in target_fields:
+        k = f.get("key")
+        if not k:
+            continue
+        ft = (f.get("type") or "string").lower()
+        desc = f.get("description") or f.get("label") or k
+        if k == "connected_cases":
+            extracted_spec[k] = [
+                {
+                    "case": "<case number e.g. 2981 OF 1989>",
+                    "plaintiff": "<petitioner/plaintiff name>",
+                    "respondent": "<respondent/defendant name>",
+                    "advocate": "<representing lawyer/advocate name if present>",
+                    "date": "<decision/order date if present>",
+                }
+            ]
+        elif ft in ("array", "list"):
+            extracted_spec[k] = [f"<{desc}>"]
+        elif ft in ("object", "dict"):
+            extracted_spec[k] = {"...": f"<{desc}>"}
+        elif ft in ("number", "integer", "float"):
+            extracted_spec[k] = f"0.0 (<{desc}>)"
+        elif ft in ("bool", "boolean"):
+            extracted_spec[k] = f"true/false (<{desc}>)"
+        else:
+            extracted_spec[k] = f"<{desc}>"
+
+    import json
+    return json.dumps({
+        "extracted_fields": extracted_spec,
+        "extra_fields": {"<unmapped_extra_field>": "<value>"}
+    }, indent=2)
+
+
+def build_free_extract_prompts(
+    filename: str,
+    content_snippet: str,
+    fields: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
+    """Build system and user prompts for free-form legal document extraction dynamically from schema fields."""
     sys_prompt = LEGAL_SYSTEM_PROMPT
-    # ==============================================================================
-    # USE STR.REPLACE TO PREVENT KEYERROR ON EMBEDDED JSON BRACES IN PROMPT TEMPLATE
-    # ==============================================================================
+    fields_summary = format_legal_fields_summary(fields)
+    fields_json_schema = format_legal_fields_json_structure(fields)
+
     user_prompt = (
         LEGAL_USER_PROMPT_TEMPLATE
-        .replace("{filename}", str(filename))
-        .replace("{content_snippet}", str(content_snippet))
+        .replace("{filename}", str(filename or ""))
+        .replace("{fields_summary}", fields_summary)
+        .replace("{fields_json_schema}", fields_json_schema)
+        .replace("{content}", str(content_snippet or ""))
+        .replace("{content_snippet}", str(content_snippet or ""))
     )
     return sys_prompt, user_prompt
 
+
 def build_rag_prompt(*, document_id: int | str, filename: str, blocks: list[dict[str, Any]]) -> tuple[str, str]:
-    """Build block-level evidence provenance prompts for RAG V1 processing."""
+    """Build block-level evidence provenance prompts for RAG V1 processing dynamically from SOT."""
     rendered = "\n".join(
         f"BLOCK_ID={b['block_id']}\nPAGE={b['page']}\nTEXT={b['text']}\n"
         for b in blocks
     )
+    target_schema = format_legal_fields_json_structure()
     user_prompt = (
         LEGAL_RAG_USER_TEMPLATE.replace("{{DOCUMENT_ID}}", str(document_id))
         .replace("{{FILENAME}}", filename)
+        .replace("{{TARGET_SCHEMA}}", target_schema)
         .replace("{{BLOCKS}}", rendered)
     )
     return LEGAL_RAG_SYSTEM_PROMPT, user_prompt

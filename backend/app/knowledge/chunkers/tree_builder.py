@@ -20,8 +20,10 @@ import re
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+import structlog
 from app.knowledge.parsers.base import SpanItem
 
+logger = structlog.get_logger(__name__)
 
 class ParagraphNode(BaseModel):
     """Represents a paragraph leaf node in the document tree."""
@@ -80,6 +82,7 @@ class DocumentTreeBuilder:
         """
         Constructs Document -> Section -> Paragraph structural hierarchy.
         """
+        logger.info("ekp_document_tree_building_started", document_name=document_name, page_count=page_count)
         tree = DocumentTree(document_name=document_name, page_count=page_count)
         current_section = SectionNode(heading="General", level=1, page_number=1)
 
@@ -137,5 +140,5 @@ class DocumentTreeBuilder:
         # If no sections created, create a default one
         if not tree.sections:
             tree.sections.append(SectionNode(heading="Content", paragraphs=[]))
-
+        logger.info("ekp_document_tree_building_completed", document_name=document_name, page_count=page_count)
         return tree
