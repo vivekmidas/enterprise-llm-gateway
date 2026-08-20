@@ -401,7 +401,7 @@ class EKPProcessingPipeline:
                     await EKPJobManager.async_mark_completed(db, job_id)
                     return
 
-                logger.info("ekp_profile_resolved", document_id=doc.id, profile_id=llm_profile.id)
+                logger.info("ekp_profile_resolved", document_id=doc.id, profile_id=llm_profile.id , profile_name=llm_profile.name)
 
                 # 4. Perform Extraction
                 doc.llm_profile_id = llm_profile.id
