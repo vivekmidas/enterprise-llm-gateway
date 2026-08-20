@@ -120,10 +120,13 @@ async def ingest_domain_document(
 
     # 1. Knowledge Base Resolution & Strict Validation
     if payload.knowledge_base_id:
-        kb_stmt = select(KnowledgeBaseDB).where(
-            KnowledgeBaseDB.id == payload.knowledge_base_id,
-            KnowledgeBaseDB.customer_id == tenant_id,
-        )
+        if getattr(current_user, "role", None) == "system_admin":
+            kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == payload.knowledge_base_id)
+        else:
+            kb_stmt = select(KnowledgeBaseDB).where(
+                KnowledgeBaseDB.id == payload.knowledge_base_id,
+                KnowledgeBaseDB.customer_id == tenant_id,
+            )
         kb_res = await db.execute(kb_stmt)
         kb = kb_res.scalar_one_or_none()
         if not kb:
@@ -132,6 +135,8 @@ async def ingest_domain_document(
                 detail=f"Knowledge Base '{payload.knowledge_base_id}' not found for tenant.",
             )
         kb_id = kb.id
+        if getattr(current_user, "role", None) == "system_admin" and tenant_id is None:
+            tenant_id = kb.customer_id
     else:
         # Default tenant KB fallback
         kb_id = f"kb_{tenant_id}_default"
