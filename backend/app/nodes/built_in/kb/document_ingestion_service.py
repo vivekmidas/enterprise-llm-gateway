@@ -75,6 +75,20 @@ class DocumentIngestionService:
             created_by=current_user.id,
         )
 
+        # ==============================================================================
+        # BLOCK COMMENT: KB-SPECIFIC EMBEDDING & COLLECTION RESOLUTION
+        # Resolves embedding config specific to this Knowledge Base's LLM profile
+        # to ensure the collection and document metadata match the correct model & dimension.
+        # ==============================================================================
+        from app.knowledge.embeddings import resolve_kb_embedding_config
+        emb_config = await resolve_kb_embedding_config(
+            db, knowledge_base_id, target_customer_id
+        )
+        provider_name = emb_config["provider_name"]
+        model_name = emb_config["model_name"]
+        dimension = emb_config["dimension"]
+        provider = get_embedding_provider_for_model(**emb_config)
+
         # Resolve or create the mapped KnowledgeCollectionDB
         stmt_col = select(KnowledgeCollectionDB).where(
             KnowledgeCollectionDB.knowledge_base_id == knowledge_base_id
@@ -87,28 +101,17 @@ class DocumentIngestionService:
                 name=f"kb_collection_{knowledge_base_id}",
                 knowledge_base_id=knowledge_base_id,
                 customer_id=target_customer_id,
-                embedding_model=settings.EMBEDDING_MODEL,
-                vector_dimension=settings.EMBEDDING_DIMENSION,
+                embedding_model=model_name,
+                vector_dimension=dimension,
                 distance_metric="COSINE",
                 status="active",
             )
             db.add(collection)
             await db.commit()
             await db.refresh(collection)
-            logger.info("ingestion_collection_created", collection_name=collection.name, knowledge_base_id=knowledge_base_id)
+            logger.info("ingestion_collection_created", collection_name=collection.name, knowledge_base_id=knowledge_base_id, dimension=dimension)
         else:
-            logger.info("ingestion_collection_resolved", collection_name=collection.name, knowledge_base_id=knowledge_base_id)
-
-        # Get embedding provider settings for document metadata
-        from app.knowledge.embeddings import resolve_kb_embedding_config
-        emb_config = await resolve_kb_embedding_config(
-            db, knowledge_base_id, target_customer_id
-        )
-        provider_name = emb_config["provider_name"]
-        model_name = emb_config["model_name"]
-        dimension = emb_config["dimension"]
-
-        provider = get_embedding_provider_for_model(**emb_config)
+            logger.info("ingestion_collection_resolved", collection_name=collection.name, knowledge_base_id=knowledge_base_id, dimension=collection.vector_dimension)
 
         # Create KnowledgeDocumentDB in DB (status "pending")
         metadata = {}

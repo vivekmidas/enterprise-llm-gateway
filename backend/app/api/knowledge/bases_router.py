@@ -217,32 +217,36 @@ async def update_knowledge_base(
         setattr(kb, field, value)
 
     try:
-        await db.commit()
-        await db.refresh(kb)
-
-        # Sync collection embedding model & dimension based on profile
+        # ==============================================================================
+        # BLOCK COMMENT: KB EMBEDDING CONFIG VALIDATION BEFORE COMMIT
+        # Check if new LLM profile alters vector dimension for non-empty collections.
+        # Validates before committing to preserve session state and avoid lazy-load errors.
+        # ==============================================================================
         from app.knowledge.embeddings import resolve_kb_embedding_config
         from app.models.db_models import KnowledgeCollectionDB, KnowledgeChunkDB
         from sqlalchemy import func
-
-        emb_cfg = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
-        provider_name, model_name, dimension = emb_cfg
 
         coll_res = await db.execute(
             select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb.id)
         )
         coll = coll_res.scalar_one_or_none()
-        if coll and coll.vector_dimension and int(dimension) != int(coll.vector_dimension):
+        coll_model = coll.embedding_model if coll else None
+        coll_dim = coll.vector_dimension if coll else None
+        kb_name = kb.name
+
+        emb_cfg = await resolve_kb_embedding_config(db, kb.id, kb.customer_id)
+        provider_name, model_name, dimension = emb_cfg
+
+        if coll and coll_dim and int(dimension) != int(coll_dim):
             chunk_cnt = await db.scalar(
                 select(func.count(KnowledgeChunkDB.id)).where(KnowledgeChunkDB.knowledge_base_id == kb.id)
             ) or 0
             if chunk_cnt > 0:
-                await db.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
-                        f"Cannot change embedding model from {coll.embedding_model} ({coll.vector_dimension}d) "
-                        f"to {model_name} ({dimension}d). Knowledge Base '{kb.name}' already contains {chunk_cnt} indexed chunks in Qdrant. "
+                        f"Cannot change embedding model from {coll_model} ({coll_dim}d) "
+                        f"to {model_name} ({dimension}d). Knowledge Base '{kb_name}' already contains {chunk_cnt} indexed chunks in Qdrant. "
                         f"Please create a new Knowledge Base for a different vector dimension."
                     ),
                 )
@@ -265,7 +269,23 @@ async def update_knowledge_base(
         await db.commit()
         await db.refresh(kb)
 
+        # ==============================================================================
+        # BLOCK COMMENT: VECTOR COLLECTION SYNC ON EMPTY KB UPDATE
+        # Sync Qdrant collection dimension when profile is updated on an empty KB.
+        # ==============================================================================
+        try:
+            from app.knowledge.vector_store import vector_store
+            coll_name = coll.name if coll else f"kb_collection_{kb.id}"
+            await vector_store.ensure_collection(
+                dimension=int(dimension),
+                collection_name=coll_name,
+            )
+        except Exception as q_err:
+            logger.warning("qdrant_collection_sync_on_update_failed", kb_id=kb.id, error=str(q_err))
+
         return kb
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("update_knowledge_base_failed")
         await db.rollback()

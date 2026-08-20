@@ -170,15 +170,22 @@ async def retrieve(
 
             provider_name = emb_config["provider_name"]
             model_name = emb_config["model_name"]
-            cache_key = (provider_name, model_name, emb_config.get("base_url"))
+            dimension = emb_config.get("dimension")
+            # ==============================================================================
+            # BLOCK COMMENT: MULTI-KB / MULTI-DIMENSION QUERY EMBEDDING CACHE
+            # Cache query embeddings keyed by provider, model, dimension, and endpoint URL.
+            # Prevents query vector dimension collisions when searching multiple collections
+            # across different KBs for the same customer with different LLM profiles.
+            # ==============================================================================
+            cache_key = (provider_name, model_name, dimension, emb_config.get("base_url"))
 
             if cache_key not in embedding_cache:
                 try:
                     # Step 5: Generate query embedding
-                    logger.info("retrieval_step_5_embedding_cache_miss", provider=provider_name, model=model_name, collection=coll.name)
+                    logger.info("retrieval_step_5_embedding_cache_miss", provider=provider_name, model=model_name, dimension=dimension, collection=coll.name)
                     provider = get_embedding_provider_for_model(**emb_config)
                     embedding_cache[cache_key] = await provider.embed_query(query)
-                    logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name)
+                    logger.info("retrieval_step_5_generate_embedding_success", provider=provider_name, model=model_name, dimension=dimension)
                 except Exception as e:
                     logger.error(
                         "retrieval_step_5_generate_embedding_failed",

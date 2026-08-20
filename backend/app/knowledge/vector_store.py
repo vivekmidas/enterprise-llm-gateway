@@ -18,11 +18,59 @@ class QdrantVectorStore:
         self.collection = settings.QDRANT_COLLECTION
         
 
-    async def ensure_collection(self, 
+    # ==============================================================================
+    # BLOCK COMMENT: VECTOR COLLECTION PROVISIONING & DIMENSION SYNC
+    # Purpose:
+    # Ensures Qdrant collection exists for specific KB. If collection exists but is
+    # empty and dimension changed (e.g. KB LLM profile updated before document upload),
+    # safely recreates collection with the new dimension to prevent vector mismatch.
+    # ==============================================================================
+    async def ensure_collection(
+        self, 
         dimension: int,    
-        collection_name: str | None = None) -> None:
+        collection_name: str | None = None,
+    ) -> None:
         col_name = collection_name or self.collection
-        if await self.client.collection_exists(col_name):
+        exists = await self.client.collection_exists(col_name)
+        if exists:
+            try:
+                col_info = await self.client.get_collection(col_name)
+                vectors_cfg = getattr(col_info.config.params, "vectors", None)
+                existing_dim = None
+                if hasattr(vectors_cfg, "size"):
+                    existing_dim = vectors_cfg.size
+                elif isinstance(vectors_cfg, dict) and "size" in vectors_cfg:
+                    existing_dim = vectors_cfg["size"]
+                elif hasattr(vectors_cfg, "params") and hasattr(vectors_cfg.params, "size"):
+                    existing_dim = vectors_cfg.params.size
+
+                points_count = getattr(col_info, "points_count", 0) or 0
+                if existing_dim is not None and int(existing_dim) != int(dimension):
+                    if points_count == 0:
+                        logger.info(
+                            "recreating_empty_collection_for_dimension_change",
+                            collection_name=col_name,
+                            old_dimension=existing_dim,
+                            new_dimension=dimension,
+                        )
+                        await self.client.delete_collection(col_name)
+                        await self.client.create_collection(
+                            collection_name=col_name,
+                            vectors_config=models.VectorParams(
+                                size=dimension,
+                                distance=models.Distance.COSINE,
+                            ),
+                        )
+                    else:
+                        logger.warning(
+                            "collection_dimension_mismatch_with_existing_points",
+                            collection_name=col_name,
+                            existing_dimension=existing_dim,
+                            requested_dimension=dimension,
+                            points_count=points_count,
+                        )
+            except Exception as check_err:
+                logger.warning("failed_to_inspect_qdrant_collection_dimension", error=str(check_err))
             return
 
         await self.client.create_collection(
