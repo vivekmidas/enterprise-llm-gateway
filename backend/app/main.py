@@ -63,15 +63,15 @@ async def startup_event():
     # Sync workflow runnability status
     from app.core.database import AsyncSessionLocal
     from app.workflows.service import sync_workflows_runnability
-    # Seed default provider presets if missing
-    from app.core.seed_provider_presets import seed_provider_presets
-    from app.db.seed_rbac import seed_rbac
-    from app.core.seed_data import seed_all_domains
+    # ==============================================================================
+    # BLOCK COMMENT: GENERIC SEED LOADER — replaces seed_provider_presets,
+    # seed_rbac, and seed_all_domains. Reads backend/data/seeds/seeds.json.
+    # Non-destructive by default (force=False): only inserts missing rows.
+    # ==============================================================================
+    from app.core.seed_loader import run_seed_loader
     async with AsyncSessionLocal() as session:
         await sync_workflows_runnability(session)
-        await seed_provider_presets(session)
-        await seed_rbac(session)
-        await seed_all_domains(session)
+        await run_seed_loader(session, force=False)
     
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).

@@ -281,25 +281,25 @@ async def seed_default_customer_and_admin(session: AsyncSession = None):
             customer.status = "active"
             session.add(customer)
 
-        # 1.5. Seed Canonical Modules & RBAC Presets
-        from app.db.seed_rbac import seed_rbac
-        await seed_rbac(session)
+        # 1.5. Seed Canonical Modules & RBAC Presets via generic seed loader
+        from app.core.seed_loader import run_seed_loader
+        await run_seed_loader(session, force=False)
 
         # 2. Seed default users with password "test" (admin@gateway.com, tenant_admin@gateway.com, user@gateway.com)
         default_users = [
             {
                 "email": "admin@gateway.com",
-                "name": "Admin",
+                "name": "Admin Gateway",
                 "role": "system_admin",
             },
             {
                 "email": "tenant_admin@gateway.com",
-                "name": "Tenant Admin",
+                "name": "Tenant Admin Gateway",
                 "role": "tenant_admin",
             },
             {
                 "email": "user@gateway.com",
-                "name": "Standard User",
+                "name": "User Gateway",
                 "role": "tenant_user",
             },
         ]
@@ -313,7 +313,7 @@ async def seed_default_customer_and_admin(session: AsyncSession = None):
 
             role_stmt = select(RoleDB).where(RoleDB.role_type == u_info["role"], RoleDB.customer_id.is_(None))
             role_res = await session.execute(role_stmt)
-            matched_role = role_res.scalar_one_or_none()
+            matched_role = role_res.scalars().first()  # first() handles unlikely duplicates in test DB
 
             if not user_obj:
                 user_obj = UserDB(
@@ -341,9 +341,7 @@ async def seed_default_customer_and_admin(session: AsyncSession = None):
             if email == "admin@gateway.com":
                 admin_user_id = str(user_obj.id)
 
-        # 3. Seed and synchronize default system domain schemas & EKP domains
-        from app.core.seed_data import seed_all_domains
-        await seed_all_domains(session, admin_user_id=admin_user_id)
+        # 3. Domain schemas & EKP domains are seeded via run_seed_loader (called above) — no separate call needed
     finally:
         if close_session:
             await session.close()
