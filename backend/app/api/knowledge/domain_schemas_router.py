@@ -53,6 +53,8 @@ class DomainFieldSpec(BaseModel):
     importance: str = Field("medium", description="Importance level: low, medium, high, critical")
     required: bool = Field(False, description="Whether field is required for valid domain document")
     description: str | None = None
+    properties: dict[str, Any] | None = None
+    items: Any | None = None
 
 
 class CreateDomainSchemaRequest(BaseModel):

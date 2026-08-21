@@ -43,6 +43,145 @@ LEGAL_SECTIONS = [
     "embedding_metadata",
 ]
 
+# Map of legal field descriptions (for extraction runtime validation and schema rendering)
+LEGAL_FIELDS = {
+    "executive_case_summary": {
+        "one_line_summary": "Single sentence executive summary of the case or agreement",
+        "case_overview": "Comprehensive overview describing dispute/contract, main parties (AAA v. BBB), statutory provisions or contract purpose, outcome, and favoured party",
+        "favoured_party": "Name and role of party in whose favour the ruling was decided (if court judgment)",
+        "key_sections_involved": ["List of key statutory sections or clauses involved"],
+    },
+    "document": {
+        "court": "Deciding court or tribunal name (e.g. High Court of Jharkhand at Ranchi)",
+        "location": "Court jurisdiction or location",
+        "case_number": "Primary case / petition / appeal number (e.g. Cr.M.P. No. 1234 of 2018)",
+        "citation": "Reported law citation or CNR number if present",
+        "decision_date": "Date of judgment/order (YYYY-MM-DD)",
+        "judge": "Judge, bench, justice, or coram name",
+        "judgment_type": "Order, Judgment, Interim Order, or Decree",
+    },
+    "case_identity": {
+        "court": "Court or tribunal name",
+        "location": "Court location / jurisdiction if explicitly available",
+        "case_number": "Primary case number",
+        "connected_cases": "Array of paired case objects linking each case to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
+        "number_of_connected_cases": "Integer count of all connected cases in this proceeding",
+        "report_number": "Report / reference number if present",
+        "case_date": "Date of the judgment/order/case document",
+        "judge": "Judge, justice, bench or coram",
+    },
+    "parties": {
+        "petitioners": ["Petitioner(s), applicant(s), claimant(s) or equivalent"],
+        "respondents": ["Respondent(s), opponent(s), defendant(s) or equivalent"],
+        "appellants": ["Appellant(s), if applicable"],
+        "prosecutors": ["Prosecutor(s), State, Public Prosecutor or equivalent"],
+        "defendants": ["Defendant(s), accused, defense or equivalent"],
+        "advocates": ["Advocates / lawyers representing petitioner or respondent"],
+        "other_parties": ["Other materially identified parties and their roles (intervenors, amicus curiae)"],
+    },
+    "facts": {
+        "incident_date": "Date or timeline of incident, dispute, or agreement execution",
+        "allegations": "Primary allegations, claims, or background facts",
+        "dispute_history": "Chronology of dispute leading up to litigation or contract formation",
+    },
+    "legal_provisions": {
+        "statutes": ["Statutes, regulations, or Acts cited (e.g. IPC, CrPC, NI Act)"],
+        "sections": ["Specific sections, articles, or rules cited (e.g. Section 482, Section 498A)"],
+    },
+    "labour_court_findings": {
+        "enquiry_fairness": "Fairness of domestic enquiry",
+        "natural_justice": "Violations or compliance with principles of natural justice",
+        "misconduct": "Findings regarding misconduct or charges",
+        "relief_granted": "Relief, reinstatement, or compensation ordered",
+    },
+    "industrial_court": {
+        "revision_application": "Revision application details",
+        "revision_order": "Order and directions in revision",
+    },
+    "high_court_arguments": {
+        "petitioner_arguments": ["Key submissions and legal grounds argued by petitioner"],
+        "respondent_arguments": ["Key submissions and defenses argued by respondent or prosecution"],
+    },
+    "evidence": {
+        "documentary_evidence": ["Exhibits, documents, contracts, inspection reports"],
+        "witness_statements": ["Witness testimonies (PW/DW) and key statements"],
+    },
+    "citations": {
+        "precedents": ["Cases and judicial authorities cited (e.g. [2014] 8 SCC 273)"],
+        "statutes_referred": ["Statutes or schedule items referred to in judicial reasoning"],
+    },
+    "judgment_status": {
+        "final_decision": "Final disposition (e.g. Allowed, Dismissed, Disposed, Remanded)",
+        "holding": "Holding, core legal conclusion, or ratio decidendi",
+        "sentence_or_penalty": "Sentence, duration of imprisonment, fine, or penalty imposed",
+        "relief": "Relief granted/refused/ordered, if stated",
+    },
+    "contract_overview": {
+        "agreement_type": "Agreement type (e.g. Master Services Agreement, NDA, Lease Deed, Employment Agreement)",
+        "purpose": "Subject matter and commercial purpose of contract",
+        "effective_date": "Effective start date of agreement (YYYY-MM-DD)",
+        "expiration_date": "Expiration date or term duration",
+        "governing_law": "Governing law state/country",
+        "jurisdiction": "Agreed court venue or jurisdiction",
+    },
+    "contract_parties": {
+        "party_a": "First party full legal name and entity type",
+        "party_b": "Second party full legal name and entity type",
+        "other_signatories": ["Additional signatories, guarantors, or witnesses"],
+    },
+    "financial_terms": {
+        "contract_value": "Total contract value, fee, or consideration amount",
+        "payment_schedule": "Payment milestones, invoicing terms, and due dates",
+        "currency": "Currency (e.g. INR, USD, EUR)",
+        "penalties_or_interest": "Late payment interest, penalties, or liquidated damages",
+    },
+    "termination_and_renewal": {
+        "termination_for_convenience": "Convenience termination notice rights",
+        "termination_for_breach": "Notice cure period for material breach",
+        "notice_period": "Required prior written notice period",
+        "renewal_terms": "Renewal terms or auto-renewal conditions",
+    },
+    "liability_and_indemnity": {
+        "liability_cap": "Limitation of liability cap or exclusion of consequential damages",
+        "indemnity_obligations": "Scope of indemnification obligations",
+    },
+    "dispute_resolution": {
+        "method": "Arbitration, Mediation, or Court Litigation",
+        "arbitration_seat": "Seat, venue, and place of arbitration",
+        "applicable_rules": "Arbitration rules or governing institution",
+    },
+    "knowledge_graph_entities": {
+        "persons": ["Identified individual names"],
+        "organizations": ["Identified corporate, judicial, or governmental entities"],
+        "locations": ["Identified locations, cities, or courts"],
+        "dates": ["Identified critical dates"],
+    },
+    "embedding_metadata": {
+        "domain": "legal",
+        "practice_areas": ["Applicable practice areas"],
+        "confidence": 1.0,
+    },
+    "substance": {
+        "timeline_and_key_dates": ["Key timeline events, dates, FIR dates, arrest dates, or lower court milestone dates"],
+        "procedural_history": ["Lower court orders, FIRs, chargesheets, or procedural timeline"],
+        "charges_or_claims": ["Specific offences, sections, or claims alleged"],
+        "evidence_and_witnesses": ["Witness testimonies (PW/DW) and physical or documentary evidence"],
+        "issues": ["Material legal issues expressly raised or decided"],
+        "facts": ["Material facts stated in the document"],
+        "arguments": ["Material arguments/positions expressly attributed to a party (prosecutor, defendant, appellant, respondent, other parties)"],
+        "statutes": ["Statutes, regulations and provisions expressly cited"],
+        "statutory_interpretations": ["Specific interpretations or constructions of statutory sections/articles"],
+        "precedents": ["Cases/authorities expressly cited"],
+        "additional_observations": ["Additional judicial remarks, obiter dicta, or context notes"],
+    },
+    "decision": {
+        "disposition": "Outcome/order/disposition expressly stated",
+        "holding": "Holding or legal conclusion, if stated",
+        "sentence_or_penalty": "Sentence, duration of imprisonment, fine, or penalty imposed",
+        "relief": "Relief granted/refused/ordered, if stated",
+    },
+}
+
 # ==============================================================================
 # 2. FIELD SPECIFICATIONS (For Database Seeding & Metadata Tracking)
 # ==============================================================================
@@ -55,6 +194,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "critical",
         "required": False,
         "description": "Single line summary, case overview describing dispute, favoured party, and key sections involved",
+        "properties": LEGAL_FIELDS["executive_case_summary"],
     },
     {
         "key": "document",
@@ -64,6 +204,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Title, court, jurisdiction, primary case number, connected cases, citation, decision date, coram, judgment type",
+        "properties": LEGAL_FIELDS["document"],
     },
     {
         "key": "connected_cases",
@@ -73,6 +214,13 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Array of case objects pairing each connected case/petition to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
+        "items": {
+            "case": "<case number e.g. 2981 OF 1989>",
+            "plaintiff": "<petitioner/plaintiff name>",
+            "respondent": "<respondent/defendant name>",
+            "advocate": "<representing lawyer/advocate name if present>",
+            "date": "<decision/order date if present>",
+        },
     },
     {
         "key": "parties",
@@ -82,6 +230,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Petitioner, respondent, prosecutor, defendant, and advocates for each side",
+        "properties": LEGAL_FIELDS["parties"],
     },
     {
         "key": "procedural_history",
@@ -99,7 +248,8 @@ LEGAL_FIELDS_SPEC = [
         "weight": 2.0,
         "importance": "high",
         "required": False,
-        "description": "Employment details, incident date & allegations, and disciplinary action history",
+        "description": "Incident date, timeline, background facts, allegations, claims, or contractual dispute background",
+        "properties": LEGAL_FIELDS["facts"],
     },
     {
         "key": "legal_provisions",
@@ -108,7 +258,8 @@ LEGAL_FIELDS_SPEC = [
         "weight": 2.0,
         "importance": "high",
         "required": False,
-        "description": "Statutes, acts, sections, and schedule items cited in judgment",
+        "description": "Statutes, acts, sections, and schedule items cited in judgment or contract",
+        "properties": LEGAL_FIELDS["legal_provisions"],
     },
     {
         "key": "issues",
@@ -127,6 +278,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Enquiry fairness, natural justice, misconduct, and relief granted",
+        "properties": LEGAL_FIELDS["labour_court_findings"],
     },
     {
         "key": "industrial_court",
@@ -136,6 +288,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "medium",
         "required": False,
         "description": "Revision application details and revision order",
+        "properties": LEGAL_FIELDS["industrial_court"],
     },
     {
         "key": "high_court_arguments",
@@ -145,6 +298,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Submissions and arguments of petitioner, respondent, prosecutor, and defense",
+        "properties": LEGAL_FIELDS["high_court_arguments"],
     },
     {
         "key": "evidence",
@@ -154,6 +308,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "medium",
         "required": False,
         "description": "Documentary evidence, inspection reports, and witness statements",
+        "properties": LEGAL_FIELDS["evidence"],
     },
     {
         "key": "legal_concepts",
@@ -162,7 +317,7 @@ LEGAL_FIELDS_SPEC = [
         "weight": 2.0,
         "importance": "high",
         "required": False,
-        "description": "Core legal concepts (e.g. Natural Justice, Perversity, Unfair Labour Practice)",
+        "description": "Core legal concepts (e.g. Natural Justice, Perversity, Unfair Labour Practice, Force Majeure)",
     },
     {
         "key": "research_topics",
@@ -190,6 +345,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Cases and statutes referred to in the judgment",
+        "properties": LEGAL_FIELDS["citations"],
     },
     {
         "key": "judgment_status",
@@ -199,6 +355,76 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Portion available, final decision, ratio decidendi, obiter dicta",
+        "properties": LEGAL_FIELDS["judgment_status"],
+    },
+    {
+        "key": "contract_overview",
+        "label": "Contract & Agreement Overview",
+        "type": "object",
+        "weight": 2.5,
+        "importance": "high",
+        "required": False,
+        "description": "Agreement title, contract type, effective date, term duration, governing law, and jurisdiction",
+        "properties": LEGAL_FIELDS["contract_overview"],
+    },
+    {
+        "key": "contract_parties",
+        "label": "Contracting Parties",
+        "type": "object",
+        "weight": 2.0,
+        "importance": "high",
+        "required": False,
+        "description": "Party A, Party B, parent entities, and authorized signatories",
+        "properties": LEGAL_FIELDS["contract_parties"],
+    },
+    {
+        "key": "key_clauses",
+        "label": "Key Clauses & Obligations",
+        "type": "array",
+        "weight": 2.0,
+        "importance": "high",
+        "required": False,
+        "description": "Major covenants, deliverables, warranties, non-compete, or confidentiality clauses",
+    },
+    {
+        "key": "financial_terms",
+        "label": "Financial & Payment Terms",
+        "type": "object",
+        "weight": 2.0,
+        "importance": "high",
+        "required": False,
+        "description": "Contract value, consideration, payment schedule, and penalty terms",
+        "properties": LEGAL_FIELDS["financial_terms"],
+    },
+    {
+        "key": "termination_and_renewal",
+        "label": "Termination & Renewal Terms",
+        "type": "object",
+        "weight": 2.0,
+        "importance": "medium",
+        "required": False,
+        "description": "Termination for cause/convenience, notice periods, and renewal conditions",
+        "properties": LEGAL_FIELDS["termination_and_renewal"],
+    },
+    {
+        "key": "liability_and_indemnity",
+        "label": "Liability & Indemnity",
+        "type": "object",
+        "weight": 2.0,
+        "importance": "medium",
+        "required": False,
+        "description": "Limitation of liability, indemnity obligations, and exclusions",
+        "properties": LEGAL_FIELDS["liability_and_indemnity"],
+    },
+    {
+        "key": "dispute_resolution",
+        "label": "Dispute Resolution & Jurisdiction",
+        "type": "object",
+        "weight": 2.0,
+        "importance": "high",
+        "required": False,
+        "description": "Arbitration seat, arbitration rules, mediation, and court venue",
+        "properties": LEGAL_FIELDS["dispute_resolution"],
     },
     {
         "key": "knowledge_graph_entities",
@@ -208,6 +434,7 @@ LEGAL_FIELDS_SPEC = [
         "importance": "high",
         "required": False,
         "description": "Extracted persons, organizations, and key dates",
+        "properties": LEGAL_FIELDS["knowledge_graph_entities"],
     },
     {
         "key": "embedding_metadata",
@@ -217,55 +444,9 @@ LEGAL_FIELDS_SPEC = [
         "importance": "low",
         "required": False,
         "description": "Domain, practice areas, extraction confidence score",
+        "properties": LEGAL_FIELDS["embedding_metadata"],
     },
 ]
-
-# Map of legal field descriptions (for extraction runtime validation)
-LEGAL_FIELDS = {
-    "executive_case_summary": {
-        "one_line_summary": "Single sentence executive summary of the case",
-        "case_overview": "Comprehensive case overview describing dispute, main parties (AAA v. BBB), key statutory provisions (IPC/BNS/CrPC/BNSS), outcome, and favoured party",
-        "favoured_party": "Name and role of party in whose favour the ruling was decided",
-        "key_sections_involved": "List of key statutory sections involved in the case (e.g. IPC 302 / BNS 103)",
-    },
-    "case_identity": {
-        "court": "Court or tribunal name",
-        "location": "Court location / jurisdiction if explicitly available",
-        "case_number": "Primary case number",
-        "connected_cases": "Array of paired case objects linking each case to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
-        "number_of_connected_cases": "Integer count of all connected cases in this proceeding",
-        "report_number": "Report / reference number if present",
-        "case_date": "Date of the judgment/order/case document",
-        "judge": "Judge, justice, bench or coram",
-    },
-    "parties": {
-        "petitioners": "Petitioner(s), applicant(s), claimant(s) or equivalent",
-        "respondents": "Respondent(s), opponent(s), defendant(s) or equivalent",
-        "appellants": "Appellant(s), if applicable",
-        "prosecutor": "Prosecutor(s), State, Public Prosecutor or equivalent",
-        "defendants": "Defendant(s), accused, defense or equivalent",
-        "other_parties": "Other materially identified parties and their roles (intervenors, amicus curiae)",
-    },
-    "substance": {
-        "timeline_and_key_dates": "Key timeline events, dates, FIR dates, arrest dates, or lower court milestone dates",
-        "procedural_history": "Lower court orders, FIRs, chargesheets, or procedural timeline",
-        "charges_or_claims": "Specific offences, sections, or claims alleged",
-        "evidence_and_witnesses": "Witness testimonies (PW/DW) and physical or documentary evidence",
-        "issues": "Material legal issues expressly raised or decided",
-        "facts": "Material facts stated in the document",
-        "arguments": "Material arguments/positions expressly attributed to a party (prosecutor, defendant, appellant, respondent, other parties)",
-        "statutes": "Statutes, regulations and provisions expressly cited",
-        "statutory_interpretations": "Specific interpretations or constructions of statutory sections/articles",
-        "precedents": "Cases/authorities expressly cited",
-        "additional_observations": "Additional judicial remarks, obiter dicta, or context notes",
-    },
-    "decision": {
-        "disposition": "Outcome/order/disposition expressly stated",
-        "holding": "Holding or legal conclusion, if stated",
-        "sentence_or_penalty": "Sentence, duration of imprisonment, fine, or penalty imposed",
-        "relief": "Relief granted/refused/ordered, if stated",
-    },
-}
 
 # ==============================================================================
 # 3. EXTRACTION JSON SCHEMA (Strict JSON Schema for JsonLLM validation)
@@ -470,7 +651,7 @@ def format_legal_fields_summary(fields: list[dict[str, Any]] | None = None) -> s
 
 
 def format_legal_fields_json_structure(fields: list[dict[str, Any]] | None = None) -> str:
-    """Format target JSON schema structure dynamically from schema fields list."""
+    """Format target JSON schema structure dynamically from schema fields list with explicit subfield structure."""
     target_fields = fields if fields is not None else LEGAL_FIELDS_SPEC
     extracted_spec: dict[str, Any] = {}
     for f in target_fields:
@@ -489,10 +670,12 @@ def format_legal_fields_json_structure(fields: list[dict[str, Any]] | None = Non
                     "date": "<decision/order date if present>",
                 }
             ]
+        elif k in LEGAL_FIELDS and isinstance(LEGAL_FIELDS[k], dict):
+            extracted_spec[k] = LEGAL_FIELDS[k]
         elif ft in ("array", "list"):
             extracted_spec[k] = [f"<{desc}>"]
         elif ft in ("object", "dict"):
-            extracted_spec[k] = {"...": f"<{desc}>"}
+            extracted_spec[k] = {"details": f"<{desc}>"}
         elif ft in ("number", "integer", "float"):
             extracted_spec[k] = f"0.0 (<{desc}>)"
         elif ft in ("bool", "boolean"):

@@ -372,7 +372,7 @@ async def propagate_node_defaults_to_workflows(node_name: str, defaults: dict) -
 async def _hydrate_workflow_definition(
     session,
     definition: WorkflowDefinition,
-    customer_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
 ) -> WorkflowDefinition:
     hydrated = definition.model_copy(deep=True)
     hydrated_nodes = []

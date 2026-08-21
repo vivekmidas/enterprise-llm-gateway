@@ -4,11 +4,6 @@ import structlog
 from typing import Any
 
 from app.knowledge.domain_rag_v1.domains.legal.llm import DomainLLM
-# ==============================================================================
-# LEGAL DOMAIN SOT INTEGRATION
-# Prompts for free extraction are built using the Legal Domain SOT.
-# ==============================================================================
-from app.knowledge.legal_sot import build_free_extract_prompts
 
 
 logger = structlog.get_logger(__name__)
@@ -34,21 +29,38 @@ MINIMAL_STOP_WORDS = {
 def _is_grounded_in_text(val: Any, raw_text_lower: str) -> bool:
     """
     Check if the extracted value is grounded in the raw document text.
-    Rejects hallucinations if zero key non-stopword tokens match or match ratio < 40%.
+    Rejects placeholders and hallucinations while preserving citations,
+    summaries, categorizations, and normalized numbers.
     """
     if val is None:
         return False
     if isinstance(val, bool):
         return True
     if isinstance(val, (int, float)):
-        return str(val) in raw_text_lower
+        # Normalize numeric representations
+        val_int = int(val) if float(val).is_integer() else None
+        val_str = str(val_int) if val_int is not None else str(val)
+        if val_str in raw_text_lower:
+            return True
+        # Check formatted numbers with commas (e.g. 50,000 or 1,00,000)
+        if val_int is not None:
+            formatted_en = f"{val_int:,}"
+            if formatted_en in raw_text_lower:
+                return True
+        # For floating point confidence/scores (0.0 to 1.0) or small integers, retain valid metadata
+        if isinstance(val, float) and 0.0 <= val <= 1.0:
+            return True
+        return False
 
     if isinstance(val, str):
         val_str = val.strip().lower()
-        if not val_str or val_str in {"null", "n/a", "none", "unknown", "undefined", "plaintiffs", "defendants", "first defendant", "second defendant"}:
+        if not val_str or val_str in {"null", "n/a", "none", "unknown", "undefined"}:
             return False
-        # Reject bracketed template placeholders (e.g. [Name], Advocate [Name], <Date>)
-        if re.search(r"\[.*?\]|<.*?>", val_str):
+
+        # Reject literal template placeholder tokens (e.g. [Name], [Judge], <value>, <description>)
+        if re.search(r"\[(name|judge|advocate|title|date|court|lawyer|plaintiff|respondent|case|placeholder|unmapped)\]|<(value|description|unmapped.*?|details|date|name|field)>", val_str, re.IGNORECASE):
+            return False
+        if re.fullmatch(r"\[[a-zA-Z_\s]+\]|<[a-zA-Z_\s]+>", val_str):
             return False
 
         # Exact substring check
@@ -67,11 +79,15 @@ def _is_grounded_in_text(val: Any, raw_text_lower: str) -> bool:
         # Count matched key tokens in source text
         matched = sum(1 for t in check_tokens if t in raw_text_lower)
         if matched == 0:
+            # Check if any digits/years in check_tokens exist in raw text (e.g. 2018, 482)
+            digit_tokens = [t for t in check_tokens if t.isdigit()]
+            if digit_tokens and any(dt in raw_text_lower for dt in digit_tokens):
+                return True
             return False
 
-        # Require at least 40% token overlap for multi-word strings
+        # Multi-word string match ratio: accept >= 30% overlap or >= 2 key token matches
         match_ratio = matched / len(check_tokens)
-        return match_ratio >= 0.4
+        return match_ratio >= 0.3 or matched >= 2
 
 
     if isinstance(val, list):
@@ -98,7 +114,7 @@ def _filter_value(v: Any, raw_text_lower: str) -> Any:
     if isinstance(v, bool):
         return v
     if isinstance(v, (int, float)):
-        return v if (str(v) in raw_text_lower) else None
+        return v if _is_grounded_in_text(v, raw_text_lower) else None
     if isinstance(v, str):
         return v if _is_grounded_in_text(v, raw_text_lower) else None
     if isinstance(v, list):
@@ -149,8 +165,8 @@ def filter_ungrounded_fields(fields_dict: dict[str, Any], raw_text: str) -> dict
 # BLOCK COMMENT: DYNAMIC PROMPT BUILDERS (SINGLE SOURCE OF TRUTH)
 # Purpose:
 # 1. format_fields_summary: Generates human-readable field definitions.
-# 2. format_fields_json_schema: Generates dynamic target JSON structure from fields.
-# 3. Ensures schema_json['fields'] is the sole source of truth for prompts and extraction.
+# 2. format_fields_json_schema: Generates dynamic target JSON structure from domain_schema fields.
+# 3. Ensures domain_schema (schema_json['fields']) is the sole source of truth for prompts and extraction.
 # =====================================================================
 def format_fields_summary(fields: list[dict[str, Any]] | None) -> str:
     """Format human-readable bullet list of schema fields."""
@@ -167,7 +183,7 @@ def format_fields_summary(fields: list[dict[str, Any]] | None) -> str:
 
 
 def format_fields_json_schema(fields: list[dict[str, Any]] | None) -> str:
-    """Format target JSON schema structure dynamically from schema fields as single source of truth."""
+    """Format target JSON schema structure dynamically from domain_schema fields as single source of truth."""
     if not fields:
         return '{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
 
@@ -178,20 +194,14 @@ def format_fields_json_schema(fields: list[dict[str, Any]] | None) -> str:
             continue
         ft = (f.get("type") or "string").lower()
         desc = f.get("description") or f.get("label") or k
-        if k == "connected_cases":
-            extracted_spec[k] = [
-                {
-                    "case": "<case number e.g. 2981 OF 1989>",
-                    "plaintiff": "<petitioner/plaintiff name>",
-                    "respondent": "<respondent/defendant name>",
-                    "advocate": "<representing lawyer/advocate name if present>",
-                    "date": "<decision/order date if present>",
-                }
-            ]
+        if f.get("properties") and isinstance(f.get("properties"), dict):
+            extracted_spec[k] = f.get("properties")
+        elif f.get("items") and isinstance(f.get("items"), (dict, list, str)):
+            extracted_spec[k] = [f.get("items")] if not isinstance(f.get("items"), list) else f.get("items")
         elif ft in ("array", "list"):
             extracted_spec[k] = [f"<{desc}>"]
         elif ft in ("object", "dict"):
-            extracted_spec[k] = {"...": f"<{desc}>"}
+            extracted_spec[k] = {"details": f"<{desc}>"}
         elif ft in ("number", "integer", "float"):
             extracted_spec[k] = f"0.0 (<{desc}>)"
         elif ft in ("bool", "boolean"):
@@ -367,6 +377,13 @@ class DomainExtractor:
             cleaned = _clean_json_string(raw_response)
             parsed = json.loads(cleaned)
 
+            # Auto-unwrap wrapper containers if LLM wrapped the payload
+            if isinstance(parsed, dict):
+                for wrapper_key in ("data", "result", "response", "payload", "output", domain_key, "legal", "extracted_data"):
+                    if wrapper_key in parsed and isinstance(parsed[wrapper_key], dict) and ("extracted_fields" in parsed[wrapper_key] or "extra_fields" in parsed[wrapper_key] or len(parsed[wrapper_key]) > len(parsed) - 1):
+                        parsed = parsed[wrapper_key]
+                        break
+
             if isinstance(parsed, dict) and ("extracted_fields" in parsed or "extra_fields" in parsed):
                 logger.debug("domain_extractor_decision_payload_parse", branch="canonical_wrapper")
                 extracted_fields = parsed.get("extracted_fields") or {}
@@ -374,9 +391,28 @@ class DomainExtractor:
             elif isinstance(parsed, dict):
                 if fields:
                     logger.debug("domain_extractor_decision_payload_parse", branch="root_dict_split_by_schema_keys")
-                    schema_field_keys = {f.get("key") for f in fields if f.get("key")}
-                    extracted_fields = {k: v for k, v in parsed.items() if k in schema_field_keys}
-                    extra_fields = {k: v for k, v in parsed.items() if k not in schema_field_keys}
+                    # Build canonical lookup map for schema keys (lowercased, stripped, underscore normalized)
+                    norm_key_map = {}
+                    for f in fields:
+                        orig_k = f.get("key")
+                        if orig_k:
+                            norm_key_map[orig_k.lower().strip()] = orig_k
+                            norm_key_map[orig_k.lower().replace("_", "").strip()] = orig_k
+                            lbl = f.get("label")
+                            if lbl:
+                                norm_key_map[lbl.lower().replace(" ", "_").strip()] = orig_k
+                                norm_key_map[lbl.lower().replace(" ", "").strip()] = orig_k
+
+                    extracted_fields = {}
+                    extra_fields = {}
+                    for k, v in parsed.items():
+                        cleaned_k = str(k).lower().strip()
+                        cleaned_k_no_us = cleaned_k.replace("_", "").replace(" ", "")
+                        target_key = norm_key_map.get(cleaned_k) or norm_key_map.get(cleaned_k_no_us)
+                        if target_key:
+                            extracted_fields[target_key] = v
+                        else:
+                            extra_fields[k] = v
                 else:
                     logger.debug("domain_extractor_decision_payload_parse", branch="root_dict_all_extracted")
                     extracted_fields = parsed
