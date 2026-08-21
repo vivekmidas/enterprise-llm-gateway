@@ -512,7 +512,7 @@ async def seed_rbac(db: AsyncSession):
         perms_list = list(role_data.get("permissions", []))
         stmt = select(RoleDB).where(RoleDB.role_type == role_data["role_type"], RoleDB.customer_id.is_(None))
         res = await db.execute(stmt)
-        role = res.scalar_one_or_none()
+        role = res.scalars().first()
         
         if not role:
             role = RoleDB(

@@ -1,11 +1,14 @@
 import uuid
-from sqlalchemy import Column, String, JSON, Integer, Boolean, Float, ForeignKey, Text, DateTime, Enum
+from sqlalchemy import Column, String, JSON, Integer, Boolean, ForeignKey, Text, UniqueConstraint
 from app.core.database import Base
 from datetime import datetime
 from sqlalchemy.sql import func
 from app.jobs.enums import JobStatus
 from app.jobs.enums import JobType
 from app.jobs.enums import EntityType
+from sqlalchemy import Enum
+from sqlalchemy.types import DateTime
+from sqlalchemy.types import Float
 
 """
 ===============================================================================
@@ -60,6 +63,9 @@ class UserDB(Base):
 
 class RoleDB(Base):
     __tablename__ = "roles"
+    __table_args__ = (
+        UniqueConstraint("role_type", "customer_id", name="uq_roles_role_type_customer_id"),
+    )
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
     role_name = Column(String(100), nullable=False)

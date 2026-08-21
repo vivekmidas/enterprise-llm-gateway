@@ -214,6 +214,52 @@ def _refresh_knowledge_bases_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN domain_id VARCHAR(36)")
 
 
+def _refresh_roles_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("roles"):
+        return
+
+    # Deduplicate system preset roles (customer_id IS NULL) — keep the row with the
+    # lexicographically smallest id for each role_type. Delete the rest.
+    dup_rows = sync_conn.exec_driver_sql(
+        """
+        SELECT id FROM roles
+        WHERE customer_id IS NULL
+          AND id NOT IN (
+            SELECT MIN(id) FROM roles
+            WHERE customer_id IS NULL
+            GROUP BY role_type
+          )
+        """
+    ).fetchall()
+    if dup_rows:
+        dup_ids = [r[0] for r in dup_rows]
+        # Embed IDs directly — they are UUIDs from our own DB, no injection risk.
+        # exec_driver_sql interprets a list as executemany, so we inline the values.
+        id_list = ", ".join(f"'{id_}'" for id_ in dup_ids)
+        # Delete child role_permissions first to satisfy FK
+        sync_conn.exec_driver_sql(
+            f"DELETE FROM role_permissions WHERE role_id IN ({id_list})"
+        )
+        sync_conn.exec_driver_sql(
+            f"DELETE FROM roles WHERE id IN ({id_list})"
+        )
+        logger.info("_refresh_roles_table: removed %d duplicate system-preset role rows", len(dup_ids))
+
+    # Add unique constraint if not already present
+    indexes = inspector.get_unique_constraints("roles")
+    constraint_names = {c["name"] for c in indexes}
+    if "uq_roles_role_type_customer_id" not in constraint_names:
+        try:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE roles ADD CONSTRAINT uq_roles_role_type_customer_id "
+                "UNIQUE (role_type, customer_id)"
+            )
+            logger.info("_refresh_roles_table: unique constraint added")
+        except Exception as e:
+            logger.warning("_refresh_roles_table: could not add unique constraint: %s", e)
+
+
 def _refresh_users_table(sync_conn):
     inspector = inspect(sync_conn)
     if not inspector.has_table("users"):
@@ -243,6 +289,7 @@ async def init_db():
         await conn.run_sync(_refresh_knowledge_bases_table)
         await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(_refresh_ekp_documents_table)
+        await conn.run_sync(_refresh_roles_table)
         await conn.run_sync(Base.metadata.create_all)
 
     await seed_default_customer_and_admin()
