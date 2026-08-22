@@ -11,7 +11,11 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
-security_bearer = HTTPBearer()
+# ==============================================================================
+# BLOCK COMMENT: HTTPBEARER WITH COOKIE FALLBACK (AUTO_ERROR=FALSE)
+# Allows reading auth token from HttpOnly cookie or Authorization header
+# ==============================================================================
+security_bearer = HTTPBearer(auto_error=False)
 
 async def resolve_role_for_user(
     db: AsyncSession,
@@ -135,12 +139,29 @@ async def resolve_role_and_id(
     return role_obj, assigned_role, assigned_role_id
 
 
+# ==============================================================================
+# BLOCK COMMENT: GET CURRENT USER DEPENDENCY SUPPORTING COOKIE & BEARER TOKENS
+# ==============================================================================
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_bearer),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    # gets current user and checks credentials
-    token = credentials.credentials
+    token = None
+    if credentials:
+        token = credentials.credentials
+    elif request.cookies.get("token"):
+        token = request.cookies.get("token")
+    elif request.headers.get("Authorization") and request.headers.get("Authorization").startswith("Bearer "):
+        token = request.headers.get("Authorization").split()[1]
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     payload = decode_access_token(token)
     if not payload:
         raise HTTPException(

@@ -17,8 +17,12 @@ from starlette.responses import JSONResponse
 settings = get_settings()
 #logger = structlog.get_logger(__name__)
 
+# ==============================================================================
+# BLOCK COMMENT: PUBLIC ENDPOINTS & TOKEN EXTRACTION (BEARER + HTTPONLY COOKIE)
+# ==============================================================================
 PUBLIC_PATHS:json = {
         "/auth/login",
+        "/auth/logout",
         "/auth/refresh",
         "/auth/register",
         "/docs",
@@ -120,9 +124,17 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS or request.url.path.startswith("/static/"):
             return await call_next(request)
         
+        # ==============================================================================
+        # BLOCK COMMENT: EXTRACT TOKEN FROM AUTHORIZATION HEADER OR HTTPONLY COOKIE
+        # ==============================================================================
         auth = request.headers.get("Authorization")
+        token = None
+        if auth and auth.startswith("Bearer "):
+            token = auth.split()[1]
+        elif request.cookies.get("token"):
+            token = request.cookies.get("token")
 
-        if not auth or not auth.startswith("Bearer "):
+        if not token:
             return cors_json_response(
                 request=request,
                 status_code=401,
@@ -130,7 +142,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             )
 
         try:
-            token = auth.split()[1]
             payload = jwt.decode(
                 token,
                 settings.SECRET_KEY,

@@ -1,9 +1,14 @@
+# ==============================================================================
+# BLOCK COMMENT: PROTECTED WORKFLOW TOKEN REFRESH ENDPOINT (TENANT & USER SCOPED)
+# ==============================================================================
 import structlog
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.workflows.store import update_node_tokens_in_db
+from app.api.auth.dependencies import get_current_user, require_resource_access
+from app.core.types.users import User
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -18,14 +23,23 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: Optional[str] = Field(None, description="The new refresh token to store (optional).")
 
 @router.put("/refresh-token", summary="Update access and refresh tokens for a workflow node")
-async def refresh_node_tokens(request: RefreshTokenRequest):
+async def refresh_node_tokens(
+    request: RefreshTokenRequest,
+    current_user: User = Depends(get_current_user)
+):
     """
     Updates the `access_token` and `refresh_token` properties for a specific node
-    within a workflow. This is typically used for OAuth flows where tokens
-    need to be refreshed periodically.
+    within a workflow. Validates user authentication and tenant boundary access.
     """
-    logger.info("refresh_token_request_received", workflow_id=request.workflow_id, node_id=request.node_id)
+    logger.info("refresh_token_request_received", workflow_id=request.workflow_id, node_id=request.node_id, user_id=current_user.id)
     try:
+        # Validate workflow access under current user's tenant scoping
+        await require_resource_access(
+            resource_type="workflow",
+            resource_id=request.workflow_id,
+            current_user=current_user
+        )
+
         await update_node_tokens_in_db(
             workflow_id=request.workflow_id,
             node_id=request.node_id,

@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+# ==============================================================================
+# BLOCK COMMENT: FASTAPI AUTH ROUTER WITH HTTPONLY COOKIE SUPPORT
+# Sets HttpOnly secure cookie on login and clears it on logout
+# ==============================================================================
+from fastapi import APIRouter, HTTPException, Depends, status, Response
 from pydantic import BaseModel, EmailStr
 from typing import Dict
 from app.core.database import AsyncSessionLocal
@@ -42,7 +46,7 @@ async def register(request: RegisterRequest):
     )
         
 @router.post("/login")
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, response: Response):
     async with AsyncSessionLocal() as session:
         from app.models.db_models import RoleDB, RolePermissionDB
         from app.api.auth.dependencies import resolve_role_for_user
@@ -216,6 +220,20 @@ async def login(request: LoginRequest):
         }
         token = create_access_token(token_data)
 
+        # ==============================================================================
+        # BLOCK COMMENT: SET HTTPONLY SECURE AUTHENTICATION COOKIE
+        # Prevents client-side script access (XSS mitigation)
+        # ==============================================================================
+        response.set_cookie(
+            key="token",
+            value=token,
+            httponly=True,
+            max_age=60 * 60 * 24 * 7,  # 7 days
+            path="/",
+            samesite="lax",
+            secure=False,
+        )
+
         return {
             "user_id": str(user.id),
             "token": token,
@@ -234,6 +252,15 @@ async def login(request: LoginRequest):
             "permissions": permissions_list,
             "default_route": default_route,
         }
+
+
+# ==============================================================================
+# BLOCK COMMENT: LOGOUT ENDPOINT CLEARING HTTPONLY AUTH COOKIE
+# ==============================================================================
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie(key="token", path="/")
+    return {"message": "Logged out successfully"}
 
 
 @router.get("/me", response_model=User)
