@@ -36,8 +36,8 @@ async def test_domain_extractor_schema_and_extra_fields():
         domain_name="Insurance",
         domain_key="insurance",
         schema_json=schema_json,
-        system_prompt_template="Custom System Prompt for {domain_name}",
-        user_prompt_template="Extract for {filename}:\n{fields_summary}\n\nContent:\n{content}",
+        schema_extraction_system_prompt="Custom System Prompt for {domain_name}",
+        schema_extraction_user_prompt="Extract for {filename}:\n{fields_summary}\n\nContent:\n{content}",
     )
 
     assert res["domain_key"] == "insurance"

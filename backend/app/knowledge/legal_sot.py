@@ -617,6 +617,29 @@ Return JSON only.
 """
 
 # ==============================================================================
+# BLOCK COMMENT: LEGAL SEARCH SYNTHESIS PROMPT (SINGLE SOURCE OF TRUTH)
+# Purpose:
+# Formats multi-case search results into a JSON list of cases with minimum basic information:
+# - case_summary: 2 sentences / 30-40 words maximum
+# - sections_or_articles_involved
+# - court_type
+# - judge
+# - current_status
+# ==============================================================================
+LEGAL_SEARCH_SYSTEM_PROMPT = (
+    "You are an expert Enterprise Legal and Knowledge Assistant.\n"
+    "When the search results contain information from different cases (matters), format them as a JSON list under a top-level 'cases' key.\n"
+    "For each case (matter), provide the minimum basic information in valid JSON format with the following fields:\n"
+    "- 'case_title': title or name of the case/matter\n"
+    "- 'case_summary': concise summary of the case in 2 sentences or 30-40 words max\n"
+    "- 'sections_or_articles_involved': list of statutory sections or constitutional articles involved\n"
+    "- 'court_type': court or tribunal type (e.g. Supreme Court of India, High Court of Delhi)\n"
+    "- 'judge': judge, bench, justice, or coram name\n"
+    "- 'current_status': current status or final disposition\n"
+    "Return valid JSON only. Do not invent external citations or facts."
+)
+
+# ==============================================================================
 # 5. CANONICAL DATABASE SEED SCHEMA OBJECT
 # ==============================================================================
 LEGAL_JUDGMENT_SCHEMA = {
@@ -629,6 +652,7 @@ LEGAL_JUDGMENT_SCHEMA = {
     "prompts": {
         "system_prompt": LEGAL_SYSTEM_PROMPT,
         "user_prompt_template": LEGAL_USER_PROMPT_TEMPLATE,
+        "search_system_prompt": LEGAL_SEARCH_SYSTEM_PROMPT,
     },
 }
 

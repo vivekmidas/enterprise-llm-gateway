@@ -68,6 +68,9 @@ class CreateDomainSchemaRequest(BaseModel):
     status: str | None = "active"
     config: dict[str, Any] | None = None
     fields: list[DomainFieldSpec] = Field(default_factory=list)
+    schema_extraction_system_prompt: str | None = None
+    schema_extraction_user_prompt: str | None = None
+    # Backward compatibility aliases
     system_prompt: str | None = None
     user_prompt: str | None = None
 
@@ -82,6 +85,9 @@ class UpdateDomainSchemaRequest(BaseModel):
     status: str | None = None
     config: dict[str, Any] | None = None
     fields: list[DomainFieldSpec] | None = None
+    schema_extraction_system_prompt: str | None = None
+    schema_extraction_user_prompt: str | None = None
+    # Backward compatibility aliases
     system_prompt: str | None = None
     user_prompt: str | None = None
 
@@ -135,6 +141,9 @@ async def create_domain_schema(
         "config": req.config or {},
     }
 
+    init_sys_prompt = req.schema_extraction_system_prompt or req.system_prompt or DEFAULT_SYSTEM_PROMPT
+    init_user_prompt = req.schema_extraction_user_prompt or req.user_prompt or DEFAULT_USER_PROMPT
+
     domain = DomainSchemaDB(
         name=req.name,
         domain_key=domain_key,
@@ -142,8 +151,8 @@ async def create_domain_schema(
         scope=scope,
         customer_id=customer_id,
         schema_json=schema_data,
-        system_prompt=req.system_prompt or DEFAULT_SYSTEM_PROMPT,
-        user_prompt=req.user_prompt or DEFAULT_USER_PROMPT,
+        system_prompt=init_sys_prompt,
+        user_prompt=init_user_prompt,
         created_by=str(current_user.id),
     )
     db.add(domain)
@@ -272,10 +281,12 @@ async def update_domain_schema(
         current_schema["config"] = req.config
     domain.schema_json = current_schema
 
-    if req.system_prompt is not None:
-        domain.system_prompt = req.system_prompt
-    if req.user_prompt is not None:
-        domain.user_prompt = req.user_prompt
+    ext_sys = req.schema_extraction_system_prompt or req.system_prompt
+    ext_user = req.schema_extraction_user_prompt or req.user_prompt
+    if ext_sys is not None:
+        domain.system_prompt = ext_sys
+    if ext_user is not None:
+        domain.user_prompt = ext_user
 
     await db.commit()
     await db.refresh(domain)

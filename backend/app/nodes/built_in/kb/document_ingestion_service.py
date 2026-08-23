@@ -346,19 +346,33 @@ class DocumentIngestionService:
                         except Exception as prof_err:
                             logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
 
-                        # Prompt hierarchy: KB extraction_prompt > Domain schema prompt > None
-                        kb_custom_sys_prompt = kb_settings.get("extraction_prompt") or kb_settings.get("system_prompt")
-                        kb_custom_user_prompt = kb_settings.get("user_prompt")
+                        # Prompt hierarchy & strategy: KB extraction_prompt (inherit/override/combine) > Domain schema prompt > Default
+                        kb_ext_raw = kb_settings.get("extraction_prompt")
+                        strategy = "inherit"
+                        kb_custom_sys_prompt = None
+                        kb_custom_user_prompt = None
 
-                        sys_prompt_template = kb_custom_sys_prompt or domain_schema.system_prompt
-                        user_prompt_template = kb_custom_user_prompt or domain_schema.user_prompt
+                        if isinstance(kb_ext_raw, dict):
+                            strategy = kb_ext_raw.get("strategy") or ("override" if (kb_ext_raw.get("system_prompt") or kb_ext_raw.get("user_prompt")) else "inherit")
+                            kb_custom_sys_prompt = kb_ext_raw.get("system_prompt")
+                            kb_custom_user_prompt = kb_ext_raw.get("user_prompt")
+                        elif isinstance(kb_ext_raw, str):
+                            strategy = "override"
+                            kb_custom_sys_prompt = kb_ext_raw
+                            kb_custom_user_prompt = kb_settings.get("user_prompt")
+                        else:
+                            kb_custom_sys_prompt = kb_settings.get("system_prompt")
+                            kb_custom_user_prompt = kb_settings.get("user_prompt")
+                            strategy = "override" if (kb_custom_sys_prompt or kb_custom_user_prompt) else "inherit"
 
                         extractor = DomainExtractor.from_llm_profile(llm_profile)
                         logger.info(
                             "metadata_extraction_llm_profile_resolved",
                             profile_id=llm_profile.id if llm_profile else None,
                             profile_name=llm_profile.name if llm_profile else "Ollama-default",
+                            strategy=strategy,
                             has_kb_prompt=bool(kb_custom_sys_prompt),
+                            has_schema_prompt=bool(domain_schema.system_prompt),
                             domain_schema_name=domain_schema.name,
                         )
 
@@ -368,8 +382,11 @@ class DocumentIngestionService:
                             domain_name=domain_schema.name,
                             domain_key=domain_schema.domain_key,
                             schema_json=domain_schema.schema_json,
-                            system_prompt_template=sys_prompt_template,
-                            user_prompt_template=user_prompt_template,
+                            schema_extraction_system_prompt=domain_schema.system_prompt,
+                            schema_extraction_user_prompt=domain_schema.user_prompt,
+                            kb_extraction_system_prompt=kb_custom_sys_prompt,
+                            kb_extraction_user_prompt=kb_custom_user_prompt,
+                            strategy=strategy,
                         )
                         metadata["domain_info"] = domain_info
                         metadata["extracted_fields"] = domain_info.get("extracted_fields") or {}

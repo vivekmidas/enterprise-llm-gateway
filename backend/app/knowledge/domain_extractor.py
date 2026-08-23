@@ -269,9 +269,12 @@ class DomainExtractor:
         filename: str,
         domain_name: str,
         domain_key: str,
-        schema_json: dict[str, Any] | None,
-        system_prompt_template: str | None,
-        user_prompt_template: str | None,
+        schema_json: dict[str, Any] | None = None,
+        schema_extraction_system_prompt: str | None = None,
+        schema_extraction_user_prompt: str | None = None,
+        kb_extraction_system_prompt: str | None = None,
+        kb_extraction_user_prompt: str | None = None,
+        strategy: str = "inherit",
     ) -> dict[str, Any]:
         # Guard: skip if document text is empty or too short to be meaningful
         if not text or len(text.strip()) < 50:
@@ -305,36 +308,73 @@ class DomainExtractor:
         # =====================================================================
         # BLOCK COMMENT: PROMPT RESOLUTION (SINGLE SOURCE OF TRUTH)
         # Purpose:
-        # 1. Resolves system prompt (custom template or default precise extractor).
+        # 1. Resolves system prompt according to strategy (inherit, override, combine).
         # 2. Dynamically derives fields_summary and fields_json_schema from fields.
         # 3. Renders user prompt template with dynamic schema structure.
         # =====================================================================
         fields_summary = format_fields_summary(fields)
         fields_json_schema = format_fields_json_schema(fields)
 
-        if system_prompt_template and system_prompt_template.strip():
-            logger.debug("domain_extractor_decision_sys_prompt", branch="custom_template", template_len=len(system_prompt_template))
-            sys_prompt = (
-                system_prompt_template
-                .replace("{domain_name}", domain_name or "")
-                .replace("{filename}", filename or "")
-            )
-        else:
-            logger.debug("domain_extractor_decision_sys_prompt", branch="default_extractor")
-            sys_prompt = (
-                "You are a precise document entity extractor.\n"
-                "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
-                "RULE 2: If a field value is NOT found in the document text, OMIT that field entirely "
-                "— do NOT write null, do NOT write empty string.\n"
-                "RULE 3: DO NOT use training data, prior knowledge, or inferred values.\n"
-                "RULE 4: Use exact wording from the document for all extracted values.\n"
-                "Return valid JSON only containing ONLY the fields you actually found."
-            )
+        default_sys_prompt = (
+            "You are a precise document entity extractor.\n"
+            "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
+            "RULE 2: If a field value is NOT found in the document text, OMIT that field entirely "
+            "— do NOT write null, do NOT write empty string.\n"
+            "RULE 3: DO NOT use training data, prior knowledge, or inferred values.\n"
+            "RULE 4: Use exact wording from the document for all extracted values.\n"
+            "Return valid JSON only containing ONLY the fields you actually found."
+        )
 
-        if user_prompt_template and user_prompt_template.strip():
-            logger.debug("domain_extractor_decision_user_prompt", branch="custom_template", template_len=len(user_prompt_template))
+        base_schema_sys = schema_extraction_system_prompt
+        base_schema_user = schema_extraction_user_prompt
+        effective_kb_sys = kb_extraction_system_prompt
+        effective_kb_user = kb_extraction_user_prompt
+
+        resolved_strategy = (strategy or "inherit").lower()
+        prompt_source = "domain_schema"
+
+        if resolved_strategy == "combine":
+            base_prompt = base_schema_sys or default_sys_prompt
+            if effective_kb_sys and effective_kb_sys.strip():
+                sys_template = f"{base_prompt}\n\n### Knowledge Base Extraction Directives:\n{effective_kb_sys.strip()}"
+                prompt_source = "combined"
+            else:
+                sys_template = base_prompt
+                prompt_source = "domain_schema" if base_schema_sys else "system_default"
+            user_template = effective_kb_user or base_schema_user
+        elif resolved_strategy == "override":
+            if effective_kb_sys and effective_kb_sys.strip():
+                sys_template = effective_kb_sys
+                prompt_source = "kb_override"
+            elif base_schema_sys and base_schema_sys.strip():
+                sys_template = base_schema_sys
+                prompt_source = "domain_schema"
+            else:
+                sys_template = default_sys_prompt
+                prompt_source = "system_default"
+            user_template = effective_kb_user or base_schema_user
+        else:  # inherit (default)
+            if base_schema_sys and base_schema_sys.strip():
+                sys_template = base_schema_sys
+                prompt_source = "domain_schema"
+            elif effective_kb_sys and effective_kb_sys.strip():
+                sys_template = effective_kb_sys
+                prompt_source = "kb_override"
+            else:
+                sys_template = default_sys_prompt
+                prompt_source = "system_default"
+            user_template = base_schema_user or effective_kb_user
+
+        sys_prompt = (
+            sys_template
+            .replace("{domain_name}", domain_name or "")
+            .replace("{filename}", filename or "")
+        )
+
+        if user_template and user_template.strip():
+            logger.debug("domain_extractor_decision_user_prompt", branch="custom_template", template_len=len(user_template))
             user_prompt = (
-                user_prompt_template
+                user_template
                 .replace("{filename}", filename or "")
                 .replace("{fields_summary}", fields_summary)
                 .replace("{fields_json_schema}", fields_json_schema)
@@ -365,11 +405,16 @@ class DomainExtractor:
                 )
 
         logger.info(
-            "domain_extraction_executing",
-            filename=filename,
+            "domain_extraction_prompt_resolved",
             domain_key=domain_key,
-            has_custom_sys_prompt=bool(system_prompt_template),
-            has_custom_user_prompt=bool(user_prompt_template),
+            domain_name=domain_name,
+            filename=filename,
+            strategy=resolved_strategy,
+            prompt_source=prompt_source,
+            has_kb_prompt=bool(effective_kb_sys),
+            has_schema_prompt=bool(base_schema_sys),
+            sys_prompt_len=len(sys_prompt),
+            user_prompt_len=len(user_prompt),
         )
 
         try:
@@ -446,8 +491,10 @@ class DomainExtractor:
                 "extracted_fields": extracted_fields,
                 "extra_fields": extra_fields,
                 "field_weights": field_weights,
-                "extraction_mode": "prompt_driven" if system_prompt_template else "domain_default",
+                "extraction_mode": "prompt_driven" if (base_schema_sys or effective_kb_sys) else "domain_default",
                 "debug_info": {
+                    "strategy": resolved_strategy,
+                    "prompt_source": prompt_source,
                     "system_prompt": sys_prompt,
                     "user_prompt": user_prompt,
                     "raw_response": raw_response,
@@ -464,6 +511,8 @@ class DomainExtractor:
                 "error": str(exc),
                 "extraction_mode": "failed",
                 "debug_info": {
+                    "strategy": resolved_strategy,
+                    "prompt_source": prompt_source,
                     "system_prompt": sys_prompt,
                     "user_prompt": user_prompt,
                 },

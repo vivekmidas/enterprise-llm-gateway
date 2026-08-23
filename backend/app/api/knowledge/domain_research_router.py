@@ -62,6 +62,12 @@ class SearchRequest(BaseModel):
     include_summary: bool = True
     page: int = 1
     limit: int = 15
+    # Client-level search prompt customization
+    search_system_prompt: Optional[str] = None
+    search_user_prompt: Optional[str] = None
+    # Backward compatibility aliases
+    system_prompt: Optional[str] = None
+    user_prompt_template: Optional[str] = None
 
     model_config = {"extra": "allow"}
 
@@ -76,6 +82,14 @@ class SynthesizeRequest(BaseModel):
     raw_context: Optional[str] = None
     filing_type: Optional[str] = None
     llm_profile_id: Optional[str] = None
+    # Client-level drafting prompt customization
+    drafting_system_prompt: Optional[str] = None
+    drafting_user_prompt: Optional[str] = None
+    # Backward compatibility aliases
+    synthesize_system_prompt: Optional[str] = None
+    synthesize_user_prompt: Optional[str] = None
+    system_prompt: Optional[str] = None
+    user_prompt_template: Optional[str] = None
 
 
 class SavedQueryCreate(BaseModel):
@@ -94,6 +108,13 @@ class IngestRequest(BaseModel):
     document_text: Optional[str] = None
     corpus_type: Optional[str] = "case_material"
     metadata: Optional[Dict[str, Any]] = None
+    # Client-level extraction prompt customization
+    schema_extraction_system_prompt: Optional[str] = None
+    schema_extraction_user_prompt: Optional[str] = None
+    strategy: Optional[str] = "inherit"
+    # Backward compatibility aliases
+    system_prompt: Optional[str] = None
+    user_prompt: Optional[str] = None
 
 
 @router.post("/ingest")
@@ -299,8 +320,18 @@ async def get_domain_matcher_and_config(
                 noise_tokens.add(w.lower())
 
             # 3. Parse prompts
-            prompts["system_prompt"] = schema_db.system_prompt or s_json.get("prompts", {}).get("system_prompt")
-            prompts["user_prompt"] = schema_db.user_prompt or s_json.get("prompts", {}).get("user_prompt")
+            ext_sys = schema_db.system_prompt or s_json.get("prompts", {}).get("schema_extraction_system_prompt") or s_json.get("prompts", {}).get("system_prompt")
+            ext_user = schema_db.user_prompt or s_json.get("prompts", {}).get("schema_extraction_user_prompt") or s_json.get("prompts", {}).get("user_prompt")
+            search_sys = s_json.get("prompts", {}).get("search_system_prompt")
+            search_user = s_json.get("prompts", {}).get("search_user_prompt")
+
+            prompts["schema_extraction_system_prompt"] = ext_sys
+            prompts["schema_extraction_user_prompt"] = ext_user
+            prompts["search_system_prompt"] = search_sys
+            prompts["search_user_prompt"] = search_user
+            # Backward compatibility aliases
+            prompts["system_prompt"] = ext_sys
+            prompts["user_prompt"] = ext_user
     except Exception as e:
         logger.warning("domain_schema_lookup_fallback", domain=domain_key, error=str(e))
 
@@ -714,9 +745,9 @@ async def search_domain_knowledge(
     t_synth_ms = 0.0
     if payload.include_summary and ranked_results:
         t_synth_start = time.perf_counter()
-        top_candidates = ranked_results[:3]
+        top_candidates = ranked_results[:5]
         ctx_lines = [
-            f"Record #{i+1}: {c.get('title', 'Document')} | Authority: {c.get('judge')} | Details: {c.get('matched_tags', [])}"
+            f"Record #{i+1}: Case/Matter Title: {c.get('title', 'Document')} | Court: {c.get('court', 'Court Record')} | Authority/Judge: {c.get('judge', 'Hon\'ble Bench')} | Status/Disposition: {c.get('disposition', 'N/A')} | Matched Sections/Keywords: {c.get('matched_tags', [])}"
             for i, c in enumerate(top_candidates)
         ]
         synth_context = "\n".join(ctx_lines)
@@ -728,11 +759,91 @@ async def search_domain_knowledge(
             context_length_chars=len(synth_context),
         )
 
-        system_prompt = domain_prompts.get("system_prompt") or (
-            "You are an expert Enterprise AI Assistant. Based strictly on the provided matched records, provide a clear, direct, and concise 1-2 sentence holding/summary addressing the user's query.\n"
-            "Do not invent external citations or facts."
+        # ==============================================================================
+        # BLOCK COMMENT: SEARCH RESULT SYNTHESIS PROMPT (MULTI-CASE JSON LIST)
+        # Formats multi-case search results into a JSON list of cases with minimum basic information:
+        # - case_title: title or name of case
+        # - case_summary: concise summary of the case in 2 sentences or 30-40 words max
+        # - sections_or_articles_involved: list of statutory sections or articles involved
+        # - court_type: court or tribunal type
+        # - judge: judge, justice, bench, or authority name
+        # - current_status: status or final disposition
+        # ==============================================================================
+        # Prompt resolution: Caller Request Override > CustomerDB Tenant Settings > Domain Schema Config > Default Fallback
+        client_sys = payload.search_system_prompt or payload.system_prompt
+        client_user = payload.search_user_prompt or payload.user_prompt_template
+
+        # Fetch Customer/Tenant prompt settings if present
+        cust_prompts: Dict[str, Any] = {}
+        if user_tenant_id:
+            try:
+                cust_res = await db.execute(select(CustomerDB).where(or_(CustomerDB.id == user_tenant_id, CustomerDB.id == str(user_tenant_id))))
+                cust = cust_res.scalar_one_or_none()
+                if cust and cust.settings and isinstance(cust.settings, dict):
+                    cust_prompts = cust.settings.get("prompts", {}) or {}
+                    if not cust_prompts and any(k in cust.settings for k in ("search_system_prompt", "drafting_system_prompt", "synthesize_system_prompt")):
+                        cust_prompts = cust.settings
+            except Exception as c_err:
+                logger.warning("customer_settings_prompts_lookup_failed", error=str(c_err))
+
+        tenant_search_sys = cust_prompts.get("search_system_prompt")
+        tenant_search_user = cust_prompts.get("search_user_prompt")
+
+        if client_sys and client_sys.strip():
+            system_prompt = client_sys.strip()
+            prompt_source = "client_override"
+        elif tenant_search_sys and str(tenant_search_sys).strip():
+            system_prompt = str(tenant_search_sys).strip()
+            prompt_source = "client_tenant_setting"
+        elif domain_prompts.get("search_system_prompt"):
+            system_prompt = domain_prompts["search_system_prompt"]
+            prompt_source = "domain_schema"
+        else:
+            system_prompt = (
+                "You are an expert Enterprise AI and Legal Assistant.\n"
+                "When the search results contain information from different cases (matters), format them as a JSON list of cases under the top-level key 'cases'.\n"
+                "For each case (matter), provide the minimum basic information in valid JSON format with the following keys:\n"
+                "- 'case_title': title or name of the case/matter\n"
+                "- 'case_summary': concise summary of the case in 2 sentences or 30-40 words max\n"
+                "- 'sections_or_articles_involved': list of statutory sections or constitutional articles involved\n"
+                "- 'court_type': court or tribunal type (e.g. Supreme Court of India, High Court of Delhi)\n"
+                "- 'judge': judge, bench, justice, or coram name\n"
+                "- 'current_status': current status, outcome, or final disposition\n"
+                "Return valid JSON only. Do not invent external citations or facts."
+            )
+            prompt_source = "system_default"
+
+        if client_user and client_user.strip():
+            user_prompt = (
+                client_user
+                .replace("{context}", synth_context)
+                .replace("{query}", payload.query)
+            )
+        elif tenant_search_user and str(tenant_search_user).strip():
+            user_prompt = (
+                str(tenant_search_user)
+                .replace("{context}", synth_context)
+                .replace("{query}", payload.query)
+            )
+        elif domain_prompts.get("search_user_prompt"):
+            user_prompt = (
+                domain_prompts["search_user_prompt"]
+                .replace("{context}", synth_context)
+                .replace("{query}", payload.query)
+            )
+        else:
+            user_prompt = f"Matching Case Records:\n{synth_context}\n\nUser Search Query: {payload.query}\n\nReturn the response strictly as a JSON object with 'cases' list."
+
+        logger.info(
+            "domain_search_synthesize_prompt_resolved",
+            trace_id=trace_id,
+            domain=domain_key,
+            kb_id=payload.knowledge_base_id,
+            prompt_source=prompt_source,
+            has_client_sys_prompt=bool(client_sys),
+            has_client_user_prompt=bool(client_user),
+            approach=payload.approach,
         )
-        user_prompt = f"Matching Records:\n{synth_context}\n\nUser Query: {payload.query}"
 
         llm_router = LLMRouter()
         try:
@@ -742,8 +853,19 @@ async def search_domain_knowledge(
             summary_text = res.content if hasattr(res, "content") else str(res)
         except Exception as e:
             logger.info("search_llm_synthesis_fallback", trace_id=trace_id, info=str(e))
-            best = top_candidates[0]
-            summary_text = f"Top matching record '{best.get('title')}' ({best.get('judge')}) with outcome: {best.get('disposition')}."
+            fallback_cases = []
+            for c in top_candidates:
+                tags = c.get("matched_tags", [])
+                sections = [t.split(":", 1)[1] for t in tags if "section" in t or "statute" in t]
+                fallback_cases.append({
+                    "case_title": c.get("title", "Unknown Case"),
+                    "case_summary": f"Case record for {c.get('title')}. Decided by {c.get('judge', 'Hon\'ble Bench')} with disposition {c.get('disposition', 'Disposed')}.",
+                    "sections_or_articles_involved": sections if sections else [t for t in tags if ":" not in t],
+                    "court_type": c.get("court", "Court Record"),
+                    "judge": c.get("judge", "Hon'ble Bench"),
+                    "current_status": c.get("disposition", "Disposed"),
+                })
+            summary_text = json.dumps({"cases": fallback_cases}, indent=2)
 
         t_synth_ms = round((time.perf_counter() - t_synth_start) * 1000, 2)
         logger.info(
@@ -784,6 +906,10 @@ async def search_domain_knowledge(
         "total_results": len(ranked_results),
         "page": payload.page,
         "results": ranked_results[: payload.limit],
+        "debug_info": {
+            "domain": domain_key,
+            "prompt_source": prompt_source if (payload.include_summary and ranked_results) else None,
+        },
         "latency_breakdown_ms": {
             "intent_categorization": t_cat_ms,
             "mysql_search": t_sql_ms,
@@ -794,20 +920,23 @@ async def search_domain_knowledge(
     }
 
 
-# --- Unified Legal & Domain Synthesizer Endpoint ---
+# --- Unified Legal & Domain Synthesizer / Response Drafter Endpoint ---
 
 @router.post("/synthesize")
+@router.post("/draft")
 @router.post("/legal/synthesize")
+@router.post("/legal/draft")
 @router.post("/research/synthesize")
+@router.post("/research/draft")
 async def synthesize_domain_response(
     payload: SynthesizeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Unified Grounded Response Generator with Trace Tracking and Grounding Verification.
+    Unified Grounded Response Drafter & Synthesizer with Trace Tracking and Grounding Verification.
     """
-    trace_id = f"synth-{uuid.uuid4().hex[:8]}"
+    trace_id = f"draft-{uuid.uuid4().hex[:8]}"
     start_time = time.perf_counter()
     user_tenant_id = getattr(current_user, "customer_id", None)
     domain_key = payload.domain or "legal"
@@ -863,20 +992,69 @@ async def synthesize_domain_response(
 
     combined_context = "\n\n---\n\n".join(context_blocks)
 
-    # Load Domain Prompts
-    _, domain_prompts = await get_domain_matcher_and_config(domain_key, user_tenant_id, db)
-    system_prompt = domain_prompts.get("system_prompt") or (
-        "You are an expert Enterprise AI Assistant adhering to strict zero-hallucination standards.\n"
-        "Guidelines:\n"
-        "1. Ground all responses strictly in the provided Context.\n"
-        "2. Do not invent citations, authority names, numbers, or provisions absent from context.\n"
-        "3. Provide structured, authoritative output."
-    )
+    # Load Customer/Tenant prompt settings if present
+    cust_prompts: Dict[str, Any] = {}
+    if user_tenant_id:
+        try:
+            cust_res = await db.execute(select(CustomerDB).where(or_(CustomerDB.id == user_tenant_id, CustomerDB.id == str(user_tenant_id))))
+            cust = cust_res.scalar_one_or_none()
+            if cust and cust.settings and isinstance(cust.settings, dict):
+                cust_prompts = cust.settings.get("prompts", {}) or {}
+                if not cust_prompts and any(k in cust.settings for k in ("drafting_system_prompt", "synthesize_system_prompt")):
+                    cust_prompts = cust.settings
+        except Exception as c_err:
+            logger.warning("customer_settings_prompts_lookup_failed", error=str(c_err))
 
-    user_prompt = (
-        f"Context Records and Facts:\n{combined_context}\n\n"
-        f"User Notes: {payload.user_notes or 'N/A'}\n\n"
-        f"Task Instruction:\n{payload.instruction}"
+    client_sys = payload.drafting_system_prompt or payload.synthesize_system_prompt or payload.system_prompt
+    client_user = payload.drafting_user_prompt or payload.synthesize_user_prompt or payload.user_prompt_template
+    tenant_draft_sys = cust_prompts.get("drafting_system_prompt") or cust_prompts.get("synthesize_system_prompt")
+    tenant_draft_user = cust_prompts.get("drafting_user_prompt") or cust_prompts.get("synthesize_user_prompt")
+
+    if client_sys and client_sys.strip():
+        system_prompt = client_sys.strip()
+        prompt_source = "client_override"
+    elif tenant_draft_sys and str(tenant_draft_sys).strip():
+        system_prompt = str(tenant_draft_sys).strip()
+        prompt_source = "client_tenant_setting"
+    else:
+        system_prompt = (
+            "You are an expert Enterprise AI Assistant and Legal Research Drafter adhering to strict zero-hallucination standards.\n"
+            "Guidelines:\n"
+            "1. Ground all drafted analyses, memos, and responses strictly in the provided Context.\n"
+            "2. Do not invent citations, authority names, numbers, or provisions absent from context.\n"
+            "3. Provide structured, authoritative, and comprehensive output."
+        )
+        prompt_source = "system_default"
+
+    if client_user and client_user.strip():
+        user_prompt = (
+            client_user
+            .replace("{context}", combined_context)
+            .replace("{user_notes}", payload.user_notes or "")
+            .replace("{instruction}", payload.instruction)
+        )
+    elif tenant_draft_user and str(tenant_draft_user).strip():
+        user_prompt = (
+            str(tenant_draft_user)
+            .replace("{context}", combined_context)
+            .replace("{user_notes}", payload.user_notes or "")
+            .replace("{instruction}", payload.instruction)
+        )
+    else:
+        user_prompt = (
+            f"Context Records and Facts:\n{combined_context}\n\n"
+            f"User Notes: {payload.user_notes or 'N/A'}\n\n"
+            f"Task Instruction:\n{payload.instruction}"
+        )
+
+    logger.info(
+        "domain_synthesis_prompt_resolved",
+        trace_id=trace_id,
+        domain=domain_key,
+        kb_id=payload.knowledge_base_id,
+        prompt_source=prompt_source,
+        has_client_sys_prompt=bool(client_sys),
+        has_client_user_prompt=bool(client_user),
     )
 
     llm_router = LLMRouter()
@@ -922,6 +1100,7 @@ async def synthesize_domain_response(
         details_json={
             "trace_id": trace_id,
             "domain": domain_key,
+            "prompt_source": prompt_source,
             "grounding_verified": is_grounded,
             "duration_ms": duration_ms,
         },
@@ -937,6 +1116,10 @@ async def synthesize_domain_response(
         "response": generated_answer,
         "grounding_verified": is_grounded,
         "duration_ms": duration_ms,
+        "debug_info": {
+            "domain": domain_key,
+            "prompt_source": prompt_source,
+        },
     }
 
 

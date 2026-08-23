@@ -160,6 +160,7 @@ async def list_customers(
             "email": c.email,
             "address": c.address,
             "contact_person": c.contact_person,
+            "settings": c.settings or {},
             "dateadded": c.dateadded
         } for c in customers
     ]
@@ -194,6 +195,7 @@ async def create_customer(
         email=customer_data.get("email"),
         address=customer_data.get("address"),
         contact_person=customer_data.get("contact_person"),
+        settings=customer_data.get("settings") or {},
         status="active"
     )
     db.add(new_cust)
@@ -225,7 +227,8 @@ async def create_customer(
         "plugin_storage_path": new_cust.plugin_storage_path,
         "email": new_cust.email,
         "address": new_cust.address,
-        "contact_person": new_cust.contact_person
+        "contact_person": new_cust.contact_person,
+        "settings": new_cust.settings or {},
     }
 
 
@@ -264,6 +267,13 @@ async def update_customer(
         customer.address = customer_data["address"]
     if "contact_person" in customer_data:
         customer.contact_person = customer_data["contact_person"]
+    if "settings" in customer_data:
+        from sqlalchemy.orm.attributes import flag_modified
+        merged_settings = dict(customer.settings or {})
+        if isinstance(customer_data["settings"], dict):
+            merged_settings.update(customer_data["settings"])
+        customer.settings = merged_settings
+        flag_modified(customer, "settings")
         
     customer.dateupdated = datetime.utcnow().isoformat()
     await db.commit()
@@ -281,7 +291,8 @@ async def update_customer(
         "plugin_storage_path": customer.plugin_storage_path,
         "email": customer.email,
         "address": customer.address,
-        "contact_person": customer.contact_person
+        "contact_person": customer.contact_person,
+        "settings": customer.settings or {},
     }
 
 
