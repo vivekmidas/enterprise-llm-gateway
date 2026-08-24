@@ -613,10 +613,6 @@ async def search_domain_knowledge(
             # Only add to candidates if at least one filter or field matched
             if matched_filters:
                 doc_key = f"db_doc_{d.id}"
-                doc_judge_val = resolve_doc_judge(meta) or flat_meta.get("judge") or flat_meta.get("judge.coram") or flat_meta.get("coram") or flat_meta.get("bench")
-                judge_display = doc_judge_val if isinstance(doc_judge_val, str) else (
-                    doc_judge_val.get("coram") if isinstance(doc_judge_val, dict) else "Hon'ble Bench"
-                )
                 final_score = min(round(0.5 + doc_score, 2), 1.0)
                 extracted_data = (
                     meta.get("extracted_fields")
@@ -627,16 +623,13 @@ async def search_domain_knowledge(
                 candidates[doc_key] = {
                     "id": str(d.id),
                     "title": d.name,
-                    "court": meta.get("court") or flat_meta.get("court") or flat_meta.get("institution") or "Record",
-                    "judge": judge_display or flat_meta.get("author") or flat_meta.get("authority") or "N/A",
-                    "decision_date": meta.get("decision_date") or flat_meta.get("date") or flat_meta.get("published_date") or (str(d.created_at).split("T")[0] if d.created_at else "2026-01-01"),
-                    "disposition": meta.get("disposition") or flat_meta.get("status") or "N/A",
                     "metadata": meta,
                     "extracted_fields": extracted_data,
-                    "summary": meta.get("executive_case_summary") or meta.get("summary") or "",
+                    "summary": meta.get("summary") or meta.get("executive_case_summary") or "",
                     "relevance_score": final_score,
                     "source": "mysql_metadata",
                     "matched_tags": matched_filters,
+                    **{k: v for k, v in flat_meta.items() if isinstance(v, (str, int, float, bool, list))},
                 }
                 mysql_doc_matches += 1
                 logger.debug(
@@ -699,16 +692,14 @@ async def search_domain_knowledge(
                     "id": str(ch.document_id),
                     "chunk_id": str(ch.id),
                     "title": doc_title,
-                    "court": doc_meta.get("court") or "Record",
-                    "judge": doc_meta.get("judge") or "N/A",
-                    "decision_date": doc_meta.get("decision_date") or (str(ch.created_at).split("T")[0] if ch.created_at else "2026-01-01"),
-                    "disposition": doc_meta.get("disposition") or "N/A",
                     "metadata": doc_meta,
                     "extracted_fields": ch_extracted,
                     "content": ch.content or "",
+                    "summary": doc_meta.get("summary") or doc_meta.get("executive_case_summary") or "",
                     "relevance_score": 0.85,
                     "source": "mysql_chunk_fts",
                     "matched_tags": matched_concept_tags,
+                    **{k: v for k, v in flatten_metadata_fields(doc_meta).items() if isinstance(v, (str, int, float, bool, list))},
                 }
                 chunk_matches_count += 1
                 logger.debug(
@@ -807,16 +798,6 @@ async def search_domain_knowledge(
             context_length_chars=len(synth_context),
         )
 
-        # ==============================================================================
-        # BLOCK COMMENT: SEARCH RESULT SYNTHESIS PROMPT (MULTI-CASE JSON LIST)
-        # Formats multi-case search results into a JSON list of cases with minimum basic information:
-        # - case_title: title or name of case
-        # - case_summary: concise summary of the case in 2 sentences or 30-40 words max
-        # - sections_or_articles_involved: list of statutory sections or articles involved
-        # - court_type: court or tribunal type
-        # - judge: judge, justice, bench, or authority name
-        # - current_status: status or final disposition
-        # ==============================================================================
         # Prompt resolution: Caller Request Override > CustomerDB Tenant Settings > Domain Schema Config > Default Fallback
         client_sys = payload.search_system_prompt or payload.system_prompt
         client_user = payload.search_user_prompt or payload.user_prompt_template
@@ -848,16 +829,8 @@ async def search_domain_knowledge(
             prompt_source = "domain_schema"
         else:
             system_prompt = (
-                "You are an expert Enterprise AI and Legal Assistant.\n"
-                "When the search results contain information from different cases (matters), format them as a JSON list of cases under the top-level key 'cases'.\n"
-                "For each case (matter), provide the minimum basic information in valid JSON format with the following keys:\n"
-                "- 'case_title': title or name of the case/matter\n"
-                "- 'case_summary': concise summary of the case in 2 sentences or 30-40 words max\n"
-                "- 'sections_or_articles_involved': list of statutory sections or constitutional articles involved\n"
-                "- 'court_type': court or tribunal type (e.g. Supreme Court of India, High Court of Delhi)\n"
-                "- 'judge': judge, bench, justice, or coram name\n"
-                "- 'current_status': current status, outcome, or final disposition\n"
-                "- 'respondents': list of respondents in the case\n"
+                "You are an enterprise knowledge assistant strictly bound to the provided context.\n"
+                "Format your response strictly as a JSON object with 'cases' containing the list of matching records with their title, summary, and relevant extracted attributes.\n"
                 "Return valid JSON only. Do not invent external citations or facts."
             )
             prompt_source = "system_default"
@@ -881,7 +854,7 @@ async def search_domain_knowledge(
                 .replace("{query}", payload.query)
             )
         else:
-            user_prompt = f"Matching Case Records:\n{synth_context}\n\nUser Search Query: {payload.query}"
+            user_prompt = f"Matching Records:\n{synth_context}\n\nUser Search Query: {payload.query}"
 
         # Guarantee strict JSON output across small / local models
         if "json" in system_prompt.lower() or '{"' in system_prompt or "{'" in system_prompt:
@@ -908,20 +881,19 @@ async def search_domain_knowledge(
             summary_text = _clean_and_normalize_answer(raw_summary, system_prompt)
         except Exception as e:
             logger.info("search_llm_synthesis_fallback", trace_id=trace_id, info=str(e))
-            fallback_cases = []
+            fallback_records = []
             for c in top_candidates:
-                tags = c.get("matched_tags", [])
-                sections = [t.split(":", 1)[1] for t in tags if "section" in t or "statute" in t]
-                fallback_cases.append({
-                    "case_title": c.get("title", "Unknown Case"),
-                    "case_summary": f"Case record for {c.get('title')}. Decided by {c.get('judge', 'Hon\'ble Bench')} with disposition {c.get('disposition', 'Disposed')}.",
-                    "sections_or_articles_involved": sections if sections else [t for t in tags if ":" not in t],
-                    "court_type": c.get("court", "Court Record"),
-                    "judge": c.get("judge", "Hon'ble Bench"),
-                    "current_status": c.get("disposition", "Disposed"),
-                    "respondents": c.get("respondents", []),
-                })
-            summary_text = json.dumps({"cases": fallback_cases}, indent=2)
+                rec = {
+                    "case_title": c.get("title", "Record"),
+                    "title": c.get("title", "Record"),
+                    "case_summary": c.get("summary") or c.get("content", "")[:150],
+                    "summary": c.get("summary") or c.get("content", "")[:150],
+                }
+                for k, v in c.items():
+                    if k not in ("metadata", "extracted_fields", "content", "matched_tags", "relevance_score", "source", "id", "chunk_id"):
+                        rec[k] = v
+                fallback_records.append(rec)
+            summary_text = json.dumps({"cases": fallback_records}, indent=2)
 
         t_synth_ms = round((time.perf_counter() - t_synth_start) * 1000, 2)
         logger.info(

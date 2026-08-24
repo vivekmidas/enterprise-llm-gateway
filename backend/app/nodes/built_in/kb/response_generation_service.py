@@ -95,9 +95,8 @@ def _verify_answer_grounding(answer: str, context_text: str, extra_context: str 
 
 def _parse_markdown_to_json(text: str) -> list[dict]:
     """
-    100% Domain-agnostic parser that transforms any structured markdown list/records into JSON objects.
-    Dynamically captures any keys provided by the LLM (e.g. Author, Publisher, Diagnosis, Patient, Vendor,
-    Parties, Court, Outcome, Department, Employee, etc.) without hardcoding domain schemas.
+    Simple, 100% domain-agnostic parser that transforms structured markdown lists/records into JSON objects.
+    Dynamically maps bullet points '- **Key**: Value' to snake_case dictionary keys without domain-specific schemas.
     """
     has_numbered_items = bool(re.search(r"(?:^|\n)\s*\d+[\.\)]\s+\*?\*?", text))
     has_bullet_keys = bool(re.search(r"(?:^|\n)\s*[-*•]\s+\*?\*?[A-Za-z0-9_\s]+\*?\*?:", text))
@@ -145,29 +144,10 @@ def _parse_markdown_to_json(text: str) -> list[dict]:
 
         record: dict = {
             "title": title_line,
-            "case_title": title_line,
         }
 
         if inline_summary:
             record["summary"] = inline_summary
-            record["case_summary"] = inline_summary
-            low_inline = inline_summary.lower()
-            if "conviction upheld" in low_inline or "upheld" in low_inline:
-                record["current_status"] = "Conviction upheld"
-                record["status"] = "Upheld"
-            elif "not sustained" in low_inline or "acquitted" in low_inline:
-                record["current_status"] = "Conviction not sustained"
-                record["status"] = "Not sustained"
-            elif "dismissed" in low_inline:
-                record["current_status"] = "Dismissed"
-                record["status"] = "Dismissed"
-            elif "allowed" in low_inline:
-                record["current_status"] = "Allowed"
-                record["status"] = "Allowed"
-
-            found_sections = re.findall(r"(?:Sections?|Articles?|Acts?|IPC|Arms Act)\s*[^,;.]+", inline_summary, flags=re.IGNORECASE)
-            if found_sections:
-                record["sections_or_articles_involved"] = [s.strip() for s in found_sections]
 
         summary_parts = []
         for line in lines[1:]:
@@ -179,7 +159,7 @@ def _parse_markdown_to_json(text: str) -> list[dict]:
                 k_raw = k.replace("**", "").replace("*", "").strip()
                 v_clean = v.replace("**", "").replace("*", "").strip()
 
-                # Dynamic snake_case field normalization for ANY domain
+                # Dynamic snake_case field normalization
                 field_key = re.sub(r"[^a-zA-Z0-9]+", "_", k_raw).strip("_").lower()
                 if not field_key:
                     continue
@@ -189,32 +169,6 @@ def _parse_markdown_to_json(text: str) -> list[dict]:
                     record[field_key] = parsed_list
                 else:
                     record[field_key] = v_clean
-
-                # Dynamic synonymous aliasing for consistent multi-domain UI consumption
-                if field_key in ("parties", "party", "name", "record_name"):
-                    record["case_title"] = v_clean
-                    record["title"] = v_clean
-                elif field_key in ("outcome", "disposition", "status", "decision", "conviction_status"):
-                    record["current_status"] = v_clean
-                    record["status"] = v_clean
-                    found_sec = re.findall(r"(?:Sections?|Articles?|Acts?|IPC|Arms Act)\s*[^,;.]+", v_clean, flags=re.IGNORECASE)
-                    if found_sec and "sections_or_articles_involved" not in record:
-                        cleaned_sec = [
-                            re.sub(r"\s+(?:upheld|dismissed|allowed|sustained|affirmed|quashed|convicted|acquitted)$", "", s, flags=re.IGNORECASE).strip()
-                            for s in found_sec
-                        ]
-                        record["sections_or_articles_involved"] = [s for s in cleaned_sec if s]
-                elif field_key in ("court", "court_name", "forum"):
-                    record["court_type"] = v_clean
-                elif field_key == "plaintiff":
-                    record["plaintiffs"] = record[field_key] if isinstance(record[field_key], list) else [record[field_key]]
-                elif field_key == "respondent":
-                    record["respondents"] = record[field_key] if isinstance(record[field_key], list) else [record[field_key]]
-                elif field_key in ("offence", "offences", "section", "sections", "article", "articles", "statute"):
-                    if isinstance(record.get(field_key), list):
-                        record["sections_or_articles_involved"] = record[field_key]
-                    else:
-                        record["sections_or_articles_involved"] = [s.strip() for s in re.split(r"[,;]", v_clean) if s.strip()]
             else:
                 summary_parts.append(clean_l)
 
@@ -224,10 +178,6 @@ def _parse_markdown_to_json(text: str) -> list[dict]:
                 record["summary"] = f"{record['summary']}. {combined}".strip(". ")
             else:
                 record["summary"] = combined
-            record["case_summary"] = record["summary"]
-        elif "summary" not in record:
-            record["summary"] = f"Details for {title_line}."
-            record["case_summary"] = record["summary"]
 
         records.append(record)
     return records
