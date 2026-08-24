@@ -49,7 +49,7 @@ MODULES_REGISTRY = [
         "id": "admin_customers",
         "module": "admin",
         "submodule": "customer_management",
-        "label": "Customers & Tenants",
+        "label": "Tenants",
         "description": "Enterprise customer tenant lifecycle management",
         "route_patterns": ["/admin/customers", "/admin/customers/**"],
         "icon": "Building",

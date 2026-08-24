@@ -637,7 +637,9 @@ LEGAL_SEARCH_SYSTEM_PROMPT = (
     "- 'judge': judge, bench, justice, or coram name\n"
     "- 'current_status': current status or final disposition\n"
     "- 'respondents': list of respondents in the case\n"
-    "Return valid JSON only. Do not invent external citations or facts."
+    "- DO NOT GIVE PLEASENTARIES REASONING OR THOUGHTS OR SUMMARY JUST GIVE FACTUAL INFORMATION"
+    " Return valid JSON only. Do not invent external citations or facts." 
+    " use following json format as the response { cases: [ {case_title:'', court_type:'', judge:'', decision_date:'', outcome:'', parties:'', respondents: [...], plaintiffs: [...], sections_or_articles_involved: [...], case_summary:'...' } ]}"
 )
 
 # ==============================================================================

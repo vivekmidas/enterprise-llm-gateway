@@ -1,5 +1,6 @@
 import time
 import re
+from typing import Any, Dict, List, Optional, Union
 import structlog
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -7,6 +8,12 @@ from app.core.llm_router import LLMRouter
 from app.knowledge.retrieval_models import (
     ResponseGenerationRequest,
     ResponseGenerationResult,
+)
+from app.knowledge.transformers import (
+    BaseResponseTransformer,
+    ResponseTransformerRegistry,
+    DefaultResponseTransformer,
+    LegalResponseTransformer,
 )
 
 logger = structlog.get_logger(__name__)
@@ -39,45 +46,72 @@ COMMON_ENGLISH_WORDS = {
 }
 
 
-def _verify_answer_grounding(answer: str, context_text: str, extra_context: str = "") -> bool:
+def _extract_text_values_from_json(obj: Any) -> List[str]:
+    """Recursively extracts string values from JSON dict/list, ignoring JSON keys."""
+    values = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            values.extend(_extract_text_values_from_json(v))
+    elif isinstance(obj, list):
+        for item in obj:
+            values.extend(_extract_text_values_from_json(item))
+    elif isinstance(obj, str):
+        val_clean = obj.strip()
+        if val_clean and val_clean.lower() not in {"n/a", "none", "null", "unknown"}:
+            values.append(val_clean)
+    elif isinstance(obj, (int, float)):
+        values.append(str(obj))
+    return values
+
+
+def _verify_answer_grounding(answer: Union[str, Dict[str, Any], List[Any]], context_text: str, extra_context: str = "") -> bool:
     """
-    100% Domain-agnostic grounding check:
-    1. Verifies long numeric identifiers (>= 4 digits) in answer exist in context.
-    2. Strips JSON schema keys, markdown headers, and structural discourse.
-    3. Verifies that non-dictionary proper names (people, organizations, places) have presence in context.
-    Works identically for Legal, Healthcare, Procurement, HR, Education, etc.
+    Domain-agnostic grounding check operating directly on JSON values and plain text:
+    1. Extracts substantive string values from JSON object (ignoring schema keys).
+    2. Verifies numeric IDs / case references (>= 5 digits) exist in context.
+    3. Verifies proper names (people, organizations, courts) exist in context.
     """
     if not answer or not context_text:
         return True
 
-    clean_ans_lower = answer.strip().lower()
-    if clean_ans_lower in {"no answer", "information is not available in the provided document."}:
+    # 1. Parse JSON if answer is a JSON string or dict/list
+    parsed_json = None
+    if isinstance(answer, (dict, list)):
+        parsed_json = answer
+    elif isinstance(answer, str):
+        trimmed = answer.strip()
+        if (trimmed.startswith("{") and trimmed.endswith("}")) or (trimmed.startswith("[") and trimmed.endswith("]")):
+            try:
+                parsed_json = json.loads(trimmed)
+            except Exception:
+                pass
+
+    if parsed_json is not None:
+        val_strings = _extract_text_values_from_json(parsed_json)
+        answer_text = " ".join(val_strings)
+    else:
+        answer_text = str(answer).strip()
+
+    clean_ans_lower = answer_text.lower()
+    if clean_ans_lower in {"no answer", "information is not available in the provided document.", "information is not available"}:
         return True
 
     full_ctx_lower = f"{context_text} {extra_context}".lower()
 
     # 1. Check Long Numbers / Specific IDs (length >= 5, excluding standard 4-digit years)
-    long_numbers = set(re.findall(r"\b\d{5,}\b", answer))
+    long_numbers = set(re.findall(r"\b\d{5,}\b", answer_text))
     if long_numbers:
         missing_numbers = [n for n in long_numbers if n not in full_ctx_lower]
         if len(missing_numbers) >= 2 and len(missing_numbers) == len(long_numbers):
             logger.warning("grounding_failed_fabricated_numeric_ids", missing=missing_numbers[:3])
             return False
 
-    # 2. Check Multi-Word Proper Named Entities (Domain-Agnostic)
-    # Strip JSON keys ("field_name": ...), markdown bold labels (**Key**: ...), and line-starting labels
-    clean_text = re.sub(r'"[A-Za-z0-9_\s]+"\s*:', "", answer)
-    clean_text = re.sub(r"\*\*([A-Za-z\s]+)\*\*:", "", clean_text)
-    clean_text = re.sub(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*:", "", clean_text, flags=re.MULTILINE)
-    clean_text = re.sub(r"^#+\s+.*$", "", clean_text, flags=re.MULTILINE)
-
-    # Find potential capitalized multi-word phrases
-    multi_word_phrases = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", clean_text)
+    # 2. Check Multi-Word Proper Named Entities from the extracted values
+    multi_word_phrases = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", answer_text)
 
     suspicious_entities = []
     for phrase in multi_word_phrases:
         words = [w.lower() for w in phrase.split() if len(w) >= 3]
-        # If any word in the phrase is a standard dictionary/vocabulary word, it's not a hallucinated proper name
         non_dict_words = [w for w in words if w not in COMMON_ENGLISH_WORDS]
         if not non_dict_words or len(non_dict_words) < len(words):
             continue
@@ -93,212 +127,14 @@ def _verify_answer_grounding(answer: str, context_text: str, extra_context: str 
     return True
 
 
-def _parse_markdown_to_json(text: str) -> list[dict]:
-    """
-    Simple, 100% domain-agnostic parser that transforms structured markdown lists/records into JSON objects.
-    Dynamically maps bullet points '- **Key**: Value' to snake_case dictionary keys without domain-specific schemas.
-    """
-    has_numbered_items = bool(re.search(r"(?:^|\n)\s*\d+[\.\)]\s+\*?\*?", text))
-    has_bullet_keys = bool(re.search(r"(?:^|\n)\s*[-*•]\s+\*?\*?[A-Za-z0-9_\s]+\*?\*?:", text))
-    if not has_numbered_items and not has_bullet_keys:
-        return []
-
-    records = []
-    case_chunks = re.split(r"(?:^|\n)\s*(?:\d+[\.\)]|\#\#+)\s+", text)
-    if len(case_chunks) <= 1:
-        case_chunks = re.split(r"\n\s*\n\s*(?=\*\*)", text)
-
-    for chunk in case_chunks:
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        lines = [line.strip() for line in chunk.splitlines() if line.strip()]
-        if not lines:
-            continue
-
-        inline_match = re.match(r"^\*\*([^*]+)\*\*:\s*(.*)", lines[0])
-        if inline_match:
-            title_line = inline_match.group(1).strip()
-            inline_summary = inline_match.group(2).strip()
-        else:
-            title_line = lines[0].replace("**", "").rstrip(":").strip()
-            inline_summary = ""
-
-        # Filter conversational preambles
-        lower_title = title_line.lower()
-        if (
-            lower_title.startswith("based on")
-            or lower_title.startswith("the context")
-            or lower_title.startswith("here is")
-            or lower_title.startswith("here are")
-            or lower_title.startswith("these are")
-            or lower_title.startswith("the following")
-            or lower_title.startswith("note that")
-            or lower_title.startswith("the above")
-            or lower_title.startswith("unfortunately")
-            or lower_title.startswith("according to")
-            or lower_title.startswith("as per")
-            or len(title_line) < 3
-        ):
-            continue
-
-        record: dict = {
-            "title": title_line,
-        }
-
-        if inline_summary:
-            record["summary"] = inline_summary
-
-        summary_parts = []
-        for line in lines[1:]:
-            clean_l = re.sub(r"^[-*•\d\.]+\s*", "", line).strip()
-            if not clean_l:
-                continue
-            if ":" in clean_l:
-                k, v = clean_l.split(":", 1)
-                k_raw = k.replace("**", "").replace("*", "").strip()
-                v_clean = v.replace("**", "").replace("*", "").strip()
-
-                # Dynamic snake_case field normalization
-                field_key = re.sub(r"[^a-zA-Z0-9]+", "_", k_raw).strip("_").lower()
-                if not field_key:
-                    continue
-
-                if v_clean.startswith("[") and v_clean.endswith("]"):
-                    parsed_list = [item.strip(" '\"[]") for item in re.split(r"[,;]", v_clean) if item.strip(" '\"[]")]
-                    record[field_key] = parsed_list
-                else:
-                    record[field_key] = v_clean
-            else:
-                summary_parts.append(clean_l)
-
-        if summary_parts:
-            combined = ". ".join(summary_parts)
-            if "summary" in record and record["summary"]:
-                record["summary"] = f"{record['summary']}. {combined}".strip(". ")
-            else:
-                record["summary"] = combined
-
-        records.append(record)
-    return records
+def _clean_and_normalize_answer(answer: str, system_prompt: str = "", domain: Optional[str] = None) -> str:
+    """Delegates response transformation and JSON normalization to registered domain transformer."""
+    transformer = ResponseTransformerRegistry.get(domain)
+    return transformer.transform(answer, system_prompt)
 
 
+_parse_markdown_to_json = lambda text, target_keys=None: DefaultResponseTransformer()._parse_markdown(text, target_keys or [])
 _parse_markdown_cases_to_json = _parse_markdown_to_json
-
-
-def _clean_and_normalize_answer(answer: str, system_prompt: str = "") -> str:
-    """
-    Normalizes LLM output across providers and domains:
-    1. Extracts clean JSON payload if wrapped in markdown code fences or conversational text.
-    2. Detects refusal / not-found statements and returns 'no answer' or empty JSON.
-    3. Seamlessly converts any domain markdown list into structured JSON.
-    """
-    if not answer or not answer.strip():
-        return "no answer"
-
-    clean_text = answer.strip()
-
-    # Dynamic root key detection from system prompt (e.g. {"books": [...]}, {"cases": [...]})
-    root_key = "cases"
-    if system_prompt:
-        key_match = re.search(r'\{"([a-zA-Z0-9_]+)":\s*\[', system_prompt)
-        if key_match:
-            root_key = key_match.group(1)
-
-    # 1. Strip markdown code fences if wrapped: ```json ... ``` or ``` ... ```
-    if "```" in clean_text:
-        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text)
-        if json_match:
-            candidate = json_match.group(1).strip()
-            if candidate.startswith("{") or candidate.startswith("[{") or candidate.startswith("[\n{"):
-                try:
-                    import json
-                    json.loads(candidate)
-                    clean_text = candidate
-                except Exception:
-                    pass
-
-    # 2. If system prompt requested JSON, extract raw JSON object { ... } or [ { ... } ]
-    is_json_requested = "json" in system_prompt.lower() or '{"' in system_prompt or "{'" in system_prompt
-    if is_json_requested and not clean_text.startswith("{") and not clean_text.startswith("[{"):
-        first_brace = clean_text.find("{")
-        last_brace = clean_text.rfind("}")
-        if first_brace != -1 and last_brace > first_brace:
-            candidate = clean_text[first_brace:last_brace + 1].strip()
-            try:
-                import json
-                json.loads(candidate)
-                clean_text = candidate
-            except Exception:
-                pass
-
-    # 3. Refusal normalization
-    lower_ans = clean_text.lower()
-    refusal_indicators = [
-        "unable to find any",
-        "unable to find",
-        "could not find any",
-        "could not find",
-        "no relevant information",
-        "no cases found",
-        "no records found",
-        "not mentioned in the provided context",
-        "not mentioned in the context",
-        "not available in the provided document",
-        "not available in the provided context",
-        "information is not available",
-        "no information is available",
-        "no answer",
-        "i do not know",
-        "dont know",
-        "don t know",
-    ]
-
-    has_refusal = any(p in lower_ans for p in refusal_indicators)
-    if has_refusal:
-        # If response doesn't have a non-empty populated JSON list
-        is_populated_json = (
-            (clean_text.startswith("{") or clean_text.startswith("[{"))
-            and ('"title"' in clean_text or '"case_title"' in clean_text or '"name"' in clean_text)
-            and len(clean_text) > 40
-        )
-        if not is_populated_json:
-            if is_json_requested:
-                import json
-                return json.dumps({root_key: []})
-            return "no answer"
-
-    # 4. Strict JSON enforcement or Markdown-to-JSON parsing
-    import json
-    try:
-        parsed = json.loads(clean_text)
-        if isinstance(parsed, dict) or (isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict)):
-            return json.dumps(parsed, indent=2)
-    except Exception:
-        pass
-
-    # Attempt to extract embedded JSON
-    match = re.search(r"(\{[\s\S]*\}|\[\s*\{[\s\S]*\}\s*\])", clean_text)
-    if match:
-        try:
-            parsed = json.loads(match.group(1))
-            return json.dumps(parsed, indent=2)
-        except Exception:
-            pass
-
-    # If model returned markdown list (e.g. from Ollama), parse into domain-agnostic JSON
-    parsed_records = _parse_markdown_to_json(clean_text)
-    if parsed_records:
-        result_dict = {root_key: parsed_records}
-        if root_key != "cases":
-            result_dict["cases"] = parsed_records
-        return json.dumps(result_dict, indent=2)
-
-    # If JSON was explicitly requested, ensure valid JSON fallback
-    if is_json_requested:
-        return json.dumps({root_key: [], "raw_response": clean_text})
-
-    return clean_text
 
 
 class ResponseGenerationService:
@@ -390,8 +226,35 @@ class ResponseGenerationService:
 
         # For smaller / local models, reinforce JSON instruction if prompt requests JSON output
         is_json_requested = "json" in system_prompt.lower() or '{"' in system_prompt or "{'" in system_prompt
+        resolved_domain = getattr(request, "domain", None)
+        if not resolved_domain:
+            if "case" in system_prompt.lower() or "cases" in system_prompt.lower() or "court" in system_prompt.lower() or "case" in request.query.lower():
+                resolved_domain = "legal"
+
         if is_json_requested:
-            user_prompt += "\n\nCRITICAL INSTRUCTION: Respond ONLY with a valid raw JSON object strictly adhering to the schema. Do NOT include markdown codeblocks (```json), conversational text, introductory greetings, or commentary."
+            if resolved_domain == "legal":
+                user_prompt += (
+                    "\n\nCRITICAL INSTRUCTION: Respond ONLY with a valid raw JSON object strictly adhering to this schema:\n"
+                    "{\n"
+                    '  "cases": [\n'
+                    "    {\n"
+                    '      "case_title": "Full Case Name / Citation",\n'
+                    '      "court_type": "Court Name",\n'
+                    '      "judge": "Judge Name",\n'
+                    '      "decision_date": "YYYY-MM-DD or date text",\n'
+                    '      "outcome": "Decision / Disposition",\n'
+                    '      "parties": "Petitioner vs Respondent",\n'
+                    '      "respondents": ["Respondent 1", "Respondent 2"],\n'
+                    '      "plaintiffs": ["Plaintiff / Petitioner 1"],\n'
+                    '      "sections_or_articles_involved": ["Section / Article 1"],\n'
+                    '      "case_summary": "Concise factual summary"\n'
+                    "    }\n"
+                    "  ]\n"
+                    "}\n"
+                    "Do NOT output conversational preamble (e.g., 'There is one case...'), markdown fences, or post-amble explanations."
+                )
+            else:
+                user_prompt += "\n\nCRITICAL INSTRUCTION: Respond ONLY with a valid raw JSON object strictly adhering to the schema. Do NOT include markdown codeblocks (```json), conversational text, introductory greetings, or commentary."
 
         # ==============================================================================
         # BLOCK COMMENT: KNOWLEDGE BASE & PROFILE AWARE CONFIG RESOLUTION
@@ -494,26 +357,26 @@ class ResponseGenerationService:
                 raise ValueError("LLM generation returned an empty string")
 
             # Clean and normalize across LLM providers (strips preambles, fences, detects refusals)
-            answer = _clean_and_normalize_answer(raw_answer, system_prompt)
+            # answer = _clean_and_normalize_answer(raw_answer, system_prompt, resolved_domain)
 
             # Check for hallucinated training data via text grounding verifier
-            if answer != "no answer" and has_context and request.context and request.context.context:
-                extra_ctx_parts = []
-                if request.context.chunks:
-                    import json
-                    for c in request.context.chunks:
-                        meta = getattr(c, "metadata", {}) or {}
-                        if meta:
-                            extra_ctx_parts.append(json.dumps(meta, ensure_ascii=False))
-                if request.query:
-                    extra_ctx_parts.append(request.query)
-                extra_ctx = " ".join(extra_ctx_parts)
-                if not _verify_answer_grounding(answer, request.context.context, extra_ctx):
-                    logger.warning("response_grounding_failed_overriding_to_no_answer")
-                    answer = "no answer"
+            # if answer != "no answer" and has_context and request.context and request.context.context:
+            #     extra_ctx_parts = []
+            #     if request.context.chunks:
+            #         import json
+            #         for c in request.context.chunks:
+            #             meta = getattr(c, "metadata", {}) or {}
+            #             if meta:
+            #                 extra_ctx_parts.append(json.dumps(meta, ensure_ascii=False))
+            #     if request.query:
+            #         extra_ctx_parts.append(request.query)
+            #     extra_ctx = " ".join(extra_ctx_parts)
+            if not _verify_answer_grounding(raw_answer, request.context.context, ""):
+                logger.warning("response_grounding_failed_overriding_to_no_answer")
+                raw_answer = "no answer"
 
             # Check if output is strictly a refusal / no answer
-            normalized_answer = "".join(c for c in answer.lower() if c.isalnum() or c.isspace()).strip()
+            normalized_answer = "".join(c for c in raw_answer.lower() if c.isalnum() or c.isspace()).strip()
             refusal_phrases = {
                 "no answer",
                 "information is not available in the provided document",
@@ -527,19 +390,19 @@ class ResponseGenerationService:
             if normalized_answer in refusal_phrases or (
                 len(normalized_answer) < 80 and any(normalized_answer.startswith(p) for p in ("no answer", "information is not available", "i do not know", "dont know", "don t know"))
             ):
-                answer = "no answer"
+                raw_answer = "no answer"
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.info("response_generation_success", elapsed_ms=elapsed_ms, answer_length=len(answer))
+            logger.info("response_generation_success", elapsed_ms=elapsed_ms, answer_length=len(raw_answer))
 
             from app.knowledge.context_builder import estimate_tokens
             system_tokens = estimate_tokens(system_prompt)
             user_tokens = estimate_tokens(user_prompt)
-            answer_tokens = estimate_tokens(answer)
+            answer_tokens = estimate_tokens(raw_answer)
             used_tokens = system_tokens + user_tokens + answer_tokens
 
             return ResponseGenerationResult(
-                answer=answer,
+                answer=raw_answer,
                 used_tokens=used_tokens,
             )
 
