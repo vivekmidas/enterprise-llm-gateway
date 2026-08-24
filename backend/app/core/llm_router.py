@@ -153,12 +153,22 @@ class LLMRouter:
                 except ImportError:
                     raise ImportError("langchain_ollama or langchain_community package required for Ollama provider")
 
-            return ChatOllama(
-                model=model,
-                base_url=clean_url,
-                temperature=effective_temperature,
-                num_predict=effective_max_tokens,
+            ollama_format = (
+                tenant_config.get("format")
+                or gen_section.get("format")
+                or (llm_config.get("format") if isinstance(llm_config, dict) else None)
             )
+
+            ollama_kwargs = {
+                "model": model,
+                "base_url": clean_url,
+                "temperature": effective_temperature,
+                "num_predict": effective_max_tokens,
+            }
+            if ollama_format:
+                ollama_kwargs["format"] = ollama_format
+
+            return ChatOllama(**ollama_kwargs)
 
         elif provider in ("azure", "azure_openai"):
             model = resolved_model or os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")

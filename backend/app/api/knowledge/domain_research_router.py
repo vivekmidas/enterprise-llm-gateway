@@ -618,13 +618,22 @@ async def search_domain_knowledge(
                     doc_judge_val.get("coram") if isinstance(doc_judge_val, dict) else "Hon'ble Bench"
                 )
                 final_score = min(round(0.5 + doc_score, 2), 1.0)
+                extracted_data = (
+                    meta.get("extracted_fields")
+                    or meta.get("domain_info", {}).get("extracted_fields")
+                    or meta
+                )
+
                 candidates[doc_key] = {
                     "id": str(d.id),
                     "title": d.name,
-                    "court": meta.get("court") or flat_meta.get("court") or "Court / Entity Record",
-                    "judge": judge_display or "Hon'ble Bench",
-                    "decision_date": meta.get("decision_date", str(d.created_at).split("T")[0] if d.created_at else "2026-01-01"),
-                    "disposition": meta.get("disposition") or flat_meta.get("disposition") or "Disposed",
+                    "court": meta.get("court") or flat_meta.get("court") or flat_meta.get("institution") or "Record",
+                    "judge": judge_display or flat_meta.get("author") or flat_meta.get("authority") or "N/A",
+                    "decision_date": meta.get("decision_date") or flat_meta.get("date") or flat_meta.get("published_date") or (str(d.created_at).split("T")[0] if d.created_at else "2026-01-01"),
+                    "disposition": meta.get("disposition") or flat_meta.get("status") or "N/A",
+                    "metadata": meta,
+                    "extracted_fields": extracted_data,
+                    "summary": meta.get("executive_case_summary") or meta.get("summary") or "",
                     "relevance_score": final_score,
                     "source": "mysql_metadata",
                     "matched_tags": matched_filters,
@@ -679,14 +688,24 @@ async def search_domain_knowledge(
                 doc_meta = (doc.metadata_json or {}) if doc else {}
                 item_key = f"chunk_{ch.id}"
                 matched_concept_tags = [f"concept:{c}" for c in active_concepts if c.lower() in (ch.content or "").lower()]
+
+                ch_extracted = (
+                    doc_meta.get("extracted_fields")
+                    or doc_meta.get("domain_info", {}).get("extracted_fields")
+                    or doc_meta
+                )
+
                 candidates[item_key] = {
                     "id": str(ch.document_id),
                     "chunk_id": str(ch.id),
                     "title": doc_title,
-                    "court": doc_meta.get("court", "Court Record"),
-                    "judge": doc_meta.get("judge", "Hon'ble Bench"),
-                    "decision_date": doc_meta.get("decision_date", str(ch.created_at).split("T")[0] if ch.created_at else "2026-01-01"),
-                    "disposition": doc_meta.get("disposition", "Allowed"),
+                    "court": doc_meta.get("court") or "Record",
+                    "judge": doc_meta.get("judge") or "N/A",
+                    "decision_date": doc_meta.get("decision_date") or (str(ch.created_at).split("T")[0] if ch.created_at else "2026-01-01"),
+                    "disposition": doc_meta.get("disposition") or "N/A",
+                    "metadata": doc_meta,
+                    "extracted_fields": ch_extracted,
+                    "content": ch.content or "",
                     "relevance_score": 0.85,
                     "source": "mysql_chunk_fts",
                     "matched_tags": matched_concept_tags,
@@ -740,17 +759,46 @@ async def search_domain_knowledge(
         ranking_duration_ms=t_rank_ms,
     )
 
-    # Optional Grounded LLM Synthesis
+    # Optional Grounded LLM Synthesis (Dynamic Domain-Agnostic Context)
     summary_text = None
     t_synth_ms = 0.0
     if payload.include_summary and ranked_results:
         t_synth_start = time.perf_counter()
         top_candidates = ranked_results[:5]
-        ctx_lines = [
-            f"Record #{i+1}: Case/Matter Title: {c.get('title', 'Document')} | Court: {c.get('court', 'Court Record')} | Authority/Judge: {c.get('judge', 'Hon\'ble Bench')} | Status/Disposition: {c.get('disposition', 'N/A')} | Matched Sections/Keywords: {c.get('matched_tags', [])}"
-            for i, c in enumerate(top_candidates)
-        ]
-        synth_context = "\n".join(ctx_lines)
+        ctx_lines = []
+        for i, c in enumerate(top_candidates):
+            title = c.get("title", "Document")
+            ext = c.get("extracted_fields") or c.get("metadata") or {}
+            
+            # Dynamically format all extracted domain fields
+            field_parts = []
+            if isinstance(ext, dict):
+                for k, v in ext.items():
+                    if not v or k in ("debug_info", "raw_response", "comparison_report"):
+                        continue
+                    if isinstance(v, (str, int, float, bool)):
+                        field_parts.append(f"{k.replace('_', ' ').title()}: {v}")
+                    elif isinstance(v, dict):
+                        sub_parts = [
+                            f"{sk.replace('_', ' ').title()}: {sv}"
+                            for sk, sv in v.items()
+                            if sv and isinstance(sv, (str, int, float, bool))
+                        ]
+                        if sub_parts:
+                            field_parts.append(f"{k.replace('_', ' ').title()}: [{', '.join(sub_parts)}]")
+                        else:
+                            field_parts.append(f"{k.replace('_', ' ').title()}: {json.dumps(v, ensure_ascii=False)}")
+                    elif isinstance(v, list) and v:
+                        field_parts.append(f"{k.replace('_', ' ').title()}: {json.dumps(v, ensure_ascii=False)}")
+
+            record_line = f"Record #{i+1}: Title: {title}"
+            if field_parts:
+                record_line += " | " + " | ".join(field_parts)
+            if c.get("content"):
+                record_line += f"\nExcerpt: {c['content'][:300]}"
+            ctx_lines.append(record_line)
+
+        synth_context = "\n\n".join(ctx_lines)
 
         logger.debug(
             "llm_synthesis_context_prepared",
@@ -809,6 +857,7 @@ async def search_domain_knowledge(
                 "- 'court_type': court or tribunal type (e.g. Supreme Court of India, High Court of Delhi)\n"
                 "- 'judge': judge, bench, justice, or coram name\n"
                 "- 'current_status': current status, outcome, or final disposition\n"
+                "- 'respondents': list of respondents in the case\n"
                 "Return valid JSON only. Do not invent external citations or facts."
             )
             prompt_source = "system_default"
@@ -832,7 +881,11 @@ async def search_domain_knowledge(
                 .replace("{query}", payload.query)
             )
         else:
-            user_prompt = f"Matching Case Records:\n{synth_context}\n\nUser Search Query: {payload.query}\n\nReturn the response strictly as a JSON object with 'cases' list."
+            user_prompt = f"Matching Case Records:\n{synth_context}\n\nUser Search Query: {payload.query}"
+
+        # Guarantee strict JSON output across small / local models
+        if "json" in system_prompt.lower() or '{"' in system_prompt or "{'" in system_prompt:
+            user_prompt += "\n\nCRITICAL INSTRUCTION: Respond ONLY with a valid raw JSON object strictly adhering to the schema. Do NOT include markdown codeblocks (```json), conversational text, introductory greetings, or commentary."
 
         logger.info(
             "domain_search_synthesize_prompt_resolved",
@@ -848,9 +901,11 @@ async def search_domain_knowledge(
         llm_router = LLMRouter()
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
-            llm = await llm_router.get_llm(customer_id=user_tenant_id, db=db, temperature=0.2)
+            from app.nodes.built_in.kb.response_generation_service import _clean_and_normalize_answer
+            llm = await llm_router.get_llm(customer_id=user_tenant_id, db=db, temperature=0.2, llm_config={"format": "json"})
             res = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
-            summary_text = res.content if hasattr(res, "content") else str(res)
+            raw_summary = res.content if hasattr(res, "content") else str(res)
+            summary_text = _clean_and_normalize_answer(raw_summary, system_prompt)
         except Exception as e:
             logger.info("search_llm_synthesis_fallback", trace_id=trace_id, info=str(e))
             fallback_cases = []
@@ -864,6 +919,7 @@ async def search_domain_knowledge(
                     "court_type": c.get("court", "Court Record"),
                     "judge": c.get("judge", "Hon'ble Bench"),
                     "current_status": c.get("disposition", "Disposed"),
+                    "respondents": c.get("respondents", []),
                 })
             summary_text = json.dumps({"cases": fallback_cases}, indent=2)
 

@@ -636,6 +636,7 @@ LEGAL_SEARCH_SYSTEM_PROMPT = (
     "- 'court_type': court or tribunal type (e.g. Supreme Court of India, High Court of Delhi)\n"
     "- 'judge': judge, bench, justice, or coram name\n"
     "- 'current_status': current status or final disposition\n"
+    "- 'respondents': list of respondents in the case\n"
     "Return valid JSON only. Do not invent external citations or facts."
 )
 

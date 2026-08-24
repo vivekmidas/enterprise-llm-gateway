@@ -173,7 +173,7 @@ async def rag_query(
         enable_generation=getattr(profile.generation, "enabled", True),
         temperature=profile.generation.temperature,
         max_generation_tokens=profile.generation.max_tokens,
-        system_prompt=profile.generation.system_prompt,
+        system_prompt=getattr(payload, "system_prompt", None),
         llm_config=profile.generation.model_dump(),
         llm_config_id=target_profile_id,
         llm_profile_id=target_profile_id,
@@ -218,6 +218,7 @@ async def debug_retrieve(
     )
     kb_res = await db.execute(kb_stmt)
     if not kb_res.scalars().all():
+        logger.error(f"Knowledge base(s) {payload.knowledge_base_ids} not found for customer '{customer_id}'.")
         raise HTTPException(
             status_code=404,
             detail=f"Knowledge base(s) {payload.knowledge_base_ids} not found or access denied for customer '{customer_id}'."
@@ -285,7 +286,7 @@ async def debug_generate(
     request = ResponseGenerationServiceRequest(
         query=payload.query,
         context=payload.context,
-        system_prompt=payload.system_prompt or profile.generation.system_prompt,
+        system_prompt=payload.system_prompt,
         temperature=payload.temperature,
         max_generation_tokens=payload.max_generation_tokens,
         customer_id=customer_id,

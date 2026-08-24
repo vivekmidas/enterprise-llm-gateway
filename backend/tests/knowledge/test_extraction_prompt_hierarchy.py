@@ -116,6 +116,7 @@ async def test_legal_search_prompt_and_schema():
     assert "court_type" in LEGAL_SEARCH_SYSTEM_PROMPT
     assert "judge" in LEGAL_SEARCH_SYSTEM_PROMPT
     assert "current_status" in LEGAL_SEARCH_SYSTEM_PROMPT
+    assert "respondents" in LEGAL_SEARCH_SYSTEM_PROMPT
     assert "search_system_prompt" in LEGAL_JUDGMENT_SCHEMA["prompts"]
 
 
