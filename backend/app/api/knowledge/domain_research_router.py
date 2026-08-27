@@ -368,29 +368,31 @@ def resolve_doc_judge(meta: dict) -> Any:
 
 # --- Dynamic Intent Categorization ---
 
+# ==============================================================================
+# BLOCK COMMENT: ENHANCED NATURAL LANGUAGE INTENT & TAG PARSING
+# Module: app/api/knowledge/domain_research_router.py
+# Purpose:
+#   Extracts structured explicit and inferred tags:
+#   1. Coram / Judge: Direct parsing for "all cases related to judge X", "cases for justice Y", "coram Z"
+#   2. Sections & Articles: "cases related to section 183", "Section 302/149", "Article 226", "Art 32"
+#   3. High Court & Supreme Court: All Indian High Courts, jurisdictions, and district locations
+#   4. Factual Years & Ranges: 4-digit years (e.g. 2018, 2006, 1993) and year ranges
+#   5. Case Finding Cues: Arguments, counter-arguments, submissions, findings, holding
+# ==============================================================================
+
 def parse_natural_language_intent(
     query_text: str,
     domain_fields: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Schema-driven intent parser:
-    Extracts dates/years, numeric codes, domain entities, and concepts dynamically
-    based on the domain's registered schema fields in DomainSchemaDB.
+    Schema-driven intent and tag parser:
+    Extracts dates/years, numeric codes, domain entities, and concepts dynamically.
     """
     intent: Dict[str, Any] = {
         "concept_query": query_text,
         "semantic_query": query_text,
         "extracted_filters": {},
         "extracted_concepts": [],
-        # Backward-compatible convenience keys
-        "extracted_judge": None,
-        "extracted_court": None,
-        "extracted_court_code": None,
-        "extracted_location": None,
-        "extracted_statute": None,
-        "extracted_section": None,
-        "extracted_year": None,
-        "extracted_disposition": None,
     }
 
     if not query_text:
@@ -400,76 +402,119 @@ def parse_natural_language_intent(
     extracted_filters: Dict[str, Any] = {}
 
     # 1. Generic Year Extraction (4-digit year e.g. 1980-2026)
-    year_match = re.search(r"\b(20[0-2][0-9]|19[8-9][0-9])\b", text)
+    year_match = re.search(r"\b(20[0-2][0-9]|19[7-9][0-9])\b", text)
     if year_match:
         year_val = int(year_match.group(1))
         extracted_filters["year"] = year_val
-        intent["extracted_year"] = year_val
 
-    # 2. Generic Numeric Section / Code Extraction (e.g. Section 438, Sec 148A, CS101)
-    sec_match = re.search(r"(?:Section|Sec\.|Sec|Code|No\.?)\s*([A-Za-z0-9\(\)]+)", text, re.IGNORECASE)
-    if sec_match:
-        sec_val = sec_match.group(1).strip()
-        extracted_filters["section"] = sec_val
-        intent["extracted_section"] = sec_val
-
-    # 3. Dynamic Authority / Entity Extraction (Handles Judge, Professor, Doctor, Officer, Petitioner, etc.)
-    entity_prefix_match = re.search(
-        r"(?:judge|justice|hon'ble|bench|presided\s+by|coram|before\s+justice|cases\s+for\s+justice|cases\s+for|before|professor|prof|dr|doctor|teacher|instructor)\s+([A-Za-z\.\s]+?)(?=\s+(?:in|at|with|under|for|against|court|regarding|on|about|involving|matters|\d|$))",
+    # 2. Sections and Articles Extraction (e.g. "cases related to section 183", "Section 302/149", "Article 226", "Sec 148A")
+    sec_match = re.search(
+        r"(?:(?:all\s+)?cases\s+(?:related\s+to|for|under|on|involving|citing)\s+)?(?:Section|Sec\.|Sec)\s*([0-9]+[A-Za-z0-9\(\)\/\s,-]*)",
         text,
         re.IGNORECASE,
     )
-    if entity_prefix_match:
-        extracted_name = entity_prefix_match.group(1).strip()
-        extracted_filters["judge"] = extracted_name
-        extracted_filters["entity"] = extracted_name
-        intent["extracted_judge"] = extracted_name
+    if sec_match:
+        sec_val = sec_match.group(1).strip()
+        # Clean trailing punctuation or noise
+        sec_val = re.sub(r"\s+(?:of|in|under|act|ipc|crpc|cpc|bns|bnss).*$", "", sec_val, flags=re.IGNORECASE).strip()
+        extracted_filters["section"] = sec_val
+        extracted_filters["statute"] = sec_val
+
+    art_match = re.search(
+        r"(?:(?:all\s+)?cases\s+(?:related\s+to|for|under|on|involving|citing)\s+)?(?:Article|Art\.|Art)\s*([0-9]+[A-Za-z0-9\(\)\/\s,-]*)",
+        text,
+        re.IGNORECASE,
+    )
+    if art_match:
+        art_val = art_match.group(1).strip()
+        art_val = re.sub(r"\s+(?:of|in|under|constitution).*$", "", art_val, flags=re.IGNORECASE).strip()
+        extracted_filters["article"] = art_val
+        if not extracted_filters.get("section"):
+            extracted_filters["section"] = art_val
+        if not extracted_filters.get("statute"):
+            extracted_filters["statute"] = f"Article {art_val}"
+
+    # 3. Coram / Judge Extraction (Handles "all cases related to judge x", "cases for justice y", "coram z", "before judge w")
+    judge_match = re.search(
+        r"(?:(?:all\s+)?cases\s+(?:related\s+to|for|of|by|before|presided\s+by)\s+)?(?:judge|justice|hon'ble(?:\s+mr\.|\s+mrs\.|\s+ms\.|\s+dr\.)?|bench|presided\s+by|coram|before\s+justice|before\s+judge|before)\s+([A-Za-z0-9\.\s]+?)(?=(?:\s+(?:in|at|with|under|for|against|court|regarding|on|about|involving|matters|section|sec|art|article|\d)|\s*$))",
+        text,
+        re.IGNORECASE,
+    )
+    if judge_match:
+        extracted_name = judge_match.group(1).strip()
+        # Clean leading honorifics
+        extracted_name = re.sub(r"^(?:justice|judge|hon'ble|mr|mrs|ms|dr)\.?\s+", "", extracted_name, flags=re.IGNORECASE).strip()
+        if len(extracted_name) > 1:
+            extracted_filters["judge"] = extracted_name
+            extracted_filters["coram"] = extracted_name
+            extracted_filters["entity"] = extracted_name
 
     # 4. Known Institutions / Courts / Organizations
     org_mappings = {
+        "jharkhand": ("High Court of Jharkhand at Ranchi", "High Court of Jharkhand", "Ranchi"),
+        "ranchi": ("High Court of Jharkhand at Ranchi", "High Court of Jharkhand", "Ranchi"),
+        "jamshedpur": ("High Court of Jharkhand at Ranchi", "High Court of Jharkhand", "Jamshedpur"),
         "delhi": ("High Court of Delhi", "7_26", "Delhi"),
         "bombay": ("Bombay High Court", "27_1", "Mumbai"),
+        "mumbai": ("Bombay High Court", "27_1", "Mumbai"),
         "calcutta": ("Calcutta High Court", "19_16", "Kolkata"),
+        "kolkata": ("Calcutta High Court", "19_16", "Kolkata"),
         "madras": ("Madras High Court", "33_10", "Chennai"),
+        "chennai": ("Madras High Court", "33_10", "Chennai"),
         "punjab": ("High Court of Punjab and Haryana", "3_22", "Chandigarh"),
         "haryana": ("High Court of Punjab and Haryana", "3_22", "Chandigarh"),
+        "chandigarh": ("High Court of Punjab and Haryana", "3_22", "Chandigarh"),
         "karnataka": ("High Court of Karnataka", "29_3", "Bengaluru"),
+        "bengaluru": ("High Court of Karnataka", "29_3", "Bengaluru"),
+        "bangalore": ("High Court of Karnataka", "29_3", "Bengaluru"),
+        "allahabad": ("High Court of Judicature at Allahabad", "Allahabad High Court", "Allahabad"),
+        "gujarat": ("High Court of Gujarat", "Gujarat High Court", "Ahmedabad"),
+        "patna": ("High Court of Judicature at Patna", "Patna High Court", "Patna"),
+        "rajasthan": ("High Court of Rajasthan", "Rajasthan High Court", "Jodhpur"),
+        "kerala": ("High Court of Kerala", "Kerala High Court", "Ernakulam"),
+        "madhya pradesh": ("High Court of Madhya Pradesh", "MP High Court", "Jabalpur"),
+        "telangana": ("High Court for the State of Telangana", "Telangana High Court", "Hyderabad"),
+        "hyderabad": ("High Court for the State of Telangana", "Telangana High Court", "Hyderabad"),
+        "andhra": ("High Court of Andhra Pradesh", "AP High Court", "Amaravati"),
+        "gauhati": ("Gauhati High Court", "Gauhati High Court", "Guwahati"),
         "supreme": ("Supreme Court of India", "SC", "New Delhi"),
     }
     for key, (c_name, c_code, loc) in org_mappings.items():
-        if key in text.lower():
+        if re.search(rf"\b{re.escape(key)}\b", text, re.IGNORECASE):
             extracted_filters["court"] = c_name
             extracted_filters["location"] = loc
-            intent["extracted_court"] = c_name
-            intent["extracted_court_code"] = c_code
-            intent["extracted_location"] = loc
             break
 
     # 5. Statute / Act / Policy Extraction
     statute_match = re.search(
-        r"((?:(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*\s+)?(?:CGST|IGST|SGST|CrPC|CPC|IPC|BNSS|BNS|NDPS|Arms Act|Customs Act|Finance Act|Income Tax Act|Income Tax|Arbitration Act|Arbitration)(?:\s+Act)?(?:\s+(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)?|(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*)",
+        r"((?:(?:Section|Sec\.|Sec)\s*\d+[\d\w\(\)]*\s+)?(?:CGST|IGST|SGST|CrPC|CPC|IPC|BNSS|BNS|NDPS|Arms Act|Customs Act|Finance Act|Income Tax Act|Income Tax|Arbitration Act|Arbitration)(?:\s+Act)?(?:\s+(?:Section|Sec\.|Sec)?\s*\d+[\d\w\(\)]*)?)",
         text,
         re.IGNORECASE,
     )
-    if statute_match:
+    if statute_match and statute_match.group(1).strip():
         stat_val = statute_match.group(1).strip()
         extracted_filters["statute"] = stat_val
-        intent["extracted_statute"] = stat_val
+        # If statute has a section number like "IPC 307", also populate section filter
+        num_match = re.search(r"\b(\d{1,4}[A-Za-z0-9\(\)\/\s,-]*)\b", stat_val)
+        if num_match and not extracted_filters.get("section"):
+            sec_num = num_match.group(1).strip()
+            extracted_filters["section"] = sec_num
+    elif not extracted_filters.get("statute") and extracted_filters.get("section"):
+        extracted_filters["statute"] = extracted_filters["section"]
 
     # 6. Disposition / Status
-    if re.search(r"allowed|quashed|acquitted|passed|granted", text, re.IGNORECASE):
+    if re.search(r"\b(allowed|quashed|acquitted|passed|granted|relief)\b", text, re.IGNORECASE):
         extracted_filters["disposition"] = "ALLOWED / QUASHED"
-        intent["extracted_disposition"] = "ALLOWED / QUASHED"
-    elif re.search(r"dismissed|rejected|denied|failed|convicted", text, re.IGNORECASE):
+    elif re.search(r"\b(dismissed|rejected|denied|failed|convicted)\b", text, re.IGNORECASE):
         extracted_filters["disposition"] = "DISMISSED / REJECTED"
-        intent["extracted_disposition"] = "DISMISSED / REJECTED"
 
     # 7. Extract Concepts dynamically
     candidate_concepts = [
         "anticipatory bail", "regular bail", "personal hearing", "electricity theft",
         "reassessment", "cheque bounce", "quashing of fir", "stay of proceedings",
         "unlawful eviction", "wrongful termination", "breach of contract", "quantum physics",
-        "machine learning", "organic chemistry", "financial audit"
+        "machine learning", "organic chemistry", "financial audit", "benefit of doubt",
+        "petitioner arguments", "respondent arguments", "findings"
     ]
     extracted_concepts = [c for c in candidate_concepts if c in text.lower()]
     intent["extracted_concepts"] = extracted_concepts
@@ -480,38 +525,130 @@ def parse_natural_language_intent(
     for v in extracted_filters.values():
         if isinstance(v, str) and len(v) > 2:
             cleaned_query = re.sub(re.escape(v), "", cleaned_query, flags=re.I)
-    cleaned_query = re.sub(r"\b(judge|justice|hon'ble|bench|court|in|at|under|before|for|prof|professor|dr)\b", "", cleaned_query, flags=re.I)
-    cleaned_query = " ".join(cleaned_query.split())
-    intent["semantic_query"] = cleaned_query if len(cleaned_query) > 5 else text
-
-    return intent
-    extracted_concepts = []
-    text_lower = text.lower()
-    for c in concept_candidates:
-        if c in text_lower:
-            extracted_concepts.append(c)
-    intent["extracted_concepts"] = extracted_concepts
-
-    # 7. Generate Cleaned Semantic Query
-    cleaned_query = text
-    if intent["extracted_judge"]:
-        cleaned_query = re.sub(
-            re.escape(intent["extracted_judge"]), "", cleaned_query, flags=re.I
-        )
-    if intent["extracted_court"]:
-        cleaned_query = re.sub(
-            re.escape(intent["extracted_court"]), "", cleaned_query, flags=re.I
-        )
     cleaned_query = re.sub(
-        r"\b(judge|justice|hon'ble|bench|court|in|at|under|before)\b",
+        r"\b(all\s+cases\s+related\s+to|cases\s+related\s+to|all\s+cases\s+of|cases\s+for|judge|justice|hon'ble|bench|coram|court|in|at|under|before|for|prof|professor|dr|section|sec|article|art)\b",
         "",
         cleaned_query,
         flags=re.I,
     )
     cleaned_query = " ".join(cleaned_query.split())
-    intent["semantic_query"] = cleaned_query if len(cleaned_query) > 5 else text
+    intent["semantic_query"] = cleaned_query if len(cleaned_query) > 3 else text
 
     return intent
+
+
+# ==============================================================================
+# BLOCK COMMENT: STRUCTURED CASE FINDINGS & SUBMISSIONS EXTRACTOR
+# Module: app/api/knowledge/domain_research_router.py
+# Purpose:
+#   Extracts structured legal findings from metadata:
+#   - Petitioner arguments (submissions, grounds)
+#   - Respondent arguments (counter-arguments, defenses)
+#   - Judicial findings & observations
+#   - Final holding, disposition, and relief
+#   - 500-word executive summary (case overview)
+# ==============================================================================
+
+def extract_case_findings(meta: dict) -> Dict[str, Any]:
+    """Extract structured arguments, counter-arguments, findings, and holding from metadata."""
+    if not isinstance(meta, dict):
+        return {
+            "petitioner_arguments": [],
+            "respondent_arguments": [],
+            "court_findings": None,
+            "holding": None,
+            "final_decision": None,
+            "relief": None,
+            "case_overview": "",
+            "one_line_summary": "",
+        }
+
+    extracted = (
+        meta.get("extracted_fields")
+        or meta.get("domain_info", {}).get("extracted_fields")
+        or meta
+    )
+
+    # 1. High Court / Appellate Submissions
+    hc_args = extracted.get("high_court_arguments") or {}
+    pet_args = hc_args.get("petitioner_arguments") or []
+    resp_args = hc_args.get("respondent_arguments") or []
+
+    # 2. Judicial Findings & Observations
+    labour_findings = extracted.get("labour_court_findings") or {}
+    court_findings = (
+        labour_findings.get("findings")
+        or labour_findings.get("misconduct")
+        or labour_findings.get("natural_justice")
+        or extracted.get("findings")
+    )
+
+    # 3. Holding, Ratio Decidendi & Disposition
+    judgment_status = extracted.get("judgment_status") or {}
+    holding = (
+        judgment_status.get("holding")
+        or judgment_status.get("ratio_decidendi")
+        or extracted.get("ratio_snippet")
+    )
+    final_decision = (
+        judgment_status.get("final_decision")
+        or judgment_status.get("disposition")
+        or extracted.get("outcome")
+    )
+    relief = judgment_status.get("relief")
+
+    # 4. 500-Word Executive Case Summary
+    exec_summary = extracted.get("executive_case_summary") or {}
+    case_overview = (
+        exec_summary.get("case_overview")
+        or meta.get("summary")
+        or meta.get("case_summary")
+        or ""
+    )
+    one_line_summary = exec_summary.get("one_line_summary") or ""
+
+    return {
+        "petitioner_arguments": pet_args if isinstance(pet_args, list) else [str(pet_args)],
+        "respondent_arguments": resp_args if isinstance(resp_args, list) else [str(resp_args)],
+        "court_findings": court_findings,
+        "holding": holding,
+        "final_decision": final_decision,
+        "relief": relief,
+        "case_overview": case_overview,
+        "one_line_summary": one_line_summary,
+    }
+
+
+# ==============================================================================
+# BLOCK COMMENT: TAXONOMY AUTOCOMPLETE & TERM SUGGESTIONS ENDPOINT
+# Module: app/api/knowledge/domain_research_router.py
+# Purpose: Powers unified smart typeahead in UI by querying self-learning master taxonomy.
+# ==============================================================================
+
+@router.get("/taxonomy/suggest")
+@router.get("/legal/taxonomy/suggest")
+@router.get("/research/taxonomy/suggest")
+async def get_taxonomy_suggestions(
+    q: str = Query(..., min_length=1, description="Typeahead search term"),
+    category: Optional[str] = Query(None, description="Optional category filter (court, judge, statute, section, disposition)"),
+    limit: int = Query(12, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns auto-complete master taxonomy suggestions (Courts, Statutes, Judges, Dispositions)
+    dynamically populated and updated by AI during document ingestion.
+    """
+    from app.knowledge.document_tag_service import suggest_taxonomy_terms
+    user_tenant_id = getattr(current_user, "customer_id", None)
+    results = await suggest_taxonomy_terms(
+        db=db,
+        query_str=q,
+        customer_id=user_tenant_id,
+        category=category,
+        limit=limit,
+    )
+    return {"suggestions": results, "query": q}
 
 
 # --- Core Universal Search Endpoint (Mounted at /search, /legal/search, /research/search) ---
@@ -525,7 +662,7 @@ async def search_domain_knowledge(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Universal Domain Knowledge Search (Tri-Path Retrieval with Dynamic DomainSchemaDB Matching).
+    Universal Domain Knowledge Search (Tri-Path Retrieval with Dynamic Two-Stage Domain Pre-Filtering).
     """
     trace_id = f"search-{uuid.uuid4().hex[:8]}"
     start_time = time.perf_counter()
@@ -567,12 +704,34 @@ async def search_domain_knowledge(
             target_filters[k] = v
 
     active_concepts = payload.concepts or intent.get("extracted_concepts") or []
-    candidates: Dict[str, Dict[str, Any]] = {}
+    has_specific_filters = bool(target_filters)
 
-    # Path A: MySQL JSON Documents Search
+    candidates: Dict[str, Dict[str, Any]] = {}
+    matched_document_ids: Set[str] = set()
+
+    # ==============================================================================
+    # BLOCK COMMENT: STAGE 1 - INDEXED SQL TAG SEEK & DOCUMENT METADATA PRE-FILTERING
+    # Module: app/api/knowledge/domain_research_router.py
+    # Purpose:
+    #   1. Executes instant O(log N) indexed SQL seek on document_tags table (Exact + Phonetic).
+    #   2. Evaluates remaining documents against dynamic tags using TypedMetadataMatcher.
+    #   3. Resolves matched document IDs (D_matched) to strictly scope Stage 2 chunk & vector search.
+    # ==============================================================================
     t_sql_start = time.perf_counter()
     mysql_doc_matches = 0
     try:
+        from app.knowledge.document_tag_service import query_candidate_document_ids, sync_document_tags
+
+        # Fast indexed SQL seeks on document_tags table
+        if has_specific_filters and user_tenant_id:
+            indexed_candidate_ids = await query_candidate_document_ids(
+                db=db,
+                customer_id=user_tenant_id,
+                filters=target_filters,
+                knowledge_base_id=payload.knowledge_base_id,
+            )
+            matched_document_ids.update(indexed_candidate_ids)
+
         where_clauses = [
             or_(
                 KnowledgeDocumentDB.customer_id == user_tenant_id,
@@ -583,35 +742,50 @@ async def search_domain_knowledge(
             where_clauses.append(KnowledgeDocumentDB.knowledge_base_id == payload.knowledge_base_id)
 
         doc_stmt = select(KnowledgeDocumentDB).where(*where_clauses)
-        doc_res = await db.execute(doc_stmt.limit(50))
+        doc_res = await db.execute(doc_stmt.limit(100))
         db_docs = doc_res.scalars().all()
 
         for d in db_docs:
             meta = d.metadata_json or {}
             flat_meta = flatten_metadata_fields(meta)
 
-            # Execute typed metadata match using domain matcher
-            doc_score, matched_filters = matcher.match_document(
-                query=payload.query,
-                metadata=meta,
-                filters=target_filters,
-            )
+            # Lazy sync tags into document_tags if document was ingested earlier without tags
+            if d.id in matched_document_ids:
+                doc_matches_criteria = True
+                matched_filters = [f"tag_match:{fk}:{fv}" for fk, fv in target_filters.items()]
+                doc_score = 0.5
+            else:
+                # Execute typed metadata match using domain matcher (Soundex, Metaphone, NYSIIS, Jaro-Winkler, Exact)
+                doc_score, matched_filters = matcher.match_document(
+                    query=payload.query,
+                    metadata=meta,
+                    filters=target_filters,
+                )
 
-            # Check concepts in title or document
-            for c in active_concepts:
-                if c.lower() in (d.name or "").lower():
-                    doc_score += 0.3
-                    matched_filters.append(f"concept:{c}")
+                # Check concepts in title or document
+                for c in active_concepts:
+                    if c.lower() in (d.name or "").lower():
+                        doc_score += 0.3
+                        matched_filters.append(f"concept:{c}")
 
-            # Check query keywords in document title
-            query_words = [w for w in payload.query.lower().split() if len(w) > 3]
-            for w in query_words:
-                if w in (d.name or "").lower():
-                    doc_score += 0.2
-                    matched_filters.append(f"title_keyword:{w}")
+                # Check query keywords in document title
+                query_words = [w for w in payload.query.lower().split() if len(w) > 3]
+                for w in query_words:
+                    if w in (d.name or "").lower():
+                        doc_score += 0.2
+                        matched_filters.append(f"title_keyword:{w}")
 
-            # Only add to candidates if at least one filter or field matched
-            if matched_filters:
+                # Determine whether this document meets filter criteria
+                if has_specific_filters:
+                    doc_matches_criteria = any(
+                        any(fk.lower() in tag.lower() for fk in target_filters.keys())
+                        for tag in matched_filters
+                    ) or (doc_score > 0.3)
+                else:
+                    doc_matches_criteria = bool(matched_filters)
+
+            if doc_matches_criteria:
+                matched_document_ids.add(str(d.id))
                 doc_key = f"db_doc_{d.id}"
                 final_score = min(round(0.5 + doc_score, 2), 1.0)
                 extracted_data = (
@@ -619,21 +793,30 @@ async def search_domain_knowledge(
                     or meta.get("domain_info", {}).get("extracted_fields")
                     or meta
                 )
+                case_findings = extract_case_findings(meta)
 
                 candidates[doc_key] = {
                     "id": str(d.id),
                     "title": d.name,
                     "metadata": meta,
                     "extracted_fields": extracted_data,
-                    "summary": meta.get("summary") or meta.get("executive_case_summary") or "",
+                    "summary": meta.get("summary") or meta.get("executive_case_summary") or case_findings.get("case_overview") or "",
                     "relevance_score": final_score,
                     "source": "mysql_metadata",
                     "matched_tags": matched_filters,
+                    "findings": case_findings,
+                    "petitioner_arguments": case_findings.get("petitioner_arguments"),
+                    "respondent_arguments": case_findings.get("respondent_arguments"),
+                    "court_findings": case_findings.get("court_findings"),
+                    "holding": case_findings.get("holding"),
+                    "final_decision": case_findings.get("final_decision"),
+                    "case_overview": case_findings.get("case_overview"),
+                    "one_line_summary": case_findings.get("one_line_summary"),
                     **{k: v for k, v in flat_meta.items() if isinstance(v, (str, int, float, bool, list))},
                 }
                 mysql_doc_matches += 1
                 logger.debug(
-                    "path_a_document_matched",
+                    "stage1_document_matched",
                     trace_id=trace_id,
                     doc_id=str(d.id),
                     doc_title=d.name,
@@ -645,75 +828,102 @@ async def search_domain_knowledge(
 
     t_sql_ms = round((time.perf_counter() - t_sql_start) * 1000, 2)
     logger.info(
-        "mysql_json_search_completed",
+        "stage1_document_filter_completed",
         trace_id=trace_id,
         duration_ms=t_sql_ms,
         matches_count=mysql_doc_matches,
+        matched_doc_ids=list(matched_document_ids),
     )
 
-    # Path B: MySQL Knowledge Chunk Search
+    # ==============================================================================
+    # BLOCK COMMENT: STAGE 2 - TARGETED CHUNK & VECTOR SEARCH ON MATCHED DOCUMENTS
+    # When filters/tags are active and matched documents are resolved, chunk & vector
+    # searches are strictly constrained to candidate_document_ids.
+    # ==============================================================================
     t_chunk_start = time.perf_counter()
     chunk_matches_count = 0
     try:
+        chunk_filters = [
+            or_(
+                KnowledgeChunkDB.customer_id == user_tenant_id,
+                KnowledgeChunkDB.customer_id == str(user_tenant_id),
+            )
+        ]
+        # Scope chunk search strictly to pre-filtered documents when specific filters matched
+        if matched_document_ids and has_specific_filters:
+            chunk_filters.append(KnowledgeChunkDB.document_id.in_(list(matched_document_ids)))
+
         if active_concepts:
             chunk_conditions = [
                 KnowledgeChunkDB.content.ilike(f"%{concept}%")
                 for concept in active_concepts
             ]
-            chunk_stmt = (
-                select(KnowledgeChunkDB)
-                .where(
-                    or_(
-                        KnowledgeChunkDB.customer_id == user_tenant_id,
-                        KnowledgeChunkDB.customer_id == str(user_tenant_id),
-                    ),
-                    or_(*chunk_conditions),
-                )
-                .limit(20)
+            chunk_filters.append(or_(*chunk_conditions))
+
+        chunk_stmt = (
+            select(KnowledgeChunkDB)
+            .where(*chunk_filters)
+            .limit(25)
+        )
+        chunk_res = await db.execute(chunk_stmt)
+        chunks = chunk_res.scalars().all()
+        for ch in chunks:
+            doc_stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == ch.document_id)
+            doc_res = await db.execute(doc_stmt)
+            doc = doc_res.scalar_one_or_none()
+            doc_title = doc.name if doc else f"Document-{ch.document_id}"
+            doc_meta = (doc.metadata_json or {}) if doc else {}
+            item_key = f"chunk_{ch.id}"
+            matched_concept_tags = [f"concept:{c}" for c in active_concepts if c.lower() in (ch.content or "").lower()]
+            if not matched_concept_tags:
+                matched_concept_tags = [f"doc_filter_match:{ch.document_id}"]
+
+            ch_extracted = (
+                doc_meta.get("extracted_fields")
+                or doc_meta.get("domain_info", {}).get("extracted_fields")
+                or doc_meta
             )
-            chunk_res = await db.execute(chunk_stmt)
-            chunks = chunk_res.scalars().all()
-            for ch in chunks:
-                doc_stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == ch.document_id)
-                doc_res = await db.execute(doc_stmt)
-                doc = doc_res.scalar_one_or_none()
-                doc_title = doc.name if doc else f"Document-{ch.document_id}"
-                doc_meta = (doc.metadata_json or {}) if doc else {}
-                item_key = f"chunk_{ch.id}"
-                matched_concept_tags = [f"concept:{c}" for c in active_concepts if c.lower() in (ch.content or "").lower()]
+            ch_findings = extract_case_findings(doc_meta)
 
-                ch_extracted = (
-                    doc_meta.get("extracted_fields")
-                    or doc_meta.get("domain_info", {}).get("extracted_fields")
-                    or doc_meta
-                )
-
-                candidates[item_key] = {
-                    "id": str(ch.document_id),
-                    "chunk_id": str(ch.id),
-                    "title": doc_title,
-                    "metadata": doc_meta,
-                    "extracted_fields": ch_extracted,
-                    "content": ch.content or "",
-                    "summary": doc_meta.get("summary") or doc_meta.get("executive_case_summary") or "",
-                    "relevance_score": 0.85,
-                    "source": "mysql_chunk_fts",
-                    "matched_tags": matched_concept_tags,
-                    **{k: v for k, v in flatten_metadata_fields(doc_meta).items() if isinstance(v, (str, int, float, bool, list))},
-                }
-                chunk_matches_count += 1
-                logger.debug(
-                    "path_b_chunk_matched",
-                    trace_id=trace_id,
-                    chunk_id=str(ch.id),
-                    doc_id=str(ch.document_id),
-                    concepts=matched_concept_tags,
-                    content_preview=(ch.content or "")[:80],
-                )
+            candidates[item_key] = {
+                "id": str(ch.document_id),
+                "chunk_id": str(ch.id),
+                "title": doc_title,
+                "metadata": doc_meta,
+                "extracted_fields": ch_extracted,
+                "content": ch.content or "",
+                "summary": doc_meta.get("summary") or doc_meta.get("executive_case_summary") or ch_findings.get("case_overview") or "",
+                "relevance_score": 0.88,
+                "source": "mysql_chunk_fts",
+                "matched_tags": matched_concept_tags,
+                "findings": ch_findings,
+                "petitioner_arguments": ch_findings.get("petitioner_arguments"),
+                "respondent_arguments": ch_findings.get("respondent_arguments"),
+                "court_findings": ch_findings.get("court_findings"),
+                "holding": ch_findings.get("holding"),
+                "final_decision": ch_findings.get("final_decision"),
+                "case_overview": ch_findings.get("case_overview"),
+                "one_line_summary": ch_findings.get("one_line_summary"),
+                **{k: v for k, v in flatten_metadata_fields(doc_meta).items() if isinstance(v, (str, int, float, bool, list))},
+            }
+            chunk_matches_count += 1
+            logger.debug(
+                "stage2_chunk_matched",
+                trace_id=trace_id,
+                chunk_id=str(ch.id),
+                doc_id=str(ch.document_id),
+                concepts=matched_concept_tags,
+            )
     except Exception as e:
         logger.warning("mysql_chunk_search_error", trace_id=trace_id, error=str(e))
 
     t_chunk_ms = round((time.perf_counter() - t_chunk_start) * 1000, 2)
+    logger.info(
+        "stage2_chunk_search_completed",
+        trace_id=trace_id,
+        duration_ms=t_chunk_ms,
+        matches_count=chunk_matches_count,
+    )
     logger.info(
         "mysql_chunk_search_completed",
         trace_id=trace_id,

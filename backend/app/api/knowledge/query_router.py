@@ -58,14 +58,17 @@ class QueryRequest(BaseModel):
 
 
 class DebugRetrievalRequest(BaseModel):
-    """Admin debug — retrieval only, accepts explicit profile or overrides."""
+    """Retrieval request — direct vector DB / hybrid search without generation."""
     query: str = Field(min_length=1)
-    knowledge_base_ids: List[str]
+    knowledge_base_ids: Optional[List[str]] = Field(default=None, description="Optional list of KBs. If omitted, uses tenant active KBs.")
     profile_id: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=50)
     min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     enable_reranking: Optional[bool] = None
+    rerank_model: Optional[str] = None 
+    rerank_limit: Optional[int] = None
     approach: Optional[str] = None
+    enable_rrf: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -183,68 +186,83 @@ async def rag_query(
 
 
 # ---------------------------------------------------------------------------
-# Admin / debug endpoints
+# Direct VectorDB Retrieval Endpoint
 # ---------------------------------------------------------------------------
 
 @router.post("/retrieve", response_model=RetrievalResponse, status_code=status.HTTP_200_OK)
 async def debug_retrieve(
     payload: DebugRetrievalRequest,
-    current_user: User = Depends(dynamic_api_guard),
+    current_user: User = Depends(get_current_user),
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Admin-only: retrieval without generation.
-    Useful for debugging search quality and reranking.
+    Direct VectorDB / Hybrid Retrieval endpoint without LLM hallucination.
+    Uses tenant's assigned profile and knowledge bases to fetch grounded results.
     """
     customer_id = current_user.customer_id
     if not customer_id:
         raise HTTPException(status_code=400, detail="Customer ID is required.")
 
-    if not payload.knowledge_base_ids:
-        raise HTTPException(status_code=400, detail="At least one knowledge base ID is required.")
-
-    target_profile_id = payload.profile_id
-    target_kb_id = str(payload.knowledge_base_ids[0]) if payload.knowledge_base_ids else None
-
     from sqlalchemy import or_
     from app.models.db_models import KnowledgeBaseDB
-    kb_stmt = select(KnowledgeBaseDB).where(
-        KnowledgeBaseDB.id.in_([str(k) for k in payload.knowledge_base_ids]),
-        or_(
-            KnowledgeBaseDB.customer_id == str(customer_id),
-            KnowledgeBaseDB.customer_id == customer_id,
+
+    target_kb_ids = [str(k) for k in (payload.knowledge_base_ids or [])]
+    if not target_kb_ids:
+        kb_stmt = select(KnowledgeBaseDB).where(
+            or_(
+                KnowledgeBaseDB.customer_id == str(customer_id),
+                KnowledgeBaseDB.customer_id == customer_id,
+            )
         )
-    )
-    kb_res = await db.execute(kb_stmt)
-    if not kb_res.scalars().all():
-        logger.error(f"Knowledge base(s) {payload.knowledge_base_ids} not found for customer '{customer_id}'.")
-        raise HTTPException(
-            status_code=404,
-            detail=f"Knowledge base(s) {payload.knowledge_base_ids} not found or access denied for customer '{customer_id}'."
+        kb_res = await db.execute(kb_stmt)
+        tenant_kbs = kb_res.scalars().all()
+        if not tenant_kbs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No knowledge bases found for customer '{customer_id}'."
+            )
+        target_kb_ids = [str(kb.id) for kb in tenant_kbs]
+    else:
+        kb_stmt = select(KnowledgeBaseDB).where(
+            KnowledgeBaseDB.id.in_(target_kb_ids),
+            or_(
+                KnowledgeBaseDB.customer_id == str(customer_id),
+                KnowledgeBaseDB.customer_id == customer_id,
+            )
         )
+        kb_res = await db.execute(kb_stmt)
+        if not kb_res.scalars().all():
+            logger.error(f"Knowledge base(s) {target_kb_ids} not found for customer '{customer_id}'.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Knowledge base(s) {target_kb_ids} not found or access denied for customer '{customer_id}'."
+            )
+
+    target_profile_id = payload.profile_id
+    target_kb_id = target_kb_ids[0] if target_kb_ids else None
 
     resolver = ProfileResolver(db=db)
     profile = await resolver.resolve_for_knowledge_base(
         knowledge_base_id=target_kb_id,
         customer_id=customer_id,
         profile_id=target_profile_id,
-        allow_fallback=False,
+        allow_fallback=True,
     )
 
     request = RetrievalServiceRequest(
         customer_id=customer_id,
         user_id=(current_user.id) if current_user.id else None,
         query=payload.query,
-        knowledge_base_ids=payload.knowledge_base_ids,
-        top_k=payload.top_k,
+        knowledge_base_ids=target_kb_ids,
+        top_k=payload.top_k or profile.search.top_k,
         min_score=payload.min_score if payload.min_score is not None else profile.search.min_score,
         enable_reranking=payload.enable_reranking if payload.enable_reranking is not None else profile.reranking.enabled,
         rerank_url=profile.reranking.url,
-        rerank_model=payload.rerank_model if hasattr(payload, "rerank_model") and payload.rerank_model else profile.reranking.model,
-        rerank_limit=payload.rerank_limit if hasattr(payload, "rerank_limit") and payload.rerank_limit else profile.reranking.candidate_limit,
+        rerank_model=profile.reranking.model,
+        rerank_limit=payload.rerank_limit if payload.rerank_limit is not None else profile.reranking.candidate_limit,
         approach=payload.approach or profile.search.approach,
-        enable_rrf=payload.enable_rrf if hasattr(payload, "enable_rrf") and payload.enable_rrf is not None else profile.search.enable_rrf,
+        enable_rrf=payload.enable_rrf if payload.enable_rrf is not None else profile.search.enable_rrf,
         metadata=payload.metadata,
     )
 
@@ -255,11 +273,11 @@ async def debug_retrieve(
 @router.post("/generate", response_model=ResponseGenerationResult, status_code=status.HTTP_200_OK)
 async def debug_generate(
     payload: DebugGenerateRequest,
-    current_user: User = Depends(dynamic_api_guard),
+    current_user: User = Depends(get_current_user),
     generation_service: ResponseGenerationService = Depends(get_response_generation_service),
     db: AsyncSession = Depends(get_db),
 ):
-    """Admin-only: generate a response from a provided context object."""
+    """Generate a response from a provided context object using resolved LLM profile."""
     customer_id = current_user.customer_id
     if not customer_id:
         raise HTTPException(status_code=400, detail="Customer ID is required.")
@@ -280,7 +298,7 @@ async def debug_generate(
         knowledge_base_id=target_kb_id,
         customer_id=customer_id,
         profile_id=target_profile_id,
-        allow_fallback=False,
+        allow_fallback=True,
     )
 
     request = ResponseGenerationServiceRequest(

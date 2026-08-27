@@ -44,6 +44,7 @@ class KnowledgeDocumentCreate(BaseModel):
 class KnowledgeDocumentUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     metadata: Optional[Dict[str, Any]] = None
+    tags: Optional[List[Any]] = None
     status: Optional[str] = None
 
 
@@ -59,6 +60,7 @@ class KnowledgeDocumentResponse(BaseModel):
     mime_type: Optional[str]
 
     metadata_json: Optional[Dict[str, Any]]
+    tags: Optional[List[Dict[str, Any]]] = None
 
     status: str
     error_message: Optional[str]

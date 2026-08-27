@@ -70,9 +70,9 @@ class ProfileResolver:
         return self._system_defaults()
 
     # ==============================================================================
-    # BLOCK COMMENT: KNOWLEDGE BASE ATTACHED PROFILE RESOLUTION
-    # Resolves ProfileSettings for a given Knowledge Base by inspecting KB settings
-    # for attached llm_profile_id, raising error if KB/profile is not present.
+    # BLOCK COMMENT: KNOWLEDGE BASE PROFILE RESOLUTION
+    # Resolves ProfileSettings by giving priority to explicit profile_id, then
+    # tenant's active/default profile, then KB attached profile fallback.
     # ==============================================================================
     async def resolve_for_knowledge_base(
         self,
@@ -81,7 +81,7 @@ class ProfileResolver:
         profile_id: Optional[Union[str, int]] = None,
         allow_fallback: bool = False,
     ) -> ProfileSettings:
-        """Resolve ProfileSettings using explicit profile_id, KB attached profile, or tenant fallback."""
+        """Resolve ProfileSettings using explicit profile_id, tenant active profile, or KB attached profile."""
         from fastapi import HTTPException
         from app.models.db_models import KnowledgeBaseDB
 
@@ -100,11 +100,8 @@ class ProfileResolver:
                         status_code=404,
                         detail=f"Knowledge Base '{knowledge_base_id}' not found or access denied."
                     )
-            elif not target_profile_id:
-                if target_customer_id is None:
-                    target_customer_id = kb.customer_id
-                if kb.settings and isinstance(kb.settings, dict):
-                    target_profile_id = kb.settings.get("llm_profile_id")
+            elif not target_customer_id:
+                target_customer_id = kb.customer_id
 
         return await self.resolve(
             profile_id=target_profile_id,
@@ -261,6 +258,15 @@ class ProfileResolver:
             profile = result.scalar_one_or_none()
             if profile and profile.settings:
                 logger.debug("profile_resolved_by_is_default_flag")
+                return profile.settings
+
+            # Try first available profile for tenant
+            result_any = await self.db.execute(
+                select(LLMProfileDB).where(LLMProfileDB.customer_id == str_cid).limit(1)
+            )
+            profile = result_any.scalar_one_or_none()
+            if profile and profile.settings:
+                logger.debug("profile_resolved_by_first_tenant_profile")
                 return profile.settings
 
         logger.info("no_profile_found_using_system_defaults", extra={"customer_id": customer_id})

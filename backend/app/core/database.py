@@ -224,6 +224,30 @@ def _refresh_users_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id VARCHAR(36)")
 
 
+def _refresh_taxonomy_terms_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("taxonomy_terms"):
+        return
+
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE taxonomy_terms MODIFY COLUMN nysiis_code VARCHAR(100)")
+        sync_conn.exec_driver_sql("ALTER TABLE taxonomy_terms MODIFY COLUMN metaphone_code VARCHAR(100)")
+        sync_conn.exec_driver_sql("ALTER TABLE taxonomy_terms MODIFY COLUMN soundex_code VARCHAR(50)")
+    except Exception:
+        pass
+
+
+def _refresh_document_tag_mappings_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("document_tag_mappings"):
+        return
+
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE document_tag_mappings MODIFY COLUMN tag_id VARCHAR(36) NULL")
+    except Exception:
+        pass
+
+
 async def init_db():
     """Initializes the database schema."""
     await engine.dispose()
@@ -243,6 +267,8 @@ async def init_db():
         await conn.run_sync(_refresh_knowledge_bases_table)
         await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(_refresh_ekp_documents_table)
+        await conn.run_sync(_refresh_taxonomy_terms_table)
+        await conn.run_sync(_refresh_document_tag_mappings_table)
         await conn.run_sync(Base.metadata.create_all)
 
     await seed_default_customer_and_admin()

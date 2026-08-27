@@ -162,6 +162,226 @@ def filter_ungrounded_fields(fields_dict: dict[str, Any], raw_text: str) -> dict
 
 
 # =====================================================================
+# BLOCK COMMENT: CANONICAL FIELD ALIAS DICTIONARY & RECONCILIATION
+# Purpose:
+# 1. Maps drifted LLM keys (coram -> judge, case_numbers -> case_number) to single SOT keys.
+# 2. Ensures extracted_fields strictly adheres to target schema definitions.
+# 3. Routes any unmapped / out-of-schema attributes into extra_fields.
+# =====================================================================
+FIELD_CANONICAL_ALIASES: dict[str, str] = {
+    # Judicial / Coram / Judge
+    "coram": "judge",
+    "judges": "judge",
+    "bench": "judge",
+    "honble_judge": "judge",
+    "honble_justice": "judge",
+    "justice": "judge",
+    "presiding_judge": "judge",
+    "court_name": "court",
+    "forum": "court",
+    "tribunal": "court",
+    "tribunal_name": "court",
+    "bench_location": "location",
+    "court_location": "location",
+    "jurisdiction": "location",
+
+    # Case Identification & Timeline
+    "case_numbers": "case_number",
+    "case_no": "case_number",
+    "caseno": "case_number",
+    "appeal_number": "case_number",
+    "appeal_no": "case_number",
+    "petition_number": "case_number",
+    "petition_no": "case_number",
+    "citation_number": "citation",
+    "citations": "citation",
+    "judgment_date": "decision_date",
+    "order_date": "decision_date",
+    "date_of_judgment": "decision_date",
+    "date_of_decision": "decision_date",
+    "date_of_order": "decision_date",
+    "case_date": "decision_date",
+    "related_cases": "connected_cases",
+    "connected_case": "connected_cases",
+    "other_cases": "connected_cases",
+
+    # Parties & Advocates
+    "petitioner": "petitioners",
+    "appellant": "appellants",
+    "claimant": "petitioners",
+    "claimants": "petitioners",
+    "applicant": "petitioners",
+    "applicants": "petitioners",
+    "respondent": "respondents",
+    "opponent": "respondents",
+    "opponents": "respondents",
+    "defendant": "defendants",
+    "accused": "defendants",
+    "prosecutor": "prosecutors",
+    "prosecution": "prosecutors",
+    "advocate": "advocates",
+    "lawyer": "advocates",
+    "lawyers": "advocates",
+    "counsel": "advocates",
+    "counsels": "advocates",
+    "legal_counsel": "advocates",
+
+    # Statutes & Sections
+    "act": "statutes",
+    "acts": "statutes",
+    "statute": "statutes",
+    "statutes_cited": "statutes",
+    "section": "sections",
+    "section_involved": "sections",
+    "key_sections": "sections",
+    "sections_involved": "sections",
+    "provisions": "sections",
+    "provision": "sections",
+    "article": "sections",
+    "articles": "sections",
+    "articles_involved": "sections",
+
+    # Outcomes & Findings
+    "disposition": "final_decision",
+    "outcome": "final_decision",
+    "verdict": "final_decision",
+    "order_type": "judgment_type",
+}
+
+
+def _reconcile_dict_keys(d: dict[str, Any], allowed_props: set[str] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reconciles keys in a dictionary using canonical aliases and separates unmapped properties."""
+    from app.knowledge.document_tag_service import normalize_standard_date
+    clean_dict: dict[str, Any] = {}
+    extra_dict: dict[str, Any] = {}
+
+    for raw_k, raw_v in d.items():
+        k_str = str(raw_k).strip()
+        k_lower = k_str.lower()
+        k_norm = k_lower.replace(" ", "_")
+
+        # Canonical target name
+        canon_k = FIELD_CANONICAL_ALIASES.get(k_norm) or FIELD_CANONICAL_ALIASES.get(k_lower) or k_norm
+
+        if isinstance(raw_v, dict):
+            sub_clean, sub_extra = _reconcile_dict_keys(raw_v)
+            raw_v = {**sub_clean, **sub_extra}
+        elif isinstance(raw_v, list):
+            # If list of dicts (like connected_cases), reconcile each item
+            norm_list = []
+            for item in raw_v:
+                if isinstance(item, dict):
+                    i_clean, i_extra = _reconcile_dict_keys(item)
+                    norm_list.append({**i_clean, **i_extra})
+                else:
+                    norm_list.append(item)
+            raw_v = norm_list
+        elif isinstance(raw_v, str) and ("date" in canon_k or "date" in k_norm):
+            norm_date = normalize_standard_date(raw_v)
+            if norm_date:
+                raw_v = norm_date
+
+        if allowed_props is not None:
+            # Check if canon_k or k_norm belongs to allowed property set
+            if canon_k in allowed_props:
+                clean_dict[canon_k] = raw_v
+            elif k_norm in allowed_props:
+                clean_dict[k_norm] = raw_v
+            else:
+                extra_dict[k_str] = raw_v
+        else:
+            clean_dict[canon_k] = raw_v
+
+    return clean_dict, extra_dict
+
+
+def reconcile_extracted_payload(
+    extracted_fields: dict[str, Any],
+    extra_fields: dict[str, Any],
+    fields: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Deterministically reconciles extracted fields against schema keys and known canonical aliases.
+    - Resolves drifted names (e.g. coram -> judge, case_numbers -> case_number, acts -> statutes).
+    - Ensures extracted_fields contains ONLY valid schema fields.
+    - Automatically routes any unmapped or extra keys to extra_fields.
+    """
+    clean_extracted: dict[str, Any] = {}
+    clean_extra: dict[str, Any] = dict(extra_fields or {})
+
+    if not fields:
+        # Schema-free: apply canonical key normalization across all fields
+        norm_extracted, unmapped = _reconcile_dict_keys(extracted_fields or {})
+        clean_extracted.update(norm_extracted)
+        clean_extra.update(unmapped)
+        return clean_extracted, clean_extra
+
+    # Build schema lookup maps
+    schema_key_map: dict[str, str] = {}
+    schema_prop_map: dict[str, set[str]] = {}
+
+    for f in fields:
+        orig_k = f.get("key")
+        if not orig_k:
+            continue
+        k_lower = orig_k.lower().strip()
+        schema_key_map[k_lower] = orig_k
+        schema_key_map[k_lower.replace("_", "")] = orig_k
+        lbl = f.get("label")
+        if lbl:
+            schema_key_map[lbl.lower().replace(" ", "_").strip()] = orig_k
+            schema_key_map[lbl.lower().replace(" ", "").strip()] = orig_k
+
+        # Extract nested properties if defined in schema
+        props = f.get("properties")
+        if isinstance(props, dict):
+            prop_keys = set()
+            for pk in props.keys():
+                prop_keys.add(pk.lower())
+                # Add aliases pointing to this subprop
+                for alias_k, canon_target in FIELD_CANONICAL_ALIASES.items():
+                    if canon_target == pk.lower():
+                        prop_keys.add(alias_k)
+            schema_prop_map[orig_k] = prop_keys
+
+    for raw_k, raw_v in (extracted_fields or {}).items():
+        k_str = str(raw_k).strip()
+        k_lower = k_str.lower()
+        k_no_us = k_lower.replace("_", "").replace(" ", "")
+
+        # 1. Direct schema match or alias match
+        target_schema_key = schema_key_map.get(k_lower) or schema_key_map.get(k_no_us)
+        if not target_schema_key:
+            canon_alias = FIELD_CANONICAL_ALIASES.get(k_lower)
+            if canon_alias:
+                target_schema_key = schema_key_map.get(canon_alias) or schema_key_map.get(canon_alias.replace("_", ""))
+
+        if target_schema_key:
+            allowed_subprops = schema_prop_map.get(target_schema_key)
+            if isinstance(raw_v, dict):
+                sub_clean, sub_extra = _reconcile_dict_keys(raw_v, allowed_subprops)
+                clean_extracted[target_schema_key] = sub_clean
+                for sub_k, sub_val in sub_extra.items():
+                    clean_extra[f"{target_schema_key}_{sub_k}"] = sub_val
+            elif isinstance(raw_v, list):
+                norm_list = []
+                for item in raw_v:
+                    if isinstance(item, dict):
+                        i_clean, i_extra = _reconcile_dict_keys(item)
+                        norm_list.append({**i_clean, **i_extra})
+                    else:
+                        norm_list.append(item)
+                clean_extracted[target_schema_key] = norm_list
+            else:
+                clean_extracted[target_schema_key] = raw_v
+        else:
+            # Unmapped top-level key: route to extra_fields
+            clean_extra[k_str] = raw_v
+
+    return clean_extracted, clean_extra
+
+
+# =====================================================================
 # BLOCK COMMENT: DYNAMIC PROMPT BUILDERS (SINGLE SOURCE OF TRUTH)
 # Purpose:
 # 1. format_fields_summary: Generates human-readable field definitions.
@@ -301,124 +521,105 @@ class DomainExtractor:
             weight = f.get("weight", 1.0)
             field_weights[key] = float(weight)
 
-        # Truncate content — 80K chars covers large multi-page documents
-        max_chars = 80_000
-        content_snippet = text[:max_chars]
-
         # =====================================================================
         # BLOCK COMMENT: PROMPT RESOLUTION (SINGLE SOURCE OF TRUTH)
         # Purpose:
         # 1. Resolves system prompt according to strategy (inherit, override, combine).
         # 2. Dynamically derives fields_summary and fields_json_schema from fields.
-        # 3. Renders user prompt template with dynamic schema structure.
+        # 3. Renders user prompt template with dynamic schema structure (content injected by LLM layer).
         # =====================================================================
         fields_summary = format_fields_summary(fields)
         fields_json_schema = format_fields_json_schema(fields)
 
-        default_sys_prompt = (
-            "You are a precise document entity extractor.\n"
-            "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
-            "RULE 2: If a field value is NOT found in the document text, OMIT that field entirely "
-            "— do NOT write null, do NOT write empty string.\n"
-            "RULE 3: DO NOT use training data, prior knowledge, or inferred values.\n"
-            "RULE 4: Use exact wording from the document for all extracted values.\n"
-            "Return valid JSON only containing ONLY the fields you actually found."
-        )
+        # default_sys_prompt = (
+        #     "You are a precise document entity extractor.\n"
+        #     "RULE 1: Extract ONLY values explicitly present in the provided Document Content.\n"
+        #     "RULE 2: STRICT FIELD CANONICALIZATION: Follow the exact schema field names provided. Do NOT drift or rename fields "
+        #     "(e.g. use `judge` (singular), NOT `coram`/`judges`/`bench`; use `case_number` (singular), NOT `case_numbers`/`case_no`; "
+        #     "use `decision_date`, NOT `order_date`/`judgment_date`; use `court`, NOT `court_name`/`forum`; use `statutes`, NOT `acts`; "
+        #     "use `sections`, NOT `provisions`/`articles`; use `petitioners`, NOT `petitioner`; use `respondents`, NOT `respondent`; "
+        #     "use `advocates`, NOT `counsel`/`lawyers`).\n"
+        #     "RULE 3: STRICT SCHEMA BOUNDARY: Extract ONLY the defined schema fields under 'extracted_fields'. "
+        #     "Any other unmapped facts, observed attributes, or additional domain details MUST go under 'extra_fields'. "
+        #     "NEVER place unmapped keys into 'extracted_fields'.\n"
+        #     "RULE 4: If a field value is NOT found in the document text, OMIT that field entirely — do NOT write null, do NOT write empty string.\n"
+        #     "RULE 5: DO NOT use training data, prior knowledge, or inferred values.\n"
+        #     "RULE 6: Use exact wording from the document for all extracted values.\n"
+        #     'Return valid JSON only matching: {"extracted_fields": { ... }, "extra_fields": { ... }}'
+        # )
 
-        base_schema_sys = schema_extraction_system_prompt
-        base_schema_user = schema_extraction_user_prompt
-        effective_kb_sys = kb_extraction_system_prompt
-        effective_kb_user = kb_extraction_user_prompt
+        # --- Prompt Merging Strategy (Commented Out) ---
+        # base_schema_sys = schema_extraction_system_prompt
+        # base_schema_user = schema_extraction_user_prompt
+        # effective_kb_sys = kb_extraction_system_prompt
+        # effective_kb_user = kb_extraction_user_prompt
+        #
+        # resolved_strategy = (strategy or "inherit").lower()
+        # prompt_source = "domain_schema"
+        #
+        # if resolved_strategy == "combine":
+        #     base_prompt = base_schema_sys or default_sys_prompt
+        #     if effective_kb_sys and effective_kb_sys.strip():
+        #         sys_template = f"{base_prompt}\n\n### Knowledge Base Extraction Directives:\n{effective_kb_sys.strip()}"
+        #         prompt_source = "combined"
+        #     else:
+        #         sys_template = base_prompt
+        #         prompt_source = "domain_schema" if base_schema_sys else "system_default"
+        #     user_template = effective_kb_user or base_schema_user
+        # elif resolved_strategy == "override":
+        #     if effective_kb_sys and effective_kb_sys.strip():
+        #         sys_template = effective_kb_sys
+        #         prompt_source = "kb_override"
+        #     elif base_schema_sys and base_schema_sys.strip():
+        #         sys_template = base_schema_sys
+        #         prompt_source = "domain_schema"
+        #     else:
+        #         sys_template = default_sys_prompt
+        #         prompt_source = "system_default"
+        #     user_template = effective_kb_user or base_schema_user
+        # else:  # inherit (default)
+        #     if base_schema_sys and base_schema_sys.strip():
+        #         sys_template = base_schema_sys
+        #         prompt_source = "domain_schema"
+        #     elif effective_kb_sys and effective_kb_sys.strip():
+        #         sys_template = effective_kb_sys
+        #         prompt_source = "kb_override"
+        #     else:
+        #         sys_template = default_sys_prompt
+        #         prompt_source = "system_default"
+        #     user_template = base_schema_user or effective_kb_user
+        # ------------------------------------------------
 
-        resolved_strategy = (strategy or "inherit").lower()
-        prompt_source = "domain_schema"
-
-        if resolved_strategy == "combine":
-            base_prompt = base_schema_sys or default_sys_prompt
-            if effective_kb_sys and effective_kb_sys.strip():
-                sys_template = f"{base_prompt}\n\n### Knowledge Base Extraction Directives:\n{effective_kb_sys.strip()}"
-                prompt_source = "combined"
-            else:
-                sys_template = base_prompt
-                prompt_source = "domain_schema" if base_schema_sys else "system_default"
-            user_template = effective_kb_user or base_schema_user
-        elif resolved_strategy == "override":
-            if effective_kb_sys and effective_kb_sys.strip():
-                sys_template = effective_kb_sys
-                prompt_source = "kb_override"
-            elif base_schema_sys and base_schema_sys.strip():
-                sys_template = base_schema_sys
-                prompt_source = "domain_schema"
-            else:
-                sys_template = default_sys_prompt
-                prompt_source = "system_default"
-            user_template = effective_kb_user or base_schema_user
-        else:  # inherit (default)
-            if base_schema_sys and base_schema_sys.strip():
-                sys_template = base_schema_sys
-                prompt_source = "domain_schema"
-            elif effective_kb_sys and effective_kb_sys.strip():
-                sys_template = effective_kb_sys
-                prompt_source = "kb_override"
-            else:
-                sys_template = default_sys_prompt
-                prompt_source = "system_default"
-            user_template = base_schema_user or effective_kb_user
+        if not schema_extraction_system_prompt or not schema_extraction_system_prompt.strip():
+            raise ValueError("schema_extraction_system_prompt is required for domain extraction.")
+        if not schema_extraction_user_prompt or not schema_extraction_user_prompt.strip():
+            raise ValueError("schema_extraction_user_prompt is required for domain extraction.")
 
         sys_prompt = (
-            sys_template
+            schema_extraction_system_prompt
             .replace("{domain_name}", domain_name or "")
             .replace("{filename}", filename or "")
         )
 
-        if user_template and user_template.strip():
-            logger.debug("domain_extractor_decision_user_prompt", branch="custom_template", template_len=len(user_template))
-            user_prompt = (
-                user_template
-                .replace("{filename}", filename or "")
-                .replace("{fields_summary}", fields_summary)
-                .replace("{fields_json_schema}", fields_json_schema)
-                .replace("{content}", content_snippet)
-                .replace("{content_snippet}", content_snippet)
-                .replace("{domain_name}", domain_name or "")
-            )
-        else:
-            if fields:
-                logger.debug("domain_extractor_decision_user_prompt", branch="dynamic_schema_fields", field_count=len(fields))
-                user_prompt = (
-                    f"Document Filename: {filename}\n\n"
-                    f"Target Schema Fields:\n{fields_summary}\n\n"
-                    f"Target JSON Structure:\n{fields_json_schema}\n\n"
-                    f"Document Content:\n{content_snippet}\n\n"
-                    "Extract all matching schema fields and any unmapped extra domain knowledge in valid JSON format matching:\n"
-                    '{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
-                )
-            else:
-                logger.debug("domain_extractor_decision_user_prompt", branch="schemaless_comprehensive")
-                user_prompt = (
-                    f"Document Filename: {filename}\n\n"
-                    f"Document Content:\n{content_snippet}\n\n"
-                    "Extract a comprehensive structured JSON of ALL key information in this document.\n"
-                    "Include all entities, parties, dates, amounts, decisions, references, and any other significant data.\n"
-                    "Use only what is explicitly stated. Omit fields not present.\n"
-                    'Return valid JSON only matching:\n{\n  "extracted_fields": { ... },\n  "extra_fields": { ... }\n}'
-                )
+        user_prompt = (
+            schema_extraction_user_prompt
+            .replace("{filename}", filename or "")
+            .replace("{fields_summary}", fields_summary)
+            .replace("{fields_json_schema}", fields_json_schema)
+            .replace("{domain_name}", domain_name or "")
+        )
 
         logger.info(
             "domain_extraction_prompt_resolved",
             domain_key=domain_key,
             domain_name=domain_name,
             filename=filename,
-            strategy=resolved_strategy,
-            prompt_source=prompt_source,
-            has_kb_prompt=bool(effective_kb_sys),
-            has_schema_prompt=bool(base_schema_sys),
             sys_prompt_len=len(sys_prompt),
             user_prompt_len=len(user_prompt),
         )
 
         try:
-            raw_response = await self.llm.complete(sys_prompt, user_prompt, temperature=0.0)
+            raw_response = await self.llm.complete(sys_prompt, user_prompt, temperature=0.0, document_text=text)
             cleaned = _clean_json_string(raw_response)
             parsed = json.loads(cleaned)
 
@@ -472,6 +673,13 @@ class DomainExtractor:
             if not isinstance(extra_fields, dict):
                 extra_fields = {}
 
+            # Deterministic Anti-Drift Canonical Reconciler
+            extracted_fields, extra_fields = reconcile_extracted_payload(
+                extracted_fields=extracted_fields,
+                extra_fields=extra_fields,
+                fields=fields,
+            )
+
             # Grounding verifier — leaf-level
             extracted_fields = filter_ungrounded_fields(extracted_fields, text)
             if extra_fields:
@@ -511,8 +719,8 @@ class DomainExtractor:
                 "error": str(exc),
                 "extraction_mode": "failed",
                 "debug_info": {
-                    "strategy": resolved_strategy,
-                    "prompt_source": prompt_source,
+#                    "strategy": resolved_strategy,
+#                    "prompt_source": prompt_source,
                     "system_prompt": sys_prompt,
                     "user_prompt": user_prompt,
                 },

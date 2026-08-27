@@ -437,13 +437,27 @@ async def retrieve(
             candidates.append(item)
 
         # =====================================================================
-        # BLOCK: DOMAIN-WEIGHTED FIELD SCORE BOOSTING
+        # =====================================================================
+        # BLOCK COMMENT: DOMAIN-WEIGHTED FIELD & PHONETIC SCORE BOOSTING
+        # Module: app/knowledge/retrieval.py
         # Purpose: Inspects extracted domain fields & extra fields in candidate chunk payload.
-        # Matches query terms against domain keys and values, multiplying vector similarity
-        # score by configured schema field importance weights: Score_final = Score_vec * (1 + sum(Field_Weights)).
+        # Matches query terms against domain keys, values, and phonetic representations
+        # (Metaphone, Soundex, NYSIIS), multiplying vector similarity score by configured
+        # schema field importance weights: Score_final = Score_vec * (1 + sum(Field_Weights)).
         # Re-sorts candidate chunks by domain-boosted relevance before final reranking/top_k.
         # =====================================================================
+        from app.knowledge.typed_metadata_matcher import (
+            metaphone,
+            soundex,
+            nysiis,
+            jaro_winkler_similarity,
+            extract_clean_tokens,
+            DEFAULT_NOISE_TOKENS,
+        )
+
+        query_tokens = extract_clean_tokens(query, DEFAULT_NOISE_TOKENS)
         query_lower = query.lower()
+
         for item in candidates:
             domain_info = (item.get("metadata") or {}).get("domain_info") or {}
             extracted_fields = domain_info.get("extracted_fields") or {}
@@ -457,8 +471,25 @@ async def retrieve(
                 w = float(field_weights.get(f_key, 1.0))
                 if f_key.lower() in query_lower:
                     field_boost += w * 0.15
-                if f_val and str(f_val).lower() in query_lower:
-                    field_boost += w * 0.25
+
+                if f_val:
+                    f_val_str = str(f_val).lower()
+                    if f_val_str in query_lower or query_lower in f_val_str:
+                        field_boost += w * 0.25
+                    elif query_tokens:
+                        # Phonetic match evaluation on entity fields
+                        val_tokens = extract_clean_tokens(f_val_str, DEFAULT_NOISE_TOKENS)
+                        for qt in query_tokens:
+                            for vt in val_tokens:
+                                if jaro_winkler_similarity(qt, vt) >= 0.88:
+                                    field_boost += w * 0.20
+                                    break
+                                elif metaphone(qt) and metaphone(qt) == metaphone(vt):
+                                    field_boost += w * 0.18
+                                    break
+                                elif soundex(qt) and soundex(qt) == soundex(vt):
+                                    field_boost += w * 0.12
+                                    break
 
             if field_boost > 0:
                 item["score"] = item["score"] * (1.0 + field_boost)
@@ -483,8 +514,10 @@ async def retrieve(
 
         discarded_reranked_list = []
         if reranker and candidates:
-            logger.info("retrieval_step_reranker_executing", candidate_count=len(candidates[:selection_limit]), top_k=top_k)
-            candidates_to_rerank = candidates[:selection_limit]
+            # Bound rerank candidate pool to avoid prompt context overload (typically 2x top_k, max 8)
+            max_rerank_pool = min(selection_limit, max(top_k * 2, 8))
+            candidates_to_rerank = candidates[:max_rerank_pool]
+            logger.info("retrieval_step_reranker_executing", candidate_count=len(candidates_to_rerank), top_k=top_k)
             candidates_reranked = await reranker.rerank(
                 query=query,
                 candidates=candidates_to_rerank,
@@ -496,7 +529,7 @@ async def retrieve(
             discarded_reranked_list = [
                 item for item in candidates_to_rerank if item["chunk_id"] not in final_ids
             ]
-            discarded_reranked_list.extend(candidates[selection_limit:])
+            discarded_reranked_list.extend(candidates[max_rerank_pool:])
             logger.info("retrieval_step_reranker_success", final_count=len(final_candidates), discarded_count=len(discarded_reranked_list))
         else:
             logger.info("retrieval_step_reranker_bypassed", should_rerank=should_rerank, has_reranker=bool(reranker))

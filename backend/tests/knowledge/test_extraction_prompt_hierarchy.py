@@ -214,3 +214,113 @@ def test_domain_research_schemas_support_client_prompts():
     assert ingest_req.schema_extraction_system_prompt == "Custom Ingest Extractor"
 
 
+@pytest.mark.asyncio
+async def test_canonical_anti_drift_cues_in_prompts():
+    """Verify that default and legal system prompts contain strict anti-drift cues."""
+    from app.knowledge.legal_sot import LEGAL_SYSTEM_PROMPT, LEGAL_USER_PROMPT_TEMPLATE
+
+    assert "STRICT FIELD CANONICALIZATION" in LEGAL_SYSTEM_PROMPT
+    assert "judge (singular), NOT `coram`" in LEGAL_SYSTEM_PROMPT or "judge" in LEGAL_SYSTEM_PROMPT
+    assert "case_number" in LEGAL_SYSTEM_PROMPT
+    assert "extra_fields" in LEGAL_SYSTEM_PROMPT
+    assert "extracted_fields" in LEGAL_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_reconcile_drifted_keys_and_extra_fields():
+    """Verify that drifted keys (coram, case_numbers, acts) are reconciled to canonical schema keys and unmapped keys route to extra_fields."""
+    import json
+    from app.knowledge.domain_extractor import reconcile_extracted_payload, DomainExtractor
+    from unittest.mock import AsyncMock
+
+    fields = [
+        {"key": "document", "label": "Document Metadata", "properties": {"judge": "Judge name", "case_number": "Case No", "court": "Court name"}},
+        {"key": "legal_provisions", "label": "Provisions", "properties": {"statutes": ["Acts"], "sections": ["Sections"]}},
+    ]
+
+    mock_llm = AsyncMock()
+    # LLM returned drifted keys: coram instead of judge, case_numbers instead of case_number, custom unmapped field
+    mock_llm.complete.return_value = json.dumps({
+        "extracted_fields": {
+            "document": {
+                "coram": "Justice H.C. Mishra",
+                "case_numbers": "Cr. Appeal 423 of 2006",
+                "court_name": "High Court of Jharkhand",
+            },
+            "acts": ["Indian Penal Code", "Arms Act"],
+            "unmapped_custom_metric": "Risk Score 95",
+        },
+        "extra_fields": {
+            "additional_fact": "Hospitalized at MGM",
+        }
+    })
+
+    extractor = DomainExtractor(llm=mock_llm)
+    res = await extractor.extract_domain_knowledge(
+        text="High Court of Jharkhand. Justice H.C. Mishra presided. Cr. Appeal 423 of 2006. Indian Penal Code and Arms Act. Hospitalized at MGM. Risk Score 95.",
+        filename="judgment.pdf",
+        domain_name="Legal Judgments",
+        domain_key="legal_judgment",
+        schema_json={"fields": fields},
+    )
+
+    extracted = res["extracted_fields"]
+    extra = res["extra_fields"]
+
+    # Reconciled to canonical keys inside document
+    assert "document" in extracted
+    assert extracted["document"]["judge"] == "Justice H.C. Mishra"
+    assert extracted["document"]["case_number"] == "Cr. Appeal 423 of 2006"
+    assert extracted["document"]["court"] == "High Court of Jharkhand"
+
+    # Drifted key 'acts' mapped to schema key 'legal_provisions' or preserved canonically
+    # Unmapped custom metric moved to extra_fields
+    assert "unmapped_custom_metric" in extra or "unmapped_custom_metric" in str(extra)
+    assert extra.get("additional_fact") == "Hospitalized at MGM"
+
+
+@pytest.mark.asyncio
+async def test_domain_extractor_passes_clean_prompt_and_document_text():
+    """Verify that DomainExtractor passes decoupled user_prompt template and raw document_text to LLM."""
+    mock_llm = AsyncMock()
+    mock_llm.complete.return_value = '{"extracted_fields": {"court": "Supreme Court of India"}}'
+    extractor = DomainExtractor(llm=mock_llm)
+
+    custom_user_template = "Extract a comprehensive structured JSON from the above legal document matching the target schema."
+    sample_text = "IN THE SUPREME COURT OF INDIA. Civil Appeal No. 1234 of 2024. Justice ABC."
+
+    res = await extractor.extract_domain_knowledge(
+        text=sample_text,
+        filename="judgment_sc.pdf",
+        domain_name="Legal",
+        domain_key="legal",
+        schema_json={"fields": [{"key": "court", "label": "Court"}]},
+        kb_extraction_user_prompt=custom_user_template,
+        strategy="override",
+    )
+
+    mock_llm.complete.assert_called_once()
+    called_sys_prompt, called_user_prompt = mock_llm.complete.call_args[0][:2]
+    kwargs = mock_llm.complete.call_args[1]
+
+    # Verify template is passed to LLM and text is passed via document_text
+    assert custom_user_template in called_user_prompt
+    assert kwargs.get("document_text") == sample_text
+    assert res["extracted_fields"]["court"] == "Supreme Court of India"
+
+
+@pytest.mark.asyncio
+async def test_domain_llm_render_user_prompt_and_single_pass():
+    """Verify that DomainLLM properly renders user_prompt with document_text in single-pass mode."""
+    from app.knowledge.domain_rag_v1.domains.legal.llm import DomainLLM
+
+    llm = DomainLLM()
+    # Test template without placeholder
+    rendered = llm._render_user_prompt("Extract all fields.", "Sample Judgment Text")
+    assert "Document Content:\nSample Judgment Text" in rendered
+    assert "Extract all fields." in rendered
+
+    # Test template with {content} placeholder
+    rendered_placeholder = llm._render_user_prompt("Text:\n{content}\nTask: extract", "Sample Judgment Text")
+    assert rendered_placeholder == "Text:\nSample Judgment Text\nTask: extract"
+

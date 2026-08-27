@@ -52,6 +52,29 @@ curl -X DELETE "http://localhost:8000/admin/customers/<CUSTOMER_ID>" \
     "enable_reranking": true
   }'
 
+# 1. Full Pipeline Ingest via File Upload
+curl -X POST "http://localhost:8000/api/knowledge/bases/$KB_ID/upload" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./sample.txt" \
+  -F "doc_type=case_law" \
+  -F "parser_strategy=auto" \
+  -F "description=Matter document ingestion" \
+  -s | tee run_upload_output.json
+
+# 2. Direct JSON Domain Ingest
+curl -X POST "http://localhost:8000/api/knowledge/ingest" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Suresh Pandey Judgment",
+    "case_id": "doc_suresh_pandey_01",
+    "domain": "legal",
+    "knowledge_base_id": "'"$KB_ID"'",
+    "corpus_type": "case_material",
+    "schema_extraction_system_prompt": "Extract legal entities matching strict domain schema.",
+    "document_text": "Suresh Pandey vs The State Of Jharkhand on 31 July, 2018. Bench: H.C. Mishra..."
+  }' -s | tee run_ingest_output.json
+
 
   curl -X POST "http://localhost:8000/api/knowledge/query" \
   -H "Content-Type: application/json" \

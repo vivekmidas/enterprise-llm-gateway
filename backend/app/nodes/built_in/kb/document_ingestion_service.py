@@ -287,30 +287,12 @@ class DocumentIngestionService:
                     comparison_report=comparison_report,
                 )
 
-                # =====================================================================
-                # BLOCK: DOMAIN KNOWLEDGE EXTRACTION
-                # Purpose: Checks if the destination Knowledge Base is linked to a DomainSchemaDB.
-                # =====================================================================
-                # BLOCK COMMENT: METADATA & DOMAIN EXTRACTION
-                # Purpose:
-                # 1. Resolves LLM Profile for the tenant (kb.settings.llm_profile_id -> default profile).
-                # 2. Resolves prompt hierarchy: KB extraction_prompt > Domain Schema prompt > Default.
-                # =====================================================================
-                # BLOCK COMMENT: METADATA & DOMAIN EXTRACTION (DOMAIN LINKED ONLY)
-                # Purpose:
-                # Runs ONLY if the Knowledge Base is linked to a Domain Schema (target_kb.domain_id).
-                # 1. Resolves LLM Profile for the tenant (kb.settings.llm_profile_id -> default profile).
-                # 2. Resolves prompt hierarchy: KB extraction_prompt > Domain Schema prompt > Default.
-                # 3. Executes DomainExtractor and records structured JSON in document.metadata_json.
-                # 4. Links extracted entities to visual provenance (spans, bounding boxes).
-                # If unlinked, skips LLM extraction and sets informative status_note.
-                # =====================================================================
+                # 5. Domain Knowledge Extraction
                 kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
                 kb_res = await db.execute(kb_stmt)
                 target_kb = kb_res.scalar_one_or_none()
 
                 metadata = dict(document.metadata_json or {})
-                kb_settings = (target_kb.settings or {}) if target_kb else {}
 
                 if target_kb and target_kb.domain_id:
                     domain_stmt = select(DomainSchemaDB).where(DomainSchemaDB.id == target_kb.domain_id)
@@ -318,11 +300,12 @@ class DocumentIngestionService:
                     domain_schema = domain_res.scalar_one_or_none()
 
                     if domain_schema:
-                        await job_service.update_progress(job_id, 25, message="Extracting metadata JSON")
+                        await job_service.update_progress(job_id, 25, message="Extracting domain metadata")
 
-                        # Resolve LLM profile for this KB's tenant
+                        # Resolve LLM Profile
                         llm_profile = None
                         try:
+                            kb_settings = target_kb.settings or {}
                             kb_profile_id = kb_settings.get("llm_profile_id")
                             cust_id = target_kb.customer_id if target_kb else customer_id
                             if kb_profile_id:
@@ -346,35 +329,7 @@ class DocumentIngestionService:
                         except Exception as prof_err:
                             logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
 
-                        # Prompt hierarchy & strategy: KB extraction_prompt (inherit/override/combine) > Domain schema prompt > Default
-                        kb_ext_raw = kb_settings.get("extraction_prompt")
-                        strategy = "inherit"
-                        kb_custom_sys_prompt = None
-                        kb_custom_user_prompt = None
-
-                        if isinstance(kb_ext_raw, dict):
-                            strategy = kb_ext_raw.get("strategy") or ("override" if (kb_ext_raw.get("system_prompt") or kb_ext_raw.get("user_prompt")) else "inherit")
-                            kb_custom_sys_prompt = kb_ext_raw.get("system_prompt")
-                            kb_custom_user_prompt = kb_ext_raw.get("user_prompt")
-                        elif isinstance(kb_ext_raw, str):
-                            strategy = "override"
-                            kb_custom_sys_prompt = kb_ext_raw
-                            kb_custom_user_prompt = kb_settings.get("user_prompt")
-                        else:
-                            kb_custom_sys_prompt = kb_settings.get("system_prompt")
-                            kb_custom_user_prompt = kb_settings.get("user_prompt")
-                            strategy = "override" if (kb_custom_sys_prompt or kb_custom_user_prompt) else "inherit"
-
                         extractor = DomainExtractor.from_llm_profile(llm_profile)
-                        logger.info(
-                            "metadata_extraction_llm_profile_resolved",
-                            profile_id=llm_profile.id if llm_profile else None,
-                            profile_name=llm_profile.name if llm_profile else "Ollama-default",
-                            strategy=strategy,
-                            has_kb_prompt=bool(kb_custom_sys_prompt),
-                            has_schema_prompt=bool(domain_schema.system_prompt),
-                            domain_schema_name=domain_schema.name,
-                        )
 
                         domain_info = await extractor.extract_domain_knowledge(
                             text=text,
@@ -384,34 +339,10 @@ class DocumentIngestionService:
                             schema_json=domain_schema.schema_json,
                             schema_extraction_system_prompt=domain_schema.system_prompt,
                             schema_extraction_user_prompt=domain_schema.user_prompt,
-                            kb_extraction_system_prompt=kb_custom_sys_prompt,
-                            kb_extraction_user_prompt=kb_custom_user_prompt,
-                            strategy=strategy,
                         )
                         metadata["domain_info"] = domain_info
                         metadata["extracted_fields"] = domain_info.get("extracted_fields") or {}
-
-                        # Link entity provenance to spans and sections
-                        from app.knowledge.provenance.entity_linker import EntityProvenanceLinker
-                        entity_linker = EntityProvenanceLinker()
-                        combined_fields = {}
-                        if domain_info and isinstance(domain_info, dict):
-                            combined_fields.update(domain_info.get("extracted_fields") or {})
-                            combined_fields.update(domain_info.get("extra_fields") or {})
-
-                        linked_provenance = entity_linker.link_entities_to_spans(
-                            extracted_fields=combined_fields,
-                            spans=normalized_res.spans,
-                            doc_tree=doc_tree,
-                        )
-                        metadata["entity_provenance"] = [ep.model_dump() for ep in linked_provenance]
                 else:
-                    # =====================================================================
-                    # BLOCK COMMENT: UNLINKED KB DOMAIN METADATA HANDLING
-                    # Knowledge Base is not linked to a domain schema.
-                    # Skip LLM metadata extraction and remove empty domain_info placeholders.
-                    # =====================================================================
-                    logger.info("metadata_extraction_skipped_unlinked_domain", knowledge_base_id=knowledge_base_id)
                     metadata.pop("domain_info", None)
                     metadata.pop("extracted_fields", None)
 
@@ -597,6 +528,21 @@ class DocumentIngestionService:
                 document.chunk_count = len(chunk_objects)
                 document.status = "ready"
                 document.error_message = None
+
+                # =====================================================================
+                # BLOCK COMMENT: INGESTION-TIME TAGS & PHONETIC NORMALIZATION SYNC
+                # Module: app/nodes/built_in/kb/document_ingestion_service.py
+                # Purpose: Synchronizes extracted metadata tags, chronological trial dates,
+                # statutory sections, and pre-computed phonetic codes into document_tags.
+                # =====================================================================
+                from app.knowledge.document_tag_service import sync_document_tags
+                await sync_document_tags(
+                    db=db,
+                    document_id=document.id,
+                    customer_id=document.customer_id,
+                    knowledge_base_id=document.knowledge_base_id,
+                    metadata=document.metadata_json or {},
+                )
 
                 await db.commit()
                 await db.refresh(document)

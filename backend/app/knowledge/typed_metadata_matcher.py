@@ -383,10 +383,15 @@ class TypedMetadataMatcher:
         noise_tokens: Optional[Set[str]] = None,
         custom_type_hints: Optional[Dict[str, FieldType]] = None,
         weights: Optional[Dict[str, float]] = None,
+        domain: Optional[str] = None,
+        schema_fields: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ):
         self.noise_tokens = noise_tokens or DEFAULT_NOISE_TOKENS
         self.custom_type_hints = custom_type_hints or {}
         self.weights = weights or {"entity": 0.45, "text": 0.30, "value": 0.40}
+        self.domain = domain
+        self.schema_fields = schema_fields or {}
 
     def match_entity(self, query_val: Any, target_val: Any, field_name: str = "entity") -> Tuple[bool, float, str]:
         """

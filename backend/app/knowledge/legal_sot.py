@@ -34,6 +34,7 @@ LEGAL_SECTIONS = [
     "industrial_court",
     "high_court_arguments",
     "evidence",
+    "court_findings",
     "legal_concepts",
     "research_topics",
     "keywords",
@@ -47,138 +48,138 @@ LEGAL_SECTIONS = [
 LEGAL_FIELDS = {
     "executive_case_summary": {
         "one_line_summary": "Single sentence executive summary of the case or agreement",
-        "case_overview": "Comprehensive overview describing dispute/contract, main parties (AAA v. BBB), statutory provisions or contract purpose, outcome, and favoured party",
+        "case_overview": "Comprehensive overview describing dispute/contract, main parties, statutory provisions or contract purpose, outcome, and favoured party",
         "favoured_party": "Name and role of party in whose favour the ruling was decided (if court judgment)",
         "key_sections_involved": ["List of key statutory sections or clauses involved"],
     },
     "document": {
-        "court": "Deciding court or tribunal name (e.g. High Court of Jharkhand at Ranchi)",
-        "location": "Court jurisdiction or location",
-        "case_number": "Primary case / petition / appeal number (e.g. Cr.M.P. No. 1234 of 2018)",
-        "citation": "Reported law citation or CNR number if present",
-        "decision_date": "Date of judgment/order (YYYY-MM-DD)",
-        "judge": "Judge, bench, justice, or coram name",
-        "judgment_type": "Order, Judgment, Interim Order, or Decree",
+        "court": "",
+        "location": "",
+        "case_number": "",
+        "citation": "",
+        "decision_date": "",
+        "judge": "",
+        "judgment_type": "",
     },
     "case_identity": {
-        "court": "Court or tribunal name",
-        "location": "Court location / jurisdiction if explicitly available",
-        "case_number": "Primary case number",
-        "connected_cases": "Array of paired case objects linking each case to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
-        "number_of_connected_cases": "Integer count of all connected cases in this proceeding",
-        "report_number": "Report / reference number if present",
-        "case_date": "Date of the judgment/order/case document",
-        "judge": "Judge, justice, bench or coram",
+        "court": "",
+        "location": "",
+        "case_number": "",
+        "connected_cases": "",
+        "number_of_connected_cases": "",
+        "report_number": "",
+        "case_date": "",
+        "judge": "",
     },
     "parties": {
-        "petitioners": ["Petitioner(s), applicant(s), claimant(s) or equivalent"],
-        "respondents": ["Respondent(s), opponent(s), defendant(s) or equivalent"],
-        "appellants": ["Appellant(s), if applicable"],
-        "prosecutors": ["Prosecutor(s), State, Public Prosecutor or equivalent"],
-        "defendants": ["Defendant(s), accused, defense or equivalent"],
-        "advocates": ["Advocates / lawyers representing petitioner or respondent"],
-        "other_parties": ["Other materially identified parties and their roles (intervenors, amicus curiae)"],
+        "petitioners": [""],
+        "respondents": [""],
+        "appellants": [""],
+        "prosecutors": [""],
+        "defendants": [""],
+        "advocates": [""],
+        "other_parties": [""],
     },
     "facts": {
-        "incident_date": "Date or timeline of incident, dispute, or agreement execution",
-        "allegations": "Primary allegations, claims, or background facts",
-        "dispute_history": "Chronology of dispute leading up to litigation or contract formation",
+        "incident_date": "",
+        "allegations": "",
+        "dispute_history": "",
     },
     "legal_provisions": {
-        "statutes": ["Statutes, regulations, or Acts cited (e.g. IPC, CrPC, NI Act)"],
-        "sections": ["Specific sections, articles, or rules cited (e.g. Section 482, Section 498A)"],
+        "statutes": [""],
+        "sections": [""]
     },
     "labour_court_findings": {
-        "enquiry_fairness": "Fairness of domestic enquiry",
-        "natural_justice": "Violations or compliance with principles of natural justice",
-        "misconduct": "Findings regarding misconduct or charges",
-        "relief_granted": "Relief, reinstatement, or compensation ordered",
+        "enquiry_fairness": "",
+        "natural_justice": "",
+        "misconduct": "",
+        "relief_granted": "",
     },
     "industrial_court": {
-        "revision_application": "Revision application details",
-        "revision_order": "Order and directions in revision",
+        "revision_application": "",
+        "revision_order": "",
     },
     "high_court_arguments": {
-        "petitioner_arguments": ["Key submissions and legal grounds argued by petitioner"],
-        "respondent_arguments": ["Key submissions and defenses argued by respondent or prosecution"],
+        "petitioner_arguments": [""],
+        "respondent_arguments": [""],
     },
     "evidence": {
-        "documentary_evidence": ["Exhibits, documents, contracts, inspection reports"],
-        "witness_statements": ["Witness testimonies (PW/DW) and key statements"],
+        "documentary_evidence": [""],
+        "witness_statements": [""],
     },
     "citations": {
-        "precedents": ["Cases and judicial authorities cited (e.g. [2014] 8 SCC 273)"],
-        "statutes_referred": ["Statutes or schedule items referred to in judicial reasoning"],
+        "precedents": [""],
+        "statutes_referred": [""],
     },
     "judgment_status": {
-        "final_decision": "Final disposition (e.g. Allowed, Dismissed, Disposed, Remanded)",
-        "holding": "Holding, core legal conclusion, or ratio decidendi",
-        "sentence_or_penalty": "Sentence, duration of imprisonment, fine, or penalty imposed",
-        "relief": "Relief granted/refused/ordered, if stated",
+        "final_decision": "",
+        "holding": "",
+        "sentence_or_penalty": "",
+        "relief": "",
     },
     "contract_overview": {
-        "agreement_type": "Agreement type (e.g. Master Services Agreement, NDA, Lease Deed, Employment Agreement)",
-        "purpose": "Subject matter and commercial purpose of contract",
-        "effective_date": "Effective start date of agreement (YYYY-MM-DD)",
-        "expiration_date": "Expiration date or term duration",
-        "governing_law": "Governing law state/country",
-        "jurisdiction": "Agreed court venue or jurisdiction",
+        "agreement_type": "",
+        "purpose": "",
+        "effective_date": "",
+        "expiration_date": "",
+        "governing_law": "",
+        "jurisdiction": "",
     },
     "contract_parties": {
-        "party_a": "First party full legal name and entity type",
-        "party_b": "Second party full legal name and entity type",
-        "other_signatories": ["Additional signatories, guarantors, or witnesses"],
+        "party_a": "",
+        "party_b": "",
+        "other_signatories": [""]
     },
     "financial_terms": {
-        "contract_value": "Total contract value, fee, or consideration amount",
-        "payment_schedule": "Payment milestones, invoicing terms, and due dates",
-        "currency": "Currency (e.g. INR, USD, EUR)",
-        "penalties_or_interest": "Late payment interest, penalties, or liquidated damages",
+        "contract_value": "",
+        "payment_schedule": "",
+        "currency": "",
+        "penalties_or_interest": "",
     },
     "termination_and_renewal": {
-        "termination_for_convenience": "Convenience termination notice rights",
-        "termination_for_breach": "Notice cure period for material breach",
-        "notice_period": "Required prior written notice period",
-        "renewal_terms": "Renewal terms or auto-renewal conditions",
+        "termination_for_convenience": "",
+        "termination_for_breach": "",
+        "notice_period": "",
+        "renewal_terms": "",
     },
     "liability_and_indemnity": {
-        "liability_cap": "Limitation of liability cap or exclusion of consequential damages",
-        "indemnity_obligations": "Scope of indemnification obligations",
+        "liability_cap": "",
+        "indemnity_obligations": "",
     },
     "dispute_resolution": {
-        "method": "Arbitration, Mediation, or Court Litigation",
-        "arbitration_seat": "Seat, venue, and place of arbitration",
-        "applicable_rules": "Arbitration rules or governing institution",
+        "method": "",
+        "arbitration_seat": "",
+        "applicable_rules": "",
     },
     "knowledge_graph_entities": {
-        "persons": ["Identified individual names"],
-        "organizations": ["Identified corporate, judicial, or governmental entities"],
-        "locations": ["Identified locations, cities, or courts"],
-        "dates": ["Identified critical dates"],
+        "persons": [""],
+        "organizations": [""],
+        "locations": [""],
+        "dates": [""],
     },
     "embedding_metadata": {
         "domain": "legal",
-        "practice_areas": ["Applicable practice areas"],
+        "practice_areas": [""],
         "confidence": 1.0,
     },
     "substance": {
-        "timeline_and_key_dates": ["Key timeline events, dates, FIR dates, arrest dates, or lower court milestone dates"],
-        "procedural_history": ["Lower court orders, FIRs, chargesheets, or procedural timeline"],
-        "charges_or_claims": ["Specific offences, sections, or claims alleged"],
-        "evidence_and_witnesses": ["Witness testimonies (PW/DW) and physical or documentary evidence"],
-        "issues": ["Material legal issues expressly raised or decided"],
-        "facts": ["Material facts stated in the document"],
-        "arguments": ["Material arguments/positions expressly attributed to a party (prosecutor, defendant, appellant, respondent, other parties)"],
-        "statutes": ["Statutes, regulations and provisions expressly cited"],
-        "statutory_interpretations": ["Specific interpretations or constructions of statutory sections/articles"],
-        "precedents": ["Cases/authorities expressly cited"],
-        "additional_observations": ["Additional judicial remarks, obiter dicta, or context notes"],
+        "timeline_and_key_dates": [""],
+        "procedural_history": [""],
+        "charges_or_claims": [""],
+        "evidence_and_witnesses": [""],
+        "issues": [""],
+        "facts": [""],
+        "arguments": [""],
+        "statutes": [""],
+        "statutory_interpretations": [""],
+        "precedents": [""],
+        "additional_observations": [""],
     },
     "decision": {
-        "disposition": "Outcome/order/disposition expressly stated",
-        "holding": "Holding or legal conclusion, if stated",
-        "sentence_or_penalty": "Sentence, duration of imprisonment, fine, or penalty imposed",
-        "relief": "Relief granted/refused/ordered, if stated",
+        "disposition": "",
+        "holding": "",
+        "sentence_or_penalty": "",
+        "relief": "",
     },
 }
 
@@ -213,13 +214,13 @@ LEGAL_FIELDS_SPEC = [
         "weight": 2.5,
         "importance": "high",
         "required": False,
-        "description": "Array of case objects pairing each connected case/petition to its plaintiff and respondent: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}]",
+        "description": "Array of case objects pairing each connected case/petition to its plaintiff and respondent",
         "items": {
-            "case": "<case number e.g. 2981 OF 1989>",
+            "case": "<case number>",
             "plaintiff": "<petitioner/plaintiff name>",
             "respondent": "<respondent/defendant name>",
-            "advocate": "<representing lawyer/advocate name if present>",
-            "date": "<decision/order date if present>",
+            "advocate": "<advocate name>",
+            "date": "<date>",
         },
     },
     {
@@ -544,12 +545,20 @@ LEGAL_SYSTEM_PROMPT = (
     "RULE 1: Extract ONLY factual information explicitly present in the document.\n"
     "RULE 2: Omit any field not found — do NOT write null, empty strings, or 0.\n"
     "RULE 3: NEVER write bracketed placeholders like '[Name]', '[Judge]', '[Advocate]', or '[Title]'. Extract exact real proper names or omit.\n"
-    "RULE 4: For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
-    "RULE 5: Capture specific arguments made by the Prosecutor/Prosecution/State, Defendant/Accused/Defense counsel, Petitioner/Appellant, Respondent, and Other Parties (Intervenors/Amicus Curiae).\n"
-    "RULE 6: When multiple cases/petitions are decided together, DO NOT separate plaintiffs and case numbers into separate detached lists. Pair each case directly with its respective plaintiff and respondent in 'connected_cases': [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}].\n"
-    "RULE 7: Use exact wording from the document for all values.\n"
-    "RULE 8: DO NOT MISS ANY HELPFUL INFORMATION. Capture all timeline events, evidence, lower court details, judicial observations, statutory interpretations, and additional data points present in the text.\n"
-    "Return a single valid JSON object only."
+    "RULE 4: STRICT FIELD CANONICALIZATION: Follow exact canonical schema field names. Do NOT drift or rename "
+    "(e.g. use `judges` (plural), NOT `coram`/`judge`/`bench`; use `case_numbers` (plural), NOT `case_number`/`case_no`; "
+    "use `decision_date`, NOT `order_date`/`judgment_date`; use `court`, NOT `court_name`/`forum`; use `statutes`, NOT `acts`; "
+    "use `sections`, NOT `provisions`/`articles`; use `petitioners`, NOT `petitioner`; use `respondents`, NOT `respondent`; "
+    "use `advocates`, NOT `counsels`/`lawyers`; use `final_decision`, NOT `disposition`/`outcome`).\n"
+    "RULE 5: STRICT SCHEMA BOUNDARY: Place ONLY defined schema fields under 'extracted_fields'. "
+    "Any additional unmapped facts, observed attributes, or case details MUST go under 'extra_fields'. "
+    "NEVER place unmapped keys into 'extracted_fields'.\n"
+    "RULE 6: For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
+    "RULE 7: Capture specific arguments made by the Prosecutor/Prosecution/State, Defendant/Accused/Defense counsel, Petitioner/Appellant, Respondent, and Other Parties (Intervenors/Amicus Curiae).\n"
+    "RULE 8: When multiple cases/petitions are decided together, DO NOT separate plaintiffs and case numbers into separate detached lists. Pair each case directly with its respective plaintiff and respondent in 'connected_cases'\n"
+    "RULE 9: Use exact wording from the document for all values.\n"
+    "RULE 10: DO NOT MISS ANY HELPFUL INFORMATION. Capture all timeline events, evidence, lower court details, judicial observations, statutory interpretations, and additional data points present in the text.\n"
+    "RULE 11: You are a strict factual extractor. Never invent information. Never use placeholder names such as Party A, Party B, AAA, BBB, XYZ, etc. Never create fake dates or timelines.  Only output information that is explicitly written in the DOCUMENT TEXT." 
 )
 
 # ==============================================================================
@@ -561,22 +570,74 @@ LEGAL_SYSTEM_PROMPT = (
 # ==============================================================================
 
 LEGAL_USER_PROMPT_TEMPLATE = (
-    "Document Filename: {filename}\n\n"
-    "Target Schema Fields:\n"
-    "{fields_summary}\n\n"
-    "Target JSON Structure:\n"
-    "{fields_json_schema}\n\n"
-    "Document Content:\n"
-    "{content}\n\n"
-    "Extract a comprehensive structured JSON from the above legal document matching the target schema.\n"
+
+    "Extract a comprehensive structured JSON from the legal document {content} matching the target schema.\n"
     "CRITICAL INSTRUCTIONS:\n"
     "- Extract ONLY factual information explicitly present in the document.\n"
     "- Omit any field not found — do NOT write null, empty strings, or bracketed placeholders like '[Name]' or '[Judge]'.\n"
-    "- For connected/consolidated cases: DO NOT separate plaintiffs and case numbers into separate detached lists. Extract each case as a paired object in 'connected_cases' array: [{'case': '2981 OF 1989', 'plaintiff': 'Janakiram Ramchand Sapkal', 'respondent': 'The State of Maharashtra & Anr.', 'advocate': '...', 'date': '...'}].\n"
+    "- STRICT CANONICAL FIELD NAMES: Use judge (not coram/judges), case_number (not case_numbers), court, decision_date, statutes, sections, petitioners, respondents, advocates.\n"
+    "- Place ONLY defined target schema fields in 'extracted_fields'.\n"
+    "- Place ALL unmapped extra facts, observations, or additional metadata in 'extra_fields'.\n"
+    "- For connected/consolidated cases: DO NOT separate plaintiffs and case numbers into separate detached lists. Extract each case as a paired object in 'connected_cases'.\n"
     "- For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
     "- Capture specific arguments mapped to the party making them where present.\n"
-    "- Output valid JSON only matching: {\"extracted_fields\": { ... }, \"extra_fields\": { ... }}."
+    '- Output valid JSON only matching: {"extracted_fields": { ... }, "extra_fields": { ... }}.'
+    'Extract information STRICTLY from the DOCUMENT TEXT below.'
+    'Use only facts that appear in the document.'
+    'Do not invent any names, dates, parties, courts, or events.'
+    'Omit any field that has no information.'
+    'Return valid JSON in this structure:'
+    """{
+        "extracted_fields": {
+        "executive_case_summary": {
+        "one_line_summary": "",
+        "case_overview": "",
+        "favoured_party": "",
+        "key_sections_involved": []
+        },
+        "document": {
+        "court": "",
+        "judge": "",
+        "citation": "",
+        "case_number": "",
+        "decision_date": "",
+        "judgment_type": ""
+        },
+        "parties": {
+        "appellants": [],
+        "respondents": [],
+        "advocates": []
+        },
+        "procedural_history": [],
+        "facts": {
+        "allegations": "",
+        "incident_date": "",
+        "dispute_history": ""
+        },
+        "legal_provisions": {
+        "statutes": [],
+        "sections": []
+        },
+        "issues": [],
+        "citations": {
+        "precedents": [],
+        "statutes_referred": []
+        },
+        "judgment_status": {
+        "final_decision": "",
+        "holding": ""
+        },
+        "knowledge_graph_entities": {
+        "persons": [],
+        "organizations": [],
+        "locations": [],
+        "dates": []
+        }
+    },
+    "extra_fields": {}
+    }"""
 )
+
 
 # Evidence RAG Prompts (for Block-level provenance in Domain RAG V1)
 LEGAL_RAG_SYSTEM_PROMPT = """
@@ -620,11 +681,11 @@ Return JSON only.
 # BLOCK COMMENT: LEGAL SEARCH SYNTHESIS PROMPT (SINGLE SOURCE OF TRUTH)
 # Purpose:
 # Formats multi-case search results into a JSON list of cases with minimum basic information:
-# - case_summary: 2 sentences / 30-40 words maximum
+# - case_summary: 2 sentences or 30-40 words maximum
 # - sections_or_articles_involved
 # - court_type
 # - judge
-# - current_status
+# - current_status / outcome
 # ==============================================================================
 LEGAL_SEARCH_SYSTEM_PROMPT = """You are an expert Legal Document Knowledge Assistant analyzing the provided Context.
     "You are an expert Enterprise Legal and Knowledge Assistant.\n"
@@ -635,8 +696,8 @@ LEGAL_SEARCH_SYSTEM_PROMPT = """You are an expert Legal Document Knowledge Assis
 1. Extract values ONLY from the provided Context.
 2. NEVER copy dates, names, or summaries from the FEW-SHOT EXAMPLES below.
 3. Group all co-accused, sections, and findings for the SAME proceeding into ONE case object. Do NOT split one judgment into multiple case entries.
-4. If appeal is "Allowed in part" (e.g. some accused acquitted, one convicted), accurately state who was acquitted and who was convicted in `case_summary`.
-5. RULES to be followed - If convicted but appeal lost is convicted , if convicted earlier but appeal won if acquitted. If acquitted  but appealed by other party and appeal lost is acquitted 
+4. If appeal is "Allowed in part" (e.g. some accused acquitted, one convicted), accurately state who was acquitted and who was convicted in `case_summary` (2 sentences or 30-40 words).
+5. RULES to be followed - If convicted but appeal lost is convicted, if convicted earlier but appeal won is acquitted. If acquitted but appealed by other party and appeal lost is acquitted.
 ### TARGET JSON FORMAT:
 {
   "cases": [
@@ -646,11 +707,12 @@ LEGAL_SEARCH_SYSTEM_PROMPT = """You are an expert Legal Document Knowledge Assis
       "judge": "<Extract from Context>",
       "decision_date": "<Extract from Context>",
       "outcome": "<Allowed / Dismissed / Allowed in Part>",
+      "current_status": "<Current case status / disposition>",
       "parties": "<Extract from Context>",
       "respondents": ["<Extract from Context>"],
       "plaintiffs": ["<Extract from Context>"],
       "sections_or_articles_involved": ["<Extract from Context>"],
-      "case_summary": "<2-sentence factual summary from Context only>"
+      "case_summary": "<2 sentences or 30-40 words factual summary from Context only>"
     }
   ]
 }
@@ -734,11 +796,11 @@ def format_legal_fields_json_structure(fields: list[dict[str, Any]] | None = Non
         if k == "connected_cases":
             extracted_spec[k] = [
                 {
-                    "case": "<case number e.g. 2981 OF 1989>",
-                    "plaintiff": "<petitioner/plaintiff name>",
-                    "respondent": "<respondent/defendant name>",
-                    "advocate": "<representing lawyer/advocate name if present>",
-                    "date": "<decision/order date if present>",
+                    "case": "",
+                    "plaintiff": "",
+                    "respondent": "",
+                    "advocate": "",
+                    "date": "",
                 }
             ]
         elif k in LEGAL_FIELDS and isinstance(LEGAL_FIELDS[k], dict):
@@ -796,3 +858,37 @@ def build_rag_prompt(*, document_id: int | str, filename: str, blocks: list[dict
         .replace("{{BLOCKS}}", rendered)
     )
     return LEGAL_RAG_SYSTEM_PROMPT, user_prompt
+
+
+# ==============================================================================
+# 7. CANONICAL LEGAL DISPOSITIONS & OUTCOMES (DOMAIN SINGLE SOURCE OF TRUTH)
+# ==============================================================================
+CANONICAL_DISPOSITIONS = [
+    ("anticipatory bail", "ANTICIPATORY BAIL GRANTED"),
+    ("regular bail", "REGULAR BAIL GRANTED"),
+    ("bail granted", "BAIL GRANTED"),
+    ("benefit of doubt", "ACQUITTED (BENEFIT OF DOUBT)"),
+    ("partly allowed", "PARTLY ALLOWED"),
+    ("partially allowed", "PARTLY ALLOWED"),
+    ("conviction modified", "CONVICTION MODIFIED"),
+    ("modified", "CONVICTION MODIFIED"),
+    ("altered", "CONVICTION MODIFIED"),
+    ("quash", "QUASHED"),
+    ("acquit", "ACQUITTED"),
+    ("dismiss", "DISMISSED"),
+    ("rejected", "DISMISSED / REJECTED"),
+    ("remand", "REMANDED"),
+    ("allowed", "ALLOWED"),
+]
+
+
+def canonicalize_disposition(raw_outcome: str | None) -> str | None:
+    """Legal domain helper to map outcome/disposition text into canonical uppercase terms."""
+    if not raw_outcome:
+        return None
+    raw_lower = str(raw_outcome).lower().strip()
+    for kw, canon in CANONICAL_DISPOSITIONS:
+        if kw in raw_lower:
+            return canon
+    return str(raw_outcome)[:50].upper().strip()
+

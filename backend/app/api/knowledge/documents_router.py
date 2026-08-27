@@ -169,10 +169,16 @@ async def list_documents(
             if job.entity_id not in job_map:
                 job_map[job.entity_id] = job
 
+    # Fetch authoritative tags from document_tag_mappings (SOT)
+    from app.knowledge.document_tag_service import batch_get_document_tags, get_document_tags, set_document_tags, sync_document_tags
+    query_customer_id = customer_id if current_user.role != "system_admin" else (docs[0].customer_id if docs else "")
+    tags_map = await batch_get_document_tags(db, query_customer_id, doc_ids) if doc_ids else {}
+
     response_docs = []
     for doc in docs:
         job = job_map.get(doc.id)
         doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
+        doc_dict["tags"] = tags_map.get(doc.id, [])
         if job:
             doc_dict["job_progress"] = job.progress
             doc_dict["job_message"] = job.message or (job.status.value if hasattr(job.status, "value") else str(job.status))
@@ -188,7 +194,7 @@ async def get_document(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get status/details of a specific document."""
+    """Get status/details of a specific document with tags from document_tag_mappings (SOT)."""
     if current_user.role == "system_admin":
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.id == doc_id,
@@ -207,6 +213,9 @@ async def get_document(
         raise HTTPException(status_code=404, detail="Document not found.")
 
     doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
+    from app.knowledge.document_tag_service import get_document_tags
+    doc_dict["tags"] = await get_document_tags(db, doc.customer_id, doc.id)
+
     job_stmt = select(JobDB).where(JobDB.entity_id == doc.id).order_by(JobDB.created_at.desc()).limit(1)
     job_res = await db.execute(job_stmt)
     job = job_res.scalar_one_or_none()
@@ -319,15 +328,41 @@ async def update_document(
         raise HTTPException(status_code=404, detail="Document not found.")
 
     update_data = payload.model_dump(exclude_unset=True)
+    tags_payload = update_data.pop("tags", None)
     if "metadata" in update_data:
         doc.metadata_json = update_data.pop("metadata")
     for field, value in update_data.items():
         setattr(doc, field, value)
 
     try:
+        from app.knowledge.document_tag_service import set_document_tags, sync_document_tags, get_document_tags
+        if tags_payload is not None:
+            # Update tags directly in document_tag_mappings (SOT)
+            await set_document_tags(
+                db=db,
+                customer_id=doc.customer_id,
+                knowledge_base_id=doc.knowledge_base_id,
+                document_id=doc.id,
+                tags=tags_payload,
+                is_inferred=False,
+            )
+        elif doc.metadata_json:
+            # Synchronize tags from metadata into document_tag_mappings
+            await sync_document_tags(
+                db=db,
+                document_id=doc.id,
+                customer_id=doc.customer_id,
+                knowledge_base_id=doc.knowledge_base_id,
+                metadata=doc.metadata_json or {},
+                is_inferred=False,
+            )
+
         await db.commit()
         await db.refresh(doc)
-        return doc
+        
+        doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
+        doc_dict["tags"] = await get_document_tags(db, doc.customer_id, doc.id)
+        return KnowledgeDocumentResponse(**doc_dict)
     except Exception as exc:
         logger.exception("update_document_failed")
         await db.rollback()

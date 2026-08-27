@@ -87,6 +87,15 @@ class KnowledgeIngestionService:
             # Then index those persisted chunks in Qdrant.
             await index_document(db, document)
 
+            from app.knowledge.document_tag_service import sync_document_tags
+            await sync_document_tags(
+                db=db,
+                document_id=document.id,
+                customer_id=document.customer_id,
+                knowledge_base_id=document.knowledge_base_id,
+                metadata=document.metadata_json or {},
+            )
+
             document.status = "ready"
             await db.commit()
             await db.refresh(document)

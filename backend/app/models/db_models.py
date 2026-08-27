@@ -451,6 +451,91 @@ class KnowledgeChunkDB(Base):
     )
 
 
+# ==============================================================================
+# BLOCK COMMENT: NORMALIZED DOCUMENT TAGS & PRE-COMPUTED PHONETIC INDEX TABLE
+# Module: app/models/db_models.py
+# Purpose:
+#   Stores granular, normalized, and pre-computed phonetic tags extracted at ingestion
+#   (Coram, Section, Statute, Court, Timeline Dates, Disposition, Concepts)
+# ==============================================================================
+# BLOCK COMMENT: DYNAMIC AUTO-POPULATING CANONICAL TAXONOMY TERMS TABLE
+# Module: app/models/db_models.py
+# Purpose:
+#   Central Master Taxonomy table storing canonical terms (Courts, Statutes, Sections,
+#   Judges, Dispositions, Concepts) and pre-computed phonetics (Soundex, Metaphone, NYSIIS)
+#   with alias mapping and usage counting.
+# ==============================================================================
+
+class TaxonomyTermDB(Base):
+    __tablename__ = "taxonomy_terms"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    customer_id = Column(
+        String(36), nullable=True, index=True
+    )  # Null = Global term, String = Tenant-specific custom term
+
+    category = Column(String(50), nullable=False, index=True)        # 'court', 'judge', 'statute', 'section', 'disposition', 'concept', 'timeline'
+    canonical_name = Column(String(255), nullable=False)             # 'High Court of Jharkhand, Ranchi', 'Justice H.C. Mishra'
+    canonical_normalized = Column(String(255), nullable=False, index=True) # Lowercase stripped
+
+    aliases_json = Column(JSON, nullable=True)                       # ["dhc", "delhi hc", "high court delhi"]
+    code = Column(String(50), nullable=True)                         # Optional official code: '7_26', 'IPC_307'
+
+    soundex_code = Column(String(50), nullable=True, index=True)
+    metaphone_code = Column(String(100), nullable=True, index=True)
+    nysiis_code = Column(String(100), nullable=True)
+
+    usage_count = Column(Integer, default=1, index=True)             # Frequency of appearance
+    is_auto_discovered = Column(Boolean, default=True)               # Discovered by AI vs predefined
+    is_verified = Column(Boolean, default=False)                     # Admin verified
+
+    created_at = Column(
+        String(100), default=lambda: datetime.utcnow().isoformat()
+    )
+    updated_at = Column(
+        String(100),
+        default=lambda: datetime.utcnow().isoformat(),
+        onupdate=lambda: datetime.utcnow().isoformat(),
+    )
+
+
+# ==============================================================================
+# BLOCK COMMENT: CENTRALIZED DOCUMENT TAG MAPPING (JUNCTION TABLE)
+# Module: app/models/db_models.py
+# Purpose:
+#   3NF normalized mapping between KnowledgeDocumentDB and central TaxonomyTermDB.
+#   Lightweight foreign key mapping enabling instant sub-millisecond joins and zero duplication.
+# ==============================================================================
+
+class DocumentTagMappingDB(Base):
+    __tablename__ = "document_tag_mappings"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    customer_id = Column(
+        String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id = Column(
+        String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    knowledge_base_id = Column(
+        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tag_id = Column(
+        String(36), ForeignKey("taxonomy_terms.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    tag_type = Column(String(50), nullable=False, index=True)       # 'judge', 'court', 'statute', 'section', 'year', 'disposition', 'trial_date', 'judgment_date', 'incident_date', 'concept'
+    tag_value = Column(String(255), nullable=True)                  # Display copy of canonical name
+
+    is_inferred = Column(Boolean, default=True)                      # True = AI extracted, False = User manual tag
+    created_at = Column(
+        String(100), default=lambda: datetime.utcnow().isoformat()
+    )
+
+
+# Backward-compatible alias
+DocumentTagDB = DocumentTagMappingDB
+
+
 class LLMProfileDB(Base):
     __tablename__ = "llm_profiles"
 
