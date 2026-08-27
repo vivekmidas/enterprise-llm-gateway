@@ -319,8 +319,23 @@ class EKPDomainExtractor:
             target_domain_id = entities[0].domain_id or doc.domain_id or "legal"
             ensure_domain_exists_sync(db, target_domain_id)
         try:
+            db.add(doc)
             for ent in entities:
                 db.add(ent)
+            # SINGLE SOURCE OF TRUTH (SOT): Persist extracted JSON to KnowledgeDocumentDB
+            extracted_payload = getattr(doc, "_temp_extracted_payload", None)
+            if extracted_payload:
+                try:
+                    from app.models.db_models import KnowledgeDocumentDB
+                    k_doc = db.query(KnowledgeDocumentDB).filter(
+                        (KnowledgeDocumentDB.id == doc.id) |
+                        ((KnowledgeDocumentDB.knowledge_base_id == str(doc.knowledge_base_id)) & (KnowledgeDocumentDB.name == doc.filename))
+                    ).first()
+                    if k_doc:
+                        k_doc.extracted_json = extracted_payload
+                        db.add(k_doc)
+                except Exception as k_sync_err:
+                    logger.warning("failed_to_persist_extracted_json_to_knowledge_doc_sync", error=str(k_sync_err))
             db.commit()
         except Exception as e:
             db.rollback()
@@ -341,8 +356,25 @@ class EKPDomainExtractor:
             target_domain_id = entities[0].domain_id or doc.domain_id or "legal"
             await ensure_domain_exists_async(db, target_domain_id)
         try:
+            db.add(doc)
             for ent in entities:
                 db.add(ent)
+            # SINGLE SOURCE OF TRUTH (SOT): Persist extracted JSON to KnowledgeDocumentDB
+            extracted_payload = getattr(doc, "_temp_extracted_payload", None)
+            if extracted_payload:
+                try:
+                    from app.models.db_models import KnowledgeDocumentDB
+                    k_stmt = select(KnowledgeDocumentDB).where(
+                        (KnowledgeDocumentDB.id == doc.id) |
+                        ((KnowledgeDocumentDB.knowledge_base_id == doc.knowledge_base_id) & (KnowledgeDocumentDB.name == doc.filename))
+                    )
+                    k_res = await db.execute(k_stmt)
+                    k_doc = k_res.scalars().first()
+                    if k_doc:
+                        k_doc.extracted_json = extracted_payload
+                        db.add(k_doc)
+                except Exception as k_sync_err:
+                    logger.warning("failed_to_persist_extracted_json_to_knowledge_doc", error=str(k_sync_err))
             await db.commit()
         except Exception as e:
             await db.rollback()
@@ -423,6 +455,7 @@ class EKPDomainExtractor:
             json_match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if json_match:
                 payload = json.loads(json_match.group(0))
+                doc._temp_extracted_payload = payload
                 extracted_db_entities = map_provenance_to_cdm_spans(
                     raw_payload=payload,
                     cdm_doc=cdm_doc,

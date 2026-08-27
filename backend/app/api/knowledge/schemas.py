@@ -60,6 +60,7 @@ class KnowledgeDocumentResponse(BaseModel):
     mime_type: Optional[str]
 
     metadata_json: Optional[Dict[str, Any]]
+    extracted_json: Optional[Dict[str, Any]] = None
     tags: Optional[List[Dict[str, Any]]] = None
 
     status: str

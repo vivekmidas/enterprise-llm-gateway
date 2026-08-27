@@ -155,6 +155,23 @@ async def list_documents(
     docs = res.scalars().all()
 
     result = []
+    from app.models.db_models import KnowledgeDocumentDB
+    k_map = {}
+    if knowledge_base_id:
+        try:
+            k_res = await db.execute(
+                select(KnowledgeDocumentDB.id, KnowledgeDocumentDB.name, KnowledgeDocumentDB.extracted_json).where(
+                    KnowledgeDocumentDB.knowledge_base_id == knowledge_base_id
+                )
+            )
+            for row in k_res.all():
+                if row[0]:
+                    k_map[row[0]] = row[2]
+                if row[1]:
+                    k_map[row[1]] = row[2]
+        except Exception:
+            pass
+
     for d in docs:
         p_res = await db.execute(select(func.count(EKPParagraphDB.id)).where(EKPParagraphDB.document_id == d.id))
         para_count = p_res.scalar() or 0
@@ -169,6 +186,7 @@ async def list_documents(
             if profile:
                 llm_profile_name = profile.name
 
+        extracted_json = k_map.get(d.id) or k_map.get(d.filename)
         result.append({
             "document_id": d.id,
             "tenant_id": d.tenant_id,
@@ -185,6 +203,7 @@ async def list_documents(
             "current_stage_order": d.current_stage_order,
             "paragraph_count": para_count,
             "entity_count": entity_count,
+            "extracted_json": extracted_json,
             "created_at": d.created_at.isoformat() if d.created_at else ""
         })
 
@@ -193,7 +212,7 @@ async def list_documents(
 
 @router.get("/documents/{document_id}")
 async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
-    """Retrieve detailed document status and CDM payload."""
+    """Retrieve detailed document status, CDM payload, and extracted JSON."""
     res = await db.execute(select(EKPDocumentDB).where(EKPDocumentDB.id == document_id))
     doc = res.scalar_one_or_none()
     if not doc:
@@ -212,6 +231,13 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
         if profile:
             llm_profile_name = profile.name
 
+    from app.models.db_models import KnowledgeDocumentDB
+    k_res = await db.execute(select(KnowledgeDocumentDB.extracted_json).where(
+        (KnowledgeDocumentDB.id == doc.id) |
+        ((KnowledgeDocumentDB.knowledge_base_id == doc.knowledge_base_id) & (KnowledgeDocumentDB.name == doc.filename))
+    ))
+    extracted_json = k_res.scalar_one_or_none()
+
     return {
         "document_id": doc.id,
         "tenant_id": doc.tenant_id,
@@ -228,7 +254,8 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
         "processing_error": doc.processing_error,
         "paragraph_count": para_count,
         "entity_count": entity_count,
-        "cdm_payload": doc.cdm_payload
+        "cdm_payload": doc.cdm_payload,
+        "extracted_json": extracted_json,
     }
 
 

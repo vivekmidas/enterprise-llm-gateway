@@ -390,6 +390,7 @@ class KnowledgeDocumentDB(Base):
     source_uri = Column(String(500), nullable=True)
     mime_type = Column(String(100), nullable=True)
     metadata_json = Column(JSON, nullable=True)
+    extracted_json = Column(JSON, nullable=True)
 
     status = Column(
         String(50),

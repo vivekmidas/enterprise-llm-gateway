@@ -178,6 +178,8 @@ def _refresh_knowledge_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN vector_dimension INTEGER")
     if "distance_metric" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN distance_metric VARCHAR(50) DEFAULT 'COSINE'")
+    if "extracted_json" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN extracted_json JSON NULL")
     if "collection_id" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN collection_id VARCHAR(36)")
 

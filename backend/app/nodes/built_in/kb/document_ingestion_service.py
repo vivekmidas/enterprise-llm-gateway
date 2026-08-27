@@ -340,11 +340,11 @@ class DocumentIngestionService:
                             schema_extraction_system_prompt=domain_schema.system_prompt,
                             schema_extraction_user_prompt=domain_schema.user_prompt,
                         )
-                        metadata["domain_info"] = domain_info
-                        metadata["extracted_fields"] = domain_info.get("extracted_fields") or {}
+                        document.extracted_json = domain_info
+                        metadata["extracted_json"] = domain_info
                 else:
-                    metadata.pop("domain_info", None)
-                    metadata.pop("extracted_fields", None)
+                    document.extracted_json = None
+                    metadata.pop("extracted_json", None)
 
                 document.metadata_json = metadata
                 await db.commit()

@@ -117,6 +117,18 @@ class DocumentViewsManager:
         views = meta.get("views", {})
         extracted_data = views.get("extracted", {})
 
+        # SINGLE SOURCE OF TRUTH (SOT): Read directly from KnowledgeDocumentDB.extracted_json
+        extracted_json_payload = (
+            getattr(doc, "extracted_json", None)
+            or meta.get("extracted_json")
+            or views.get("json")
+            or {
+                "document_name": doc.name,
+                "type": "document",
+                "sections": [],
+            }
+        )
+
         return {
             "document_id": doc.id,
             "document_name": doc.name,
@@ -139,12 +151,9 @@ class DocumentViewsManager:
                     "text": "",
                     "cleaning_stats": {},
                 }),
-                "json": views.get("json", {
-                    "document_name": doc.name,
-                    "type": "document",
-                    "sections": [],
-                }),
+                "json": extracted_json_payload,
             },
+            "extracted_json": extracted_json_payload,
             "comparison_report": meta.get("comparison_report") or extracted_data.get("comparison_report"),
             "entity_provenance": meta.get("entity_provenance", []),
         }

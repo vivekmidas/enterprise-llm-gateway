@@ -699,10 +699,10 @@ class DomainExtractor:
                 "extracted_fields": extracted_fields,
                 "extra_fields": extra_fields,
                 "field_weights": field_weights,
-                "extraction_mode": "prompt_driven" if (base_schema_sys or effective_kb_sys) else "domain_default",
+                "extraction_mode": "prompt_driven",
                 "debug_info": {
-                    "strategy": resolved_strategy,
-                    "prompt_source": prompt_source,
+                    "strategy": strategy or "inherit",
+                    "prompt_source": "domain_schema",
                     "system_prompt": sys_prompt,
                     "user_prompt": user_prompt,
                     "raw_response": raw_response,
