@@ -106,7 +106,9 @@ class DocumentViewsManager:
         """
         Retrieves the 3 document DB data views for verification and inspection.
         """
-        stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.id == document_id)
+        stmt = select(KnowledgeDocumentDB).where(
+            (KnowledgeDocumentDB.id == document_id) | (KnowledgeDocumentDB.name == document_id)
+        )
         res = await db.execute(stmt)
         doc = res.scalar_one_or_none()
 
@@ -121,6 +123,7 @@ class DocumentViewsManager:
         extracted_json_payload = (
             getattr(doc, "extracted_json", None)
             or meta.get("extracted_json")
+            or meta.get("domain_info")
             or views.get("json")
             or {
                 "document_name": doc.name,
@@ -128,6 +131,13 @@ class DocumentViewsManager:
                 "sections": [],
             }
         )
+        if not doc.extracted_json and extracted_json_payload:
+            doc.extracted_json = extracted_json_payload
+            try:
+                db.add(doc)
+                await db.commit()
+            except Exception:
+                pass
 
         return {
             "document_id": doc.id,
@@ -186,6 +196,7 @@ class DocumentViewsManager:
         if structured_json is not None:
             views["json"] = structured_json
             views["json"]["manually_edited"] = True
+            doc.extracted_json = structured_json
 
         doc.metadata_json = meta
         await db.commit()

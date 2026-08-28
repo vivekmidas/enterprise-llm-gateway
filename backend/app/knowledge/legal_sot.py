@@ -55,21 +55,21 @@ LEGAL_FIELDS = {
     "document": {
         "court": "",
         "location": "",
-        "case_number": "",
+        "case_number": [""],
         "citation": "",
         "decision_date": "",
-        "judge": "",
+        "judge": [""],
         "judgment_type": "",
     },
     "case_identity": {
         "court": "",
         "location": "",
-        "case_number": "",
+        "case_number": [""],
         "connected_cases": "",
         "number_of_connected_cases": "",
         "report_number": "",
         "case_date": "",
-        "judge": "",
+        "judge": [""],
     },
     "parties": {
         "petitioners": [""],
@@ -473,14 +473,14 @@ LEGAL_EXTRACTION_SCHEMA = {
             "properties": {
                 "court": {"type": ["string", "null"]},
                 "location": {"type": ["string", "null"]},
-                "case_number": {"type": ["string", "null"]},
+                "case_number": {"type": "array", "items": {"type": "string"}},
                 "connected_cases": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
                             "case": {"type": ["string", "null"]},
-                            "case_number": {"type": ["string", "null"]},
+                            "case_number": {"type": "array", "items": {"type": "string"}},
                             "plaintiff": {"type": ["string", "null"]},
                             "respondent": {"type": ["string", "null"]},
                             "advocate": {"type": ["string", "null"]},
@@ -491,7 +491,7 @@ LEGAL_EXTRACTION_SCHEMA = {
                 "number_of_connected_cases": {"type": ["integer", "number", "null"]},
                 "report_number": {"type": ["string", "null"]},
                 "case_date": {"type": ["string", "null"]},
-                "judge": {"type": ["string", "null"]},
+                "judge": {"type": "array", "items": {"type": "string"}},
             },
         },
         "parties": {
@@ -546,7 +546,7 @@ LEGAL_SYSTEM_PROMPT = (
     "RULE 2: Omit any field not found — do NOT write null, empty strings, or 0.\n"
     "RULE 3: NEVER write bracketed placeholders like '[Name]', '[Judge]', '[Advocate]', or '[Title]'. Extract exact real proper names or omit.\n"
     "RULE 4: STRICT FIELD CANONICALIZATION: Follow exact canonical schema field names. Do NOT drift or rename "
-    "(e.g. use `judges` (plural), NOT `coram`/`judge`/`bench`; use `case_numbers` (plural), NOT `case_number`/`case_no`; "
+    "(e.g. use `judge` (as an array of strings), NOT `coram`/`judges`/`bench`; use `case_number` (as an array of strings), NOT `case_numbers`/`case_no`; "
     "use `decision_date`, NOT `order_date`/`judgment_date`; use `court`, NOT `court_name`/`forum`; use `statutes`, NOT `acts`; "
     "use `sections`, NOT `provisions`/`articles`; use `petitioners`, NOT `petitioner`; use `respondents`, NOT `respondent`; "
     "use `advocates`, NOT `counsels`/`lawyers`; use `final_decision`, NOT `disposition`/`outcome`).\n"
@@ -575,18 +575,18 @@ LEGAL_USER_PROMPT_TEMPLATE = (
     "CRITICAL INSTRUCTIONS:\n"
     "- Extract ONLY factual information explicitly present in the document.\n"
     "- Omit any field not found — do NOT write null, empty strings, or bracketed placeholders like '[Name]' or '[Judge]'.\n"
-    "- STRICT CANONICAL FIELD NAMES: Use judge (not coram/judges), case_number (not case_numbers), court, decision_date, statutes, sections, petitioners, respondents, advocates.\n"
+    "- STRICT CANONICAL FIELD NAMES: Use judge (array of strings), case_number (array of strings), court, decision_date, statutes, sections, petitioners, respondents, advocates.\n"
     "- Place ONLY defined target schema fields in 'extracted_fields'.\n"
     "- Place ALL unmapped extra facts, observations, or additional metadata in 'extra_fields'.\n"
     "- For connected/consolidated cases: DO NOT separate plaintiffs and case numbers into separate detached lists. Extract each case as a paired object in 'connected_cases'.\n"
     "- For party names, extract actual names of people, government bodies, or companies, NOT generic roles.\n"
     "- Capture specific arguments mapped to the party making them where present.\n"
-    '- Output valid JSON only matching: {"extracted_fields": { ... }, "extra_fields": { ... }}.'
-    'Extract information STRICTLY from the DOCUMENT TEXT below.'
-    'Use only facts that appear in the document.'
-    'Do not invent any names, dates, parties, courts, or events.'
-    'Omit any field that has no information.'
-    'Return valid JSON in this structure:'
+    '- Output valid JSON only matching: {"extracted_fields": { ... }, "extra_fields": { ... }}.\n'
+    'Extract information STRICTLY from the DOCUMENT TEXT below.\n'
+    'Use only facts that appear in the document.\n'
+    'Do not invent any names, dates, parties, courts, or events.\n'
+    'Omit any field that has no information.\n'
+    'Return valid JSON in this structure:\n'
     """{
         "extracted_fields": {
         "executive_case_summary": {
@@ -597,9 +597,9 @@ LEGAL_USER_PROMPT_TEMPLATE = (
         },
         "document": {
         "court": "",
-        "judge": "",
+        "judge": [],
         "citation": "",
-        "case_number": "",
+        "case_number": [],
         "decision_date": "",
         "judgment_type": ""
         },

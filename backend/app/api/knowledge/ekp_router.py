@@ -22,6 +22,7 @@ from app.schemas.ekp_schemas import (
     DocumentRegistrationRequest, DocumentRegistrationResponse,
     IngestJobTriggerRequest, IngestJobTriggerResponse, ParagraphResponse
 )
+from app.api.knowledge.schemas import DocumentViewsResponse
 from app.knowledge.ekp_v3.pipeline_v3 import EKPProcessingPipeline
 from app.knowledge.ekp_v3.job_manager import EKPJobManager
 
@@ -257,6 +258,29 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
         "cdm_payload": doc.cdm_payload,
         "extracted_json": extracted_json,
     }
+
+
+@router.get("/bases/{kb_id}/documents/{doc_id}/views", response_model=DocumentViewsResponse)
+async def get_document_views_v3(
+    kb_id: str,
+    doc_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve 3 data views with extracted_json from knowledge_documents."""
+    from app.knowledge.storage.views_manager import DocumentViewsManager
+    views_data = await DocumentViewsManager.get_views(db=db, document_id=doc_id)
+    return DocumentViewsResponse(**views_data)
+
+
+@router.get("/documents/{doc_id}/views", response_model=DocumentViewsResponse)
+async def get_document_views_v3_direct(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve 3 data views with extracted_json directly by document ID/name."""
+    from app.knowledge.storage.views_manager import DocumentViewsManager
+    views_data = await DocumentViewsManager.get_views(db=db, document_id=doc_id)
+    return DocumentViewsResponse(**views_data)
 
 
 @router.get("/documents/{document_id}/paragraphs", response_model=List[ParagraphResponse])

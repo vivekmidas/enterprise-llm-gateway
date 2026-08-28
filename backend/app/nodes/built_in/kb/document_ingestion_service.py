@@ -341,10 +341,12 @@ class DocumentIngestionService:
                             schema_extraction_user_prompt=domain_schema.user_prompt,
                         )
                         document.extracted_json = domain_info
-                        metadata["extracted_json"] = domain_info
+                        metadata.pop("extracted_json", None)
+                        metadata.pop("domain_info", None)
                 else:
                     document.extracted_json = None
                     metadata.pop("extracted_json", None)
+                    metadata.pop("domain_info", None)
 
                 document.metadata_json = metadata
                 await db.commit()
