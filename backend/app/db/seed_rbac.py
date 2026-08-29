@@ -298,6 +298,22 @@ MODULES_REGISTRY = [
             {"action": "bookmark", "label": "Bookmark Legal Cases", "description": "Save case bookmarks"},
             {"action": "admin", "label": "Full Legal Admin", "description": "Full administrative control of legal platform"}
         ]
+    },
+    {
+        "id": "legal_autopilot",
+        "module": "legal",
+        "submodule": "autopilot",
+        "label": "Litigation Autopilot",
+        "description": "Interactive case intelligence, gap analysis, evidence vault, and court pleading drafting",
+        "route_patterns": ["/autopilot", "/autopilot/**"],
+        "icon": "Sword",
+        "display_order": 21,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View Litigation Autopilot", "description": "Access litigation autopilot workspace and case intelligence"},
+            {"action": "edit", "label": "Log Updates & Case Details", "description": "Add updates, edit parties, and modify case timelines"},
+            {"action": "evidence", "label": "Ingest Evidence", "description": "Upload evidence, documents, and notes to workspace"},
+            {"action": "draft", "label": "Generate Pleadings", "description": "Generate first-draft notices and court pleadings"}
+        ]
     }
 ]
 
@@ -365,7 +381,11 @@ ROLE_PRESETS = [
             "legal:research:edit",
             "legal:research:delete",
             "legal:research:bookmark",
-            "legal:research:admin"
+            "legal:research:admin",
+            "legal:autopilot:view",
+            "legal:autopilot:edit",
+            "legal:autopilot:evidence",
+            "legal:autopilot:draft"
         ]
     },
     {
@@ -378,6 +398,10 @@ ROLE_PRESETS = [
             "legal:research:view",
             "legal:research:upload",
             "legal:research:bookmark",
+            "legal:autopilot:view",
+            "legal:autopilot:edit",
+            "legal:autopilot:evidence",
+            "legal:autopilot:draft",
             "admin:knowledge:view",
             "nodes:catalog:view"
         ]
@@ -393,6 +417,10 @@ ROLE_PRESETS = [
             "legal:research:upload",
             "legal:research:edit",
             "legal:research:bookmark",
+            "legal:autopilot:view",
+            "legal:autopilot:edit",
+            "legal:autopilot:evidence",
+            "legal:autopilot:draft",
             "admin:knowledge:view",
             "admin:knowledge:ingest",
             "workflows:builder:view",
@@ -408,6 +436,7 @@ ROLE_PRESETS = [
         "permissions": [
             "legal:research:query",
             "legal:research:view",
+            "legal:autopilot:view",
             "admin:knowledge:view",
             "nodes:catalog:view"
         ]
