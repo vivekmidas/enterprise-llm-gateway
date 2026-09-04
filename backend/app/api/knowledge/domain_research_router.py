@@ -55,13 +55,15 @@ class SearchRequest(BaseModel):
     knowledge_base_id: Optional[str] = None  # Specific KB or search across all tenant KBs
     filters: Optional[Dict[str, Any]] = None  # Arbitrary dynamic entity/value filters
     concepts: Optional[List[str]] = None
-    approach: Optional[str] = "tri_path"  # tri_path, hybrid, vector, sql
+    approach: Optional[str] = "hybrid"  # tri_path, hybrid, vector, sql
     weights: Optional[Dict[str, float]] = Field(
         default_factory=lambda: {"vector_weight": 0.6, "exact_sql_weight": 0.4}
     )
     include_summary: bool = True
     page: int = 1
     limit: int = 15
+    llm_profile_id: Optional[str] = None
+    profile_id: Optional[str] = None
     # Client-level search prompt customization
     search_system_prompt: Optional[str] = None
     search_user_prompt: Optional[str] = None
@@ -1085,7 +1087,13 @@ async def search_domain_knowledge(
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
             from app.nodes.built_in.kb.response_generation_service import _clean_and_normalize_answer
-            llm = await llm_router.get_llm(customer_id=user_tenant_id, db=db, temperature=0.2, llm_config={"format": "json"})
+            llm = await llm_router.get_llm(
+                customer_id=user_tenant_id,
+                db=db,
+                temperature=0.2,
+                llm_config={"format": "json"},
+                profile_id=payload.llm_profile_id or payload.profile_id,
+            )
             res = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
             raw_summary = res.content if hasattr(res, "content") else str(res)
             summary_text = _clean_and_normalize_answer(raw_summary, system_prompt)
@@ -1302,6 +1310,7 @@ async def synthesize_domain_response(
             customer_id=user_tenant_id,
             db=db,
             temperature=0.2,
+            profile_id=payload.llm_profile_id,
         )
         messages = [
             SystemMessage(content=system_prompt),

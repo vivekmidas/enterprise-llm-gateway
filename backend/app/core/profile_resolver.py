@@ -269,6 +269,22 @@ class ProfileResolver:
                 logger.debug("profile_resolved_by_first_tenant_profile")
                 return profile.settings
 
+        # ==============================================================================
+        # BLOCK COMMENT: GLOBAL DEFAULT PROFILE RESOLUTION FALLBACK
+        # Module: app/core/profile_resolver.py
+        # Purpose: Resolves default or first profile in database when customer_id is None.
+        # ==============================================================================
+        result_global_default = await self.db.execute(
+            select(LLMProfileDB).where(LLMProfileDB.is_default.is_(True)).limit(1)
+        )
+        profile_global = result_global_default.scalar_one_or_none()
+        if not profile_global:
+            result_first = await self.db.execute(select(LLMProfileDB).limit(1))
+            profile_global = result_first.scalar_one_or_none()
+        if profile_global and profile_global.settings:
+            logger.debug("profile_resolved_by_global_default")
+            return profile_global.settings
+
         logger.info("no_profile_found_using_system_defaults", extra={"customer_id": customer_id})
         return None
 

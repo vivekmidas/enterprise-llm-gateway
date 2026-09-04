@@ -31,20 +31,54 @@ class LLMRouter:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "ollama").lower()
 
+    # ==============================================================================
+    # BLOCK COMMENT: PROFILE RESOLVER INTEGRATION IN LLM ROUTER
+    # Module: app/core/llm_router.py
+    # Purpose:
+    #   Resolves tenant's default or active profile if profile_id is not provided,
+    #   or loads explicit profile when profile_id is supplied.
+    # ==============================================================================
     async def get_llm(
         self,
         temperature=0.7,
         max_tokens=1024,
-        customer_id: int | None = None,
+        customer_id: int | str | None = None,
         db=None,
         llm_config: dict | None = None,
+        profile_id: str | int | None = None,
     ):
         tenant_config = {}
-        if customer_id is not None and db is not None:
+        if db is not None and (customer_id is not None or profile_id is not None):
+            try:
+                from app.core.profile_resolver import ProfileResolver
+                resolver = ProfileResolver(db)
+                resolved_profile = await resolver.resolve(
+                    profile_id=profile_id,
+                    customer_id=customer_id,
+                    allow_fallback=True,
+                )
+                if resolved_profile:
+                    gen_sec = getattr(resolved_profile, "generation", None)
+                    search_sec = getattr(resolved_profile, "search", None)
+                    if gen_sec:
+                        tenant_config = {
+                            "llm_provider": gen_sec.provider or getattr(resolved_profile, "provider", None),
+                            "llm_model": gen_sec.model or getattr(resolved_profile, "model", None),
+                            "llm_base_url": gen_sec.url or getattr(resolved_profile, "base_url", None),
+                            "llm_api_key": gen_sec.api_key or getattr(resolved_profile, "api_key", None),
+                            "temperature": gen_sec.temperature,
+                            "max_tokens": gen_sec.max_tokens,
+                            "generation": gen_sec.model_dump() if hasattr(gen_sec, "model_dump") else gen_sec.__dict__,
+                            "search": search_sec.model_dump() if (search_sec and hasattr(search_sec, "model_dump")) else (search_sec.__dict__ if search_sec else {}),
+                        }
+            except Exception:
+                pass
+
+        if customer_id is not None and db is not None and not tenant_config:
             try:
                 from app.models.db_models import CustomerDB, RetrievalConfigDB
-                from sqlalchemy import select
-                cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
+                from sqlalchemy import select, or_
+                cust_stmt = select(CustomerDB).where(or_(CustomerDB.id == customer_id, CustomerDB.id == str(customer_id)))
                 cust_res = await db.execute(cust_stmt)
                 customer = cust_res.scalar_one_or_none()
                 if customer and customer.settings:
@@ -53,7 +87,7 @@ class LLMRouter:
                     if active_config_id:
                         cfg_stmt = select(RetrievalConfigDB).where(
                             RetrievalConfigDB.id == int(active_config_id),
-                            RetrievalConfigDB.customer_id == customer_id
+                            RetrievalConfigDB.customer_id == str(customer_id)
                         )
                         cfg_res = await db.execute(cfg_stmt)
                         cfg = cfg_res.scalar_one_or_none()
