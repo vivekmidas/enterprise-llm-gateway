@@ -734,12 +734,38 @@ async def search_domain_knowledge(
             )
             matched_document_ids.update(indexed_candidate_ids)
 
-        where_clauses = [
-            or_(
+        # ==============================================================================
+        # BLOCK COMMENT: RESOLVE DOMAIN SYSTEM KNOWLEDGE BASES
+        # Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
+        # Automatically includes canonical domain statute KBs (e.g. BNS, CrPC, IPC)
+        # alongside tenant case documents, merging results transparently.
+        # ==============================================================================
+        domain_kb_ids = []
+        try:
+            dom_stmt = select(DomainSchemaDB.id).where(DomainSchemaDB.domain_key == domain_key)
+            dom_id_res = await db.execute(dom_stmt)
+            active_domain_id = dom_id_res.scalar_one_or_none()
+            sys_kb_stmt = select(KnowledgeBaseDB.id).where(
+                or_(KnowledgeBaseDB.is_system.is_(True), KnowledgeBaseDB.scope == "SYSTEM"),
+                or_(KnowledgeBaseDB.domain_id == active_domain_id, KnowledgeBaseDB.domain_id.is_(None))
+            )
+            sys_kb_res = await db.execute(sys_kb_stmt)
+            domain_kb_ids = [str(k) for k in sys_kb_res.scalars().all()]
+        except Exception as dom_err:
+            logger.warning("domain_sys_kb_lookup_failed", error=str(dom_err))
+
+        where_conditions = []
+        if user_tenant_id:
+            where_conditions.append(or_(
                 KnowledgeDocumentDB.customer_id == user_tenant_id,
                 KnowledgeDocumentDB.customer_id == str(user_tenant_id),
-            )
-        ]
+            ))
+        where_conditions.append(KnowledgeDocumentDB.is_system.is_(True))
+        where_conditions.append(KnowledgeDocumentDB.customer_id.is_(None))
+        if domain_kb_ids:
+            where_conditions.append(KnowledgeDocumentDB.knowledge_base_id.in_(domain_kb_ids))
+
+        where_clauses = [or_(*where_conditions)]
         if payload.knowledge_base_id:
             where_clauses.append(KnowledgeDocumentDB.knowledge_base_id == payload.knowledge_base_id)
 
@@ -796,6 +822,7 @@ async def search_domain_knowledge(
                     or meta
                 )
                 case_findings = extract_case_findings(meta)
+                is_sys_doc = bool(d.is_system or d.customer_id is None or (domain_kb_ids and d.knowledge_base_id in domain_kb_ids))
 
                 candidates[doc_key] = {
                     "id": str(d.id),
@@ -806,6 +833,9 @@ async def search_domain_knowledge(
                     "relevance_score": final_score,
                     "source": "mysql_metadata",
                     "matched_tags": matched_filters,
+                    "is_system": is_sys_doc,
+                    "scope": "SYSTEM" if is_sys_doc else "TENANT",
+                    "source_type": "domain_law" if is_sys_doc else "tenant_document",
                     "findings": case_findings,
                     "petitioner_arguments": case_findings.get("petitioner_arguments"),
                     "respondent_arguments": case_findings.get("respondent_arguments"),
@@ -841,26 +871,33 @@ async def search_domain_knowledge(
     # BLOCK COMMENT: STAGE 2 - TARGETED CHUNK & VECTOR SEARCH ON MATCHED DOCUMENTS
     # When filters/tags are active and matched documents are resolved, chunk & vector
     # searches are strictly constrained to candidate_document_ids.
+    # Automatically queries across tenant and domain system chunks.
     # ==============================================================================
     t_chunk_start = time.perf_counter()
     chunk_matches_count = 0
     try:
-        chunk_filters = [
-            or_(
+        chunk_conditions = []
+        if user_tenant_id:
+            chunk_conditions.append(or_(
                 KnowledgeChunkDB.customer_id == user_tenant_id,
                 KnowledgeChunkDB.customer_id == str(user_tenant_id),
-            )
-        ]
+            ))
+        chunk_conditions.append(KnowledgeChunkDB.is_system.is_(True))
+        chunk_conditions.append(KnowledgeChunkDB.customer_id.is_(None))
+        if domain_kb_ids:
+            chunk_conditions.append(KnowledgeChunkDB.knowledge_base_id.in_(domain_kb_ids))
+
+        chunk_filters = [or_(*chunk_conditions)]
         # Scope chunk search strictly to pre-filtered documents when specific filters matched
         if matched_document_ids and has_specific_filters:
             chunk_filters.append(KnowledgeChunkDB.document_id.in_(list(matched_document_ids)))
 
         if active_concepts:
-            chunk_conditions = [
+            concept_conds = [
                 KnowledgeChunkDB.content.ilike(f"%{concept}%")
                 for concept in active_concepts
             ]
-            chunk_filters.append(or_(*chunk_conditions))
+            chunk_filters.append(or_(*concept_conds))
 
         chunk_stmt = (
             select(KnowledgeChunkDB)
@@ -886,6 +923,7 @@ async def search_domain_knowledge(
                 or doc_meta
             )
             ch_findings = extract_case_findings(doc_meta)
+            is_sys_chunk = bool(ch.is_system or ch.customer_id is None or (doc and doc.is_system) or (domain_kb_ids and ch.knowledge_base_id in domain_kb_ids))
 
             candidates[item_key] = {
                 "id": str(ch.document_id),
@@ -898,14 +936,17 @@ async def search_domain_knowledge(
                 "relevance_score": 0.88,
                 "source": "mysql_chunk_fts",
                 "matched_tags": matched_concept_tags,
+                "is_system": is_sys_chunk,
+                "scope": "SYSTEM" if is_sys_chunk else "TENANT",
+                "source_type": "domain_law" if is_sys_chunk else "tenant_document",
                 "findings": ch_findings,
                 "petitioner_arguments": ch_findings.get("petitioner_arguments"),
                 "respondent_arguments": ch_findings.get("respondent_arguments"),
                 "court_findings": ch_findings.get("court_findings"),
                 "holding": ch_findings.get("holding"),
-                "final_decision": ch_findings.get("final_decision"),
-                "case_overview": ch_findings.get("case_overview"),
-                "one_line_summary": ch_findings.get("one_line_summary"),
+                "final_decision": case_findings.get("final_decision"),
+                "case_overview": case_findings.get("case_overview"),
+                "one_line_summary": case_findings.get("one_line_summary"),
                 **{k: v for k, v in flatten_metadata_fields(doc_meta).items() if isinstance(v, (str, int, float, bool, list))},
             }
             chunk_matches_count += 1

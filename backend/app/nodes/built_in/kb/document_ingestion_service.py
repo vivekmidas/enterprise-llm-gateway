@@ -49,26 +49,28 @@ class DocumentIngestionService:
         # Compute checksum
         checksum = hashlib.sha256(content).hexdigest()
 
+        # BLOCK: Resolve KB customer_id for system-admin uploads
+        # Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
+        from app.models.db_models import KnowledgeBaseDB
+        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
+        kb_res = await db.execute(kb_stmt)
+        target_kb = kb_res.scalar_one_or_none()
+        is_sys_kb = bool(target_kb and (target_kb.is_system or target_kb.scope == "SYSTEM"))
+        target_customer_id = target_kb.customer_id if (target_kb and target_kb.customer_id) else (None if is_sys_kb else current_user.customer_id)
+
         # Save the file to disk
         file_path = self._store_file(
-            customer_id=current_user.customer_id,
+            customer_id=target_customer_id or "system",
             knowledge_base_id=knowledge_base_id,
             original_name=upload_file.filename or "unnamed-document",
             content=content,
         )
 
-        # BLOCK: Resolve KB customer_id for system-admin uploads
-        from app.models.db_models import KnowledgeBaseDB
-        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
-        kb_res = await db.execute(kb_stmt)
-        target_kb = kb_res.scalar_one_or_none()
-        target_customer_id = target_kb.customer_id if target_kb else current_user.customer_id
-
         # Create Job in DB (JobStatus.QUEUED)
         job_repo = JobRepository(db)
         job_service = JobService(job_repo)
         job = await job_service.create_job(
-            customer_id=target_customer_id,
+            customer_id=target_customer_id or "system",
             job_type=JobType.DOCUMENT_INDEX,
             entity_type=EntityType.DOCUMENT,
             entity_id=None,
@@ -88,6 +90,18 @@ class DocumentIngestionService:
         model_name = emb_config["model_name"]
         dimension = emb_config["dimension"]
         provider = get_embedding_provider_for_model(**emb_config)
+
+        metadata = description or {}
+        if not isinstance(metadata, dict):
+            metadata = {"description": str(metadata)}
+        if tags:
+            metadata["tags"] = tags
+        if doc_type:
+            metadata["type"] = doc_type
+        if parser_strategy:
+            metadata["parser_strategy"] = parser_strategy
+        if enable_dedup is not None:
+            metadata["enable_dedup"] = enable_dedup
 
         # Resolve or create the mapped KnowledgeCollectionDB
         stmt_col = select(KnowledgeCollectionDB).where(
@@ -489,6 +503,7 @@ class DocumentIngestionService:
                         document_id=document.id,
                         knowledge_base_id=document.knowledge_base_id,
                         customer_id=document.customer_id,
+                        is_system=getattr(document, "is_system", False),
                         chunk_index=index,
                         content=s_chunk.content,
                         metadata_json=chunk_meta,

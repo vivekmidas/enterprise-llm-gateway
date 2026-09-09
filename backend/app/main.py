@@ -118,9 +118,17 @@ app.include_router(backup_router)
 
 app.include_router(roles_router)
 
-
-
-
+# ===============================================================================
+# BLOCK COMMENT: REGISTER LEGAL CONVERSATIONAL CHAT ASSISTANT ROUTER
+# Epic: epic_system_tenant_common_knowledge_bases.md
+# Story: STORY-SYSKB-04 (Multilingual Voice Conversational Knowledge Assistant)
+# Description:
+#     Registers conversational assistant endpoints providing cross-KB retrieval
+#     (system statutes + tenant cases), direct case URL links, inactivity
+#     monitoring, and persistent session/message audit storage.
+# ===============================================================================
+from app.api.chat.assistant_router import router as chat_assistant_router
+app.include_router(chat_assistant_router)
 
 if __name__ == "__main__":
     import uvicorn

@@ -301,6 +301,15 @@ class DomainSchemaDB(Base):
     )
 
 
+# ==============================================================================
+# BLOCK COMMENT: SYSTEM-LEVEL & DOMAIN-COMMON KNOWLEDGE BASE MODEL
+# Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
+# Purpose:
+#   Allows System Admin to maintain canonical, domain-level Knowledge Bases
+#   (e.g., all Indian laws, BNS sections, CrPC concordance tables in 1 KB)
+#   shared read-only across all tenants within the same domain.
+#   scope='SYSTEM' or 'TENANT'; customer_id is nullable for system-wide KBs.
+# ==============================================================================
 class KnowledgeBaseDB(Base):
     __tablename__ = "knowledge_bases"
 
@@ -308,8 +317,10 @@ class KnowledgeBaseDB(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     status = Column(String(50), default="active", index=True)
+    scope = Column(String(50), default="TENANT", index=True)  # SYSTEM or TENANT
+    is_system = Column(Boolean, default=False, index=True)
     customer_id = Column(
-        String(36), ForeignKey("customers.id"), nullable=False, index=True
+        String(36), ForeignKey("customers.id"), nullable=True, index=True
     )
     domain_id = Column(
         String(36), ForeignKey("domain_schemas.id"), nullable=True, index=True
@@ -343,7 +354,7 @@ class KnowledgeCollectionDB(Base):
     customer_id = Column(
         String(36),
         ForeignKey("customers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     embedding_model = Column(String(255), nullable=True)
@@ -373,8 +384,9 @@ class KnowledgeDocumentDB(Base):
         index=True,
     )
     customer_id = Column(
-        String(36), ForeignKey("customers.id"), nullable=False, index=True
+        String(36), ForeignKey("customers.id"), nullable=True, index=True
     )
+    is_system = Column(Boolean, default=False, index=True)
     created_by = Column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
     )
@@ -438,9 +450,10 @@ class KnowledgeChunkDB(Base):
     customer_id = Column(
         String(36),
         ForeignKey("customers.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    is_system = Column(Boolean, default=False, index=True)
 
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
@@ -513,7 +526,7 @@ class DocumentTagMappingDB(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     customer_id = Column(
-        String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True
     )
     document_id = Column(
         String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
@@ -544,8 +557,10 @@ class LLMProfileDB(Base):
     name = Column(String(255), nullable=False)
     description = Column(String(1000), nullable=True)
     is_default = Column(Boolean, default=False, index=True)
+    scope = Column(String(50), default="TENANT", index=True)  # SYSTEM or TENANT
+    is_system = Column(Boolean, default=False, index=True)
     customer_id = Column(
-        String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True
     )
     created_by = Column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
@@ -829,4 +844,38 @@ class KnowledgeAuditLogDB(Base):
 LegalAuditLogDB = KnowledgeAuditLogDB
 
 
+# ===============================================================================
+# BLOCK COMMENT: CHAT ASSISTANT PERSISTENCE MODELS
+# Epic: epic_system_tenant_common_knowledge_bases.md
+# Story: STORY-SYSKB-04 (Multilingual Voice Conversational Knowledge Assistant)
+# Description:
+#     Provides persistent audit and session storage for multilingual legal chatbot
+#     interactions, including Q&A pairs, internal case link references, audio STT flags,
+#     and inactivity lifecycle states (idle_pinged, closed_inactivity, closed_user).
+# ===============================================================================
 
+class ChatAssistantSessionDB(Base):
+    __tablename__ = "chat_assistant_sessions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    customer_id = Column(String(36), nullable=True, index=True)
+    title = Column(String(255), default="New Legal Assistant Session")
+    language = Column(String(20), default="en")
+    status = Column(String(32), default="active", index=True)  # active, idle_pinged, closed_inactivity, closed_user
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ChatAssistantMessageDB(Base):
+    __tablename__ = "chat_assistant_messages"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    session_id = Column(String(36), ForeignKey("chat_assistant_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # user, assistant, system
+    content = Column(Text, nullable=False)
+    detected_language = Column(String(20), default="en")
+    audio_used = Column(Boolean, default=False)
+    referenced_cases_json = Column(JSON, nullable=True, default=list)
+    citations_json = Column(JSON, nullable=True, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -33,8 +33,11 @@ router = APIRouter()
 
 
 # ==============================================================================
-# BLOCK COMMENT: DYNAMIC API RBAC PROTECTED ENDPOINTS
+# BLOCK COMMENT: DYNAMIC API RBAC PROTECTED ENDPOINTS FOR SYSTEM & TENANT KBs
+# Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
 # Uses dynamic_api_guard to validate user capabilities against RoutePermissionDB live cache.
+# Allows System Admin to create canonical, system-level KBs (is_system=True, scope='SYSTEM')
+# shared read-only across all tenants for a domain.
 # ==============================================================================
 @router.post("/bases", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
@@ -44,17 +47,30 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new knowledge base and provision its physical Qdrant collection."""
-    if current_user.role == "system_admin":
+    is_sys = bool(payload.is_system or payload.scope == "SYSTEM")
+
+    if is_sys:
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only system administrators can create system-level knowledge bases."
+            )
+        target_customer_id = None
+        target_scope = "SYSTEM"
+        target_is_system = True
+    elif current_user.role == "system_admin":
         kb_settings = payload.settings or {}
         target_customer_id = customer_id or kb_settings.get("customer_id") or current_user.customer_id
         if target_customer_id is None:
             from app.models.db_models import CustomerDB
             cust_res = await db.execute(select(CustomerDB.id).limit(1))
             target_customer_id = cust_res.scalar_one_or_none()
-            if not target_customer_id:
-                raise HTTPException(status_code=400, detail="No customer tenant found to assign knowledge base.")
+        target_scope = payload.scope or "TENANT"
+        target_is_system = False
     else:
         target_customer_id = require_tenant(current_user)
+        target_scope = "TENANT"
+        target_is_system = False
 
     try:
         db_kb = KnowledgeBaseDB(
@@ -62,6 +78,8 @@ async def create_knowledge_base(
             description=payload.description,
             domain_id=payload.domain_id,
             status="active",
+            scope=target_scope,
+            is_system=target_is_system,
             customer_id=target_customer_id,
             created_by=str(current_user.id),
             settings=payload.settings or {},
@@ -75,7 +93,8 @@ async def create_knowledge_base(
         if prof_id:
             prof_res = await db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str(prof_id)))
             target_profile = prof_res.scalar_one_or_none()
-        if not target_profile:
+
+        if not target_profile and target_customer_id:
             prof_res = await db.execute(
                 select(LLMProfileDB).where(
                     LLMProfileDB.customer_id == target_customer_id,
@@ -83,9 +102,31 @@ async def create_knowledge_base(
                 ).limit(1)
             )
             target_profile = prof_res.scalar_one_or_none()
-        if not target_profile:
+            if not target_profile:
+                prof_res = await db.execute(
+                    select(LLMProfileDB).where(LLMProfileDB.customer_id == target_customer_id).limit(1)
+                )
+                target_profile = prof_res.scalar_one_or_none()
+
+        if not target_profile and target_is_system:
+            # Lookup system-level profile
             prof_res = await db.execute(
-                select(LLMProfileDB).where(LLMProfileDB.customer_id == target_customer_id).limit(1)
+                select(LLMProfileDB).where(
+                    LLMProfileDB.is_system.is_(True),
+                    LLMProfileDB.is_default.is_(True)
+                ).limit(1)
+            )
+            target_profile = prof_res.scalar_one_or_none()
+            if not target_profile:
+                prof_res = await db.execute(
+                    select(LLMProfileDB).where(LLMProfileDB.is_system.is_(True)).limit(1)
+                )
+                target_profile = prof_res.scalar_one_or_none()
+
+        if not target_profile:
+            # Global default fallback profile
+            prof_res = await db.execute(
+                select(LLMProfileDB).where(LLMProfileDB.is_default.is_(True)).limit(1)
             )
             target_profile = prof_res.scalar_one_or_none()
 
@@ -124,45 +165,36 @@ async def create_knowledge_base(
             status="active",
         )
         db.add(db_coll)
-        await db.commit()
-        await db.refresh(db_kb)
 
         try:
             from app.knowledge.vector_store import vector_store
-            await vector_store.ensure_collection(
-                dimension=db_coll.vector_dimension or settings.EMBEDDING_DIMENSION,
-                collection_name=db_coll.name,
+            await vector_store.create_collection(
+                name=f"kb_collection_{db_kb.id}",
+                vector_dimension=int(vector_dimension),
             )
-        except Exception as e:
-            logger.error("qdrant_collection_provision_failed", extra={"kb_id": db_kb.id, "error": str(e)})
+        except Exception as qdrant_exc:
+            logger.warning(
+                "qdrant_collection_provision_failed",
+                extra={"kb_id": db_kb.id, "error": str(qdrant_exc)},
+            )
 
-        # Check if tenant has an LLM profile configured — surface warning if not.
-        # Without a profile, document extraction will be silently skipped.
+        await db.commit()
+        await db.refresh(db_kb)
+
         llm_profile_warning = None
-        try:
-            prof_stmt = select(LLMProfileDB).where(
-                LLMProfileDB.customer_id == target_customer_id
-            ).limit(1)
-            prof_res = await db.execute(prof_stmt)
-            existing_profile = prof_res.scalar_one_or_none()
-            if not existing_profile:
-                llm_profile_warning = (
-                    "No LLM profile is configured for this tenant. "
-                    "Document extraction will be skipped until an LLM profile is created and linked. "
-                    "Go to Settings → LLM Profiles to configure one."
-                )
-                logger.warning(
-                    "kb_created_no_llm_profile",
-                    kb_id=db_kb.id,
-                    tenant_id=target_customer_id,
-                )
-        except Exception:
-            pass
+        if not target_profile and not target_is_system:
+            llm_profile_warning = (
+                "No LLM profile is configured for this tenant. "
+                "Document extraction will be skipped until an LLM profile is created and linked. "
+                "Go to Settings → LLM Profiles to configure one."
+            )
 
         response = db_kb.__dict__.copy()
         response["llm_profile_warning"] = llm_profile_warning
         return KnowledgeBaseResponse(**response)
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("create_knowledge_base_failed")
         await db.rollback()
@@ -175,16 +207,31 @@ async def create_knowledge_base(
 @router.get("/bases", response_model=list[KnowledgeBaseResponse])
 async def list_knowledge_bases(
     customer_id: Optional[str] = Query(None),
+    domain_id: Optional[str] = Query(None),
+    scope: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List knowledge bases. System admin can view all or filter by customer_id."""
+    """List knowledge bases. Merges system-level domain knowledge bases with tenant knowledge bases."""
+    from sqlalchemy import or_
     stmt = select(KnowledgeBaseDB)
     if current_user.role == "system_admin":
         if customer_id is not None:
-            stmt = stmt.where(KnowledgeBaseDB.customer_id == customer_id)
+            stmt = stmt.where(or_(KnowledgeBaseDB.customer_id == customer_id, KnowledgeBaseDB.is_system.is_(True)))
     else:
-        stmt = stmt.where(KnowledgeBaseDB.customer_id == current_user.customer_id)
+        # Regular tenants see their own KBs + system KBs
+        stmt = stmt.where(
+            or_(
+                KnowledgeBaseDB.customer_id == current_user.customer_id,
+                KnowledgeBaseDB.is_system.is_(True),
+                KnowledgeBaseDB.scope == "SYSTEM",
+            )
+        )
+
+    if domain_id:
+        stmt = stmt.where(or_(KnowledgeBaseDB.domain_id == domain_id, KnowledgeBaseDB.domain_id.is_(None)))
+    if scope:
+        stmt = stmt.where(KnowledgeBaseDB.scope == scope)
 
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -197,20 +244,25 @@ async def update_knowledge_base(
     current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a knowledge base's name, description, status, or settings."""
-    if current_user.role == "system_admin":
-        stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
-    else:
-        customer_id = require_tenant(current_user)
-        stmt = select(KnowledgeBaseDB).where(
-            KnowledgeBaseDB.id == kb_id,
-            KnowledgeBaseDB.customer_id == customer_id,
-        )
-
+    """Update a knowledge base. System KBs can only be modified by system administrators."""
+    stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
     result = await db.execute(stmt)
     kb = result.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found.")
+
+    # Guard: System KBs cannot be updated by normal tenants
+    if kb.is_system or kb.scope == "SYSTEM":
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="System-level knowledge bases can only be modified by system administrators.",
+            )
+    else:
+        if current_user.role != "system_admin":
+            customer_id = require_tenant(current_user)
+            if kb.customer_id != customer_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -302,18 +354,22 @@ async def delete_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a Knowledge Base and clean up all metadata and physical collections."""
-    if current_user.role == "system_admin":
-        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
-    else:
-        customer_id = require_tenant(current_user)
-        kb_stmt = select(KnowledgeBaseDB).where(
-            KnowledgeBaseDB.id == kb_id,
-            KnowledgeBaseDB.customer_id == customer_id,
-        )
+    kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
     kb_res = await db.execute(kb_stmt)
     kb = kb_res.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found.")
+
+    if kb.is_system or kb.scope == "SYSTEM":
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="System-level knowledge bases can only be deleted by system administrators.",
+            )
+    elif current_user.role != "system_admin":
+        customer_id = require_tenant(current_user)
+        if kb.customer_id != customer_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
 
     if current_user.role == "system_admin":
         col_stmt = select(KnowledgeCollectionDB).where(KnowledgeCollectionDB.knowledge_base_id == kb_id)

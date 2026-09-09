@@ -65,19 +65,23 @@ async def upload_document(
             detail=f"Unsupported file type. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}",
         )
 
-    if current_user.role == "system_admin":
-        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
-    else:
-        customer_id = require_tenant(current_user)
-        kb_stmt = select(KnowledgeBaseDB).where(
-            KnowledgeBaseDB.id == kb_id,
-            KnowledgeBaseDB.customer_id == customer_id,
-        )
-
+    kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
     kb_res = await db.execute(kb_stmt)
     kb = kb_res.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
+
+    is_sys_kb = bool(kb.is_system or kb.scope == "SYSTEM")
+    if is_sys_kb:
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="System-level knowledge bases can only have documents uploaded by system administrators."
+            )
+    elif current_user.role != "system_admin":
+        customer_id = require_tenant(current_user)
+        if kb.customer_id != customer_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
 
     target_customer_id = kb.customer_id
 
@@ -123,6 +127,8 @@ async def upload_document(
             enable_dedup=enable_dedup,
         )
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("document_ingestion_api_failed")
         raise HTTPException(status_code=500, detail=f"In-flight document ingestion failed: {exc}")
@@ -138,23 +144,22 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all documents under a specific knowledge base."""
-    if current_user.role == "system_admin":
-        kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
-        doc_stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.knowledge_base_id == kb_id)
-    else:
-        customer_id = require_tenant(current_user)
-        kb_stmt = select(KnowledgeBaseDB).where(
-            KnowledgeBaseDB.id == kb_id,
-            KnowledgeBaseDB.customer_id == customer_id,
-        )
-        doc_stmt = select(KnowledgeDocumentDB).where(
-            KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            KnowledgeDocumentDB.customer_id == customer_id,
-        )
-
-    if not (await db.execute(kb_stmt)).scalar_one_or_none():
+    """List all documents under a specific knowledge base (includes system KBs for tenants)."""
+    kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
+    kb_res = await db.execute(kb_stmt)
+    kb = kb_res.scalar_one_or_none()
+    if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
+
+    is_sys_kb = bool(kb.is_system or kb.scope == "SYSTEM")
+    if not is_sys_kb and current_user.role != "system_admin":
+        customer_id = require_tenant(current_user)
+        if kb.customer_id != customer_id:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+    doc_stmt = select(KnowledgeDocumentDB).where(KnowledgeDocumentDB.knowledge_base_id == kb_id)
+    if not is_sys_kb and current_user.role != "system_admin":
+        doc_stmt = doc_stmt.where(KnowledgeDocumentDB.customer_id == current_user.customer_id)
 
     doc_res = await db.execute(doc_stmt)
     docs = doc_res.scalars().all()
@@ -309,23 +314,25 @@ async def update_document(
     current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a document's name or metadata."""
-    if current_user.role == "system_admin":
-        doc_stmt = select(KnowledgeDocumentDB).where(
-            KnowledgeDocumentDB.id == doc_id,
-            KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        )
-    else:
-        customer_id = require_tenant(current_user)
-        doc_stmt = select(KnowledgeDocumentDB).where(
-            KnowledgeDocumentDB.id == doc_id,
-            KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            KnowledgeDocumentDB.customer_id == customer_id,
-        )
-
+    """Update a document's name or metadata. System documents can only be modified by system administrators."""
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+    )
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.is_system or getattr(doc, "customer_id", None) is None:
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="System-level documents can only be modified by system administrators."
+            )
+    elif current_user.role != "system_admin":
+        customer_id = require_tenant(current_user)
+        if doc.customer_id != customer_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
 
     update_data = payload.model_dump(exclude_unset=True)
     tags_payload = update_data.pop("tags", None)
@@ -382,23 +389,25 @@ async def delete_document(
     current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a specific document and perform cascading cleanup across disk storage, EKP tables, chunks, and vector embeddings."""
-    if current_user.role == "system_admin":
-        doc_stmt = select(KnowledgeDocumentDB).where(
-            KnowledgeDocumentDB.id == doc_id,
-            KnowledgeDocumentDB.knowledge_base_id == kb_id,
-        )
-    else:
-        customer_id = require_tenant(current_user)
-        doc_stmt = select(KnowledgeDocumentDB).where(
-            KnowledgeDocumentDB.id == doc_id,
-            KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            KnowledgeDocumentDB.customer_id == customer_id,
-        )
-
+    """Delete a specific document. System documents can only be deleted by system administrators."""
+    doc_stmt = select(KnowledgeDocumentDB).where(
+        KnowledgeDocumentDB.id == doc_id,
+        KnowledgeDocumentDB.knowledge_base_id == kb_id,
+    )
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.is_system or getattr(doc, "customer_id", None) is None:
+        if current_user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="System-level documents can only be deleted by system administrators."
+            )
+    elif current_user.role != "system_admin":
+        customer_id = require_tenant(current_user)
+        if doc.customer_id != customer_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
 
     try:
         # 1. Delete Qdrant Vector DB embeddings
@@ -460,22 +469,21 @@ async def bulk_delete_documents(
     errors = []
 
     for doc_id in payload.document_ids:
-        if current_user.role == "system_admin":
-            doc_stmt = select(KnowledgeDocumentDB).where(
-                KnowledgeDocumentDB.id == doc_id,
-                KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            )
-        else:
-            customer_id = require_tenant(current_user)
-            doc_stmt = select(KnowledgeDocumentDB).where(
-                KnowledgeDocumentDB.id == doc_id,
-                KnowledgeDocumentDB.knowledge_base_id == kb_id,
-                KnowledgeDocumentDB.customer_id == customer_id,
-            )
-
+        doc_stmt = select(KnowledgeDocumentDB).where(
+            KnowledgeDocumentDB.id == doc_id,
+            KnowledgeDocumentDB.knowledge_base_id == kb_id,
+        )
         doc = (await db.execute(doc_stmt)).scalar_one_or_none()
         if not doc:
             continue
+
+        if (doc.is_system or doc.customer_id is None) and current_user.role != "system_admin":
+            errors.append(f"Document {doc_id} is system-level and cannot be deleted.")
+            continue
+        elif current_user.role != "system_admin":
+            customer_id = require_tenant(current_user)
+            if doc.customer_id != customer_id:
+                continue
 
         try:
             # 1. Delete vector embeddings

@@ -182,6 +182,37 @@ def _refresh_knowledge_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN extracted_json JSON NULL")
     if "collection_id" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN collection_id VARCHAR(36)")
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents MODIFY COLUMN customer_id VARCHAR(36) NULL")
+    except Exception:
+        pass
+
+
+def _refresh_knowledge_chunks_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_chunks"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("knowledge_chunks")}
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_chunks ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_chunks MODIFY COLUMN customer_id VARCHAR(36) NULL")
+    except Exception:
+        pass
+
+
+def _refresh_knowledge_collections_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_collections"):
+        return
+
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_collections MODIFY COLUMN customer_id VARCHAR(36) NULL")
+    except Exception:
+        pass
 
 
 def _refresh_provider_presets_table(sync_conn):
@@ -214,6 +245,30 @@ def _refresh_knowledge_bases_table(sync_conn):
     columns = {column["name"] for column in inspector.get_columns("knowledge_bases")}
     if "domain_id" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN domain_id VARCHAR(36)")
+    if "scope" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN scope VARCHAR(50) DEFAULT 'TENANT'")
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases MODIFY COLUMN customer_id VARCHAR(36) NULL")
+    except Exception:
+        pass
+
+
+def _refresh_llm_profiles_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("llm_profiles"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("llm_profiles")}
+    if "scope" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE llm_profiles ADD COLUMN scope VARCHAR(50) DEFAULT 'TENANT'")
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE llm_profiles ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE llm_profiles MODIFY COLUMN customer_id VARCHAR(36) NULL")
+    except Exception:
+        pass
 
 
 def _refresh_users_table(sync_conn):
@@ -246,6 +301,7 @@ def _refresh_document_tag_mappings_table(sync_conn):
 
     try:
         sync_conn.exec_driver_sql("ALTER TABLE document_tag_mappings MODIFY COLUMN tag_id VARCHAR(36) NULL")
+        sync_conn.exec_driver_sql("ALTER TABLE document_tag_mappings MODIFY COLUMN customer_id VARCHAR(36) NULL")
     except Exception:
         pass
 
@@ -266,7 +322,10 @@ async def init_db():
         await conn.run_sync(_refresh_nodes_table)
         await conn.run_sync(_refresh_workflows_table)
         await conn.run_sync(_refresh_knowledge_documents_table)
+        await conn.run_sync(_refresh_knowledge_chunks_table)
+        await conn.run_sync(_refresh_knowledge_collections_table)
         await conn.run_sync(_refresh_knowledge_bases_table)
+        await conn.run_sync(_refresh_llm_profiles_table)
         await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(_refresh_ekp_documents_table)
         await conn.run_sync(_refresh_taxonomy_terms_table)

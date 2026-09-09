@@ -492,6 +492,7 @@ async def query_candidate_document_ids(
         or_(
             DocumentTagMappingDB.customer_id == str(customer_id),
             DocumentTagMappingDB.customer_id == customer_id,
+            DocumentTagMappingDB.customer_id.is_(None),
         ),
         DocumentTagMappingDB.tag_id.in_(list(matching_tag_ids)),
     ]
@@ -613,7 +614,10 @@ async def batch_get_document_tags(
     stmt = (
         select(DocumentTagMappingDB)
         .where(
-            DocumentTagMappingDB.customer_id == str(customer_id),
+            or_(
+                DocumentTagMappingDB.customer_id == str(customer_id) if customer_id else False,
+                DocumentTagMappingDB.customer_id.is_(None),
+            ),
             DocumentTagMappingDB.document_id.in_(document_ids),
         )
         .order_by(DocumentTagMappingDB.document_id, DocumentTagMappingDB.tag_type)

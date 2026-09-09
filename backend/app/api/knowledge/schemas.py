@@ -3,10 +3,17 @@ from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, Field
 
 
+# ==============================================================================
+# BLOCK COMMENT: SYSTEM-LEVEL & DOMAIN-COMMON KNOWLEDGE SCHEMAS
+# Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
+# Purpose: Support system-scoped KBs shared across tenants for domain statutes.
+# ==============================================================================
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     domain_id: Optional[str] = None
+    scope: Optional[str] = "TENANT"
+    is_system: Optional[bool] = False
     settings: Optional[Dict[str, Any]] = None
 
 
@@ -14,6 +21,8 @@ class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
     domain_id: Optional[str] = None
+    scope: Optional[str] = None
+    is_system: Optional[bool] = None
     status: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
 
@@ -24,7 +33,9 @@ class KnowledgeBaseResponse(BaseModel):
     description: Optional[str]
     domain_id: Optional[str] = None
     status: str
-    customer_id: str
+    scope: Optional[str] = "TENANT"
+    is_system: Optional[bool] = False
+    customer_id: Optional[str] = None
     created_by: str
     settings: Optional[Dict[str, Any]]
     created_at: str
@@ -51,7 +62,8 @@ class KnowledgeDocumentUpdate(BaseModel):
 class KnowledgeDocumentResponse(BaseModel):
     id: str
     knowledge_base_id: str
-    customer_id: str
+    customer_id: Optional[str] = None
+    is_system: Optional[bool] = False
     created_by: str
 
     name: str

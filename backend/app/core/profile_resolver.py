@@ -89,9 +89,16 @@ class ProfileResolver:
         target_customer_id = customer_id
 
         if knowledge_base_id:
+            from sqlalchemy import or_
             kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == str(knowledge_base_id))
             if target_customer_id:
-                kb_stmt = kb_stmt.where(KnowledgeBaseDB.customer_id == str(target_customer_id))
+                kb_stmt = kb_stmt.where(
+                    or_(
+                        KnowledgeBaseDB.customer_id == str(target_customer_id),
+                        KnowledgeBaseDB.is_system.is_(True),
+                        KnowledgeBaseDB.scope == "SYSTEM",
+                    )
+                )
             kb_res = await self.db.execute(kb_stmt)
             kb = kb_res.scalar_one_or_none()
             if not kb:
@@ -100,8 +107,11 @@ class ProfileResolver:
                         status_code=404,
                         detail=f"Knowledge Base '{knowledge_base_id}' not found or access denied."
                     )
-            elif not target_customer_id:
-                target_customer_id = kb.customer_id
+            else:
+                if not target_profile_id and kb.settings and isinstance(kb.settings, dict):
+                    target_profile_id = kb.settings.get("llm_profile_id")
+                if not target_customer_id or kb.is_system:
+                    target_customer_id = kb.customer_id
 
         return await self.resolve(
             profile_id=target_profile_id,
@@ -270,10 +280,27 @@ class ProfileResolver:
                 return profile.settings
 
         # ==============================================================================
-        # BLOCK COMMENT: GLOBAL DEFAULT PROFILE RESOLUTION FALLBACK
-        # Module: app/core/profile_resolver.py
-        # Purpose: Resolves default or first profile in database when customer_id is None.
+        # BLOCK COMMENT: SYSTEM & GLOBAL DEFAULT PROFILE RESOLUTION FALLBACK
+        # Epic Reference: epic/epic_system_tenant_common_knowledge_bases.md
+        # Purpose: Resolves system-level profile, then global default profile when customer_id is None.
         # ==============================================================================
+        if not str_cid:
+            result_sys = await self.db.execute(
+                select(LLMProfileDB).where(
+                    LLMProfileDB.is_system.is_(True),
+                    LLMProfileDB.is_default.is_(True),
+                ).limit(1)
+            )
+            profile_sys = result_sys.scalar_one_or_none()
+            if not profile_sys:
+                result_sys2 = await self.db.execute(
+                    select(LLMProfileDB).where(LLMProfileDB.is_system.is_(True)).limit(1)
+                )
+                profile_sys = result_sys2.scalar_one_or_none()
+            if profile_sys and profile_sys.settings:
+                logger.debug("profile_resolved_by_system_profile")
+                return profile_sys.settings
+
         result_global_default = await self.db.execute(
             select(LLMProfileDB).where(LLMProfileDB.is_default.is_(True)).limit(1)
         )
