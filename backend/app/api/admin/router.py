@@ -386,7 +386,9 @@ async def delete_customer(
         await db.execute(delete(EKPApprovalHistoryDB).where(EKPApprovalHistoryDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPDocumentReviewDB).where(EKPDocumentReviewDB.document_id.in_(ekp_doc_ids)))
         await db.execute(delete(EKPAuditLogDB).where(EKPAuditLogDB.document_id.in_(ekp_doc_ids)))
-
+    else: 
+        logger.info(f"No EKP documents found for customer {customer_id} in EKP child tables. Skipping EKP child table cleanup.")
+        
     await db.execute(delete(EKPDocumentDB).where(EKPDocumentDB.tenant_id == customer_id))
 
     # ==============================================================================
@@ -427,7 +429,9 @@ async def delete_customer(
     logger.info(f"Deleting customer jobs and saved queries for customer id {customer_id}")
     await db.execute(delete(JobDB).where(JobDB.customer_id == customer_id))
     await db.execute(delete(SavedQueryDB).where(SavedQueryDB.customer_id == customer_id))
-
+    
+    logger.info(f"Deleting customer users for customer id {customer_id}")
+    await db.execute(delete(UserDB).where(UserDB.customer_id == customer_id))
     # ==============================================================================
     # 8. ROLES & PERMISSIONS CLEANUP
     # ==============================================================================
