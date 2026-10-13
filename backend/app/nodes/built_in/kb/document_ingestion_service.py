@@ -129,6 +129,8 @@ class DocumentIngestionService:
         document = KnowledgeDocumentDB(
             knowledge_base_id=knowledge_base_id,
             customer_id=target_customer_id,
+            scope=str(target_kb.scope if target_kb and target_kb.scope else "TENANT"),
+            is_system=bool(target_kb.is_system if target_kb else False),
             created_by=current_user.id,
             name=upload_file.filename or "unnamed-document",
             source_type="upload",
@@ -489,6 +491,7 @@ class DocumentIngestionService:
                         document_id=document.id,
                         knowledge_base_id=document.knowledge_base_id,
                         customer_id=document.customer_id,
+                        is_system=bool(document.is_system),
                         chunk_index=index,
                         content=s_chunk.content,
                         metadata_json=chunk_meta,

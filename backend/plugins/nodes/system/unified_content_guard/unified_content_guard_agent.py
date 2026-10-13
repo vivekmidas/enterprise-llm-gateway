@@ -1,12 +1,14 @@
+# BLOCK COMMENT: Self-contained UnifiedContentGuardAgent system plugin
+# Epic: Independent Custom Node Publishing & Execution Robustness (Phase 2)
+# Refactored to plugin architecture to eliminate eager Presidio dependencies at server boot.
+# Heavy Presidio engines are loaded lazily on first node execution.
+
 import asyncio
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
-from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
-from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
 
 class UnifiedContentGuardAgent(BaseNode):
     name: str = "unified_content_guard"
@@ -17,7 +19,7 @@ class UnifiedContentGuardAgent(BaseNode):
     icon: str = "shield"
     color: str = "#D93838"
     badge: str = "Guard"
-    node_type: str="NODE"
+    node_type: str = "NODE"
 
     user_properties: List[Dict[str, Any]] = [
         {
@@ -105,9 +107,18 @@ class UnifiedContentGuardAgent(BaseNode):
 
     def __init__(self, **data):
         super().__init__(**data)
-        # Initialize thread-safe engines
-        self._analyzer = AnalyzerEngine()
-        self._anonymizer = AnonymizerEngine()
+        # Deferred engine holders to guarantee zero startup overhead
+        self._analyzer = None
+        self._anonymizer = None
+
+    def _ensure_engines(self):
+        """Lazy initializer for Presidio engines on first execution."""
+        if self._analyzer is None:
+            from presidio_analyzer import AnalyzerEngine
+            self._analyzer = AnalyzerEngine()
+        if self._anonymizer is None:
+            from presidio_anonymizer import AnonymizerEngine
+            self._anonymizer = AnonymizerEngine()
 
     async def init(self) -> None:
         await super().init()
@@ -116,6 +127,10 @@ class UnifiedContentGuardAgent(BaseNode):
         return None
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
+        self._ensure_engines()
+        from presidio_analyzer import PatternRecognizer, Pattern
+        from presidio_anonymizer.entities import OperatorConfig
+
         start_ts = time.time()
         config: Dict[str, Any] = inp.config or {}
 
@@ -271,3 +286,4 @@ class UnifiedContentGuardAgent(BaseNode):
             },
             status="success"
         )
+

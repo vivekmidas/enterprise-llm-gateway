@@ -182,6 +182,14 @@ def _refresh_knowledge_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN extracted_json JSON NULL")
     if "collection_id" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN collection_id VARCHAR(36)")
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    if "scope" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN scope VARCHAR(50) DEFAULT 'TENANT'")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents MODIFY COLUMN customer_id INT NULL")
+    except Exception:
+        pass
 
 
 def _refresh_provider_presets_table(sync_conn):
@@ -214,6 +222,42 @@ def _refresh_knowledge_bases_table(sync_conn):
     columns = {column["name"] for column in inspector.get_columns("knowledge_bases")}
     if "domain_id" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN domain_id VARCHAR(36)")
+    if "scope" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN scope VARCHAR(50) DEFAULT 'TENANT'")
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_bases MODIFY COLUMN customer_id INT NULL")
+    except Exception:
+        pass
+
+
+def _refresh_knowledge_collections_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_collections"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("knowledge_collections")}
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_collections ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_collections MODIFY COLUMN customer_id INT NULL")
+    except Exception:
+        pass
+
+
+def _refresh_knowledge_chunks_table(sync_conn):
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("knowledge_chunks"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("knowledge_chunks")}
+    if "is_system" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_chunks ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
+    try:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_chunks MODIFY COLUMN customer_id INT NULL")
+    except Exception:
+        pass
 
 
 def _refresh_users_table(sync_conn):
@@ -250,11 +294,48 @@ def _refresh_document_tag_mappings_table(sync_conn):
         pass
 
 
+def _refresh_legal_tables(sync_conn):
+    """
+    Dynamically inspects all legal framework tables and adds any missing columns
+    defined in SQLAlchemy Base.metadata. Ensures schema evolution without dropping data.
+    """
+    inspector = inspect(sync_conn)
+    legal_table_names = [
+        "legal_analyses",
+        "legal_analysis_fields",
+        "legal_statute_references",
+        "legal_precedent_links",
+        "legal_timeline_events",
+        "legal_cases",
+        "legal_drafts",
+        "legal_audit_logs",
+    ]
+    for table_name in legal_table_names:
+        if not inspector.has_table(table_name):
+            continue
+        existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+        if table_name in Base.metadata.tables:
+            table_obj = Base.metadata.tables[table_name]
+            for col in table_obj.columns:
+                if col.name not in existing_cols:
+                    try:
+                        col_type = col.type.compile(sync_conn.dialect)
+                        sync_conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}")
+                    except Exception:
+                        pass
+    if inspector.has_table("legal_precedent_links"):
+        try:
+            sync_conn.exec_driver_sql("ALTER TABLE legal_precedent_links MODIFY COLUMN citation VARCHAR(255) NULL")
+        except Exception:
+            pass
+
+
 async def init_db():
     """Initializes the database schema."""
     await engine.dispose()
     # Ensure all models are imported so Base metadata knows about them
     from app.models import db_models  # noqa: F401
+    from app.models import legal_models  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(_refresh_workflow_node_properties_table)
         await conn.run_sync(_refresh_customer_nodes_table)
@@ -267,10 +348,13 @@ async def init_db():
         await conn.run_sync(_refresh_workflows_table)
         await conn.run_sync(_refresh_knowledge_documents_table)
         await conn.run_sync(_refresh_knowledge_bases_table)
+        await conn.run_sync(_refresh_knowledge_collections_table)
+        await conn.run_sync(_refresh_knowledge_chunks_table)
         await conn.run_sync(_refresh_provider_presets_table)
         await conn.run_sync(_refresh_ekp_documents_table)
         await conn.run_sync(_refresh_taxonomy_terms_table)
         await conn.run_sync(_refresh_document_tag_mappings_table)
+        await conn.run_sync(_refresh_legal_tables)
         await conn.run_sync(Base.metadata.create_all)
 
     await seed_default_customer_and_admin()

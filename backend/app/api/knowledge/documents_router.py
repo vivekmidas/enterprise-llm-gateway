@@ -15,7 +15,7 @@ from typing import List, Optional
 
 # BLOCK: Multi-tenant support for system-admin in Document CRUD endpoints
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth.dependencies import get_current_user, require_tenant, dynamic_api_guard
@@ -69,6 +69,15 @@ async def upload_document(
         kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id)
     else:
         customer_id = require_tenant(current_user)
+        # Check if tenant is attempting to upload to a system KB
+        sys_res = await db.execute(
+            select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == kb_id, KnowledgeBaseDB.is_system == True)
+        )
+        if sys_res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tenants cannot upload documents to system-level knowledge bases."
+            )
         kb_stmt = select(KnowledgeBaseDB).where(
             KnowledgeBaseDB.id == kb_id,
             KnowledgeBaseDB.customer_id == customer_id,
@@ -79,16 +88,25 @@ async def upload_document(
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
 
+    if kb.is_system and current_user.role != "system_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenants cannot upload documents to system-level knowledge bases."
+        )
+
     target_customer_id = kb.customer_id
 
     try:
         # Archive existing docs with same name (upsert behaviour)
         old_docs_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.knowledge_base_id == kb.id,
-            KnowledgeDocumentDB.customer_id == target_customer_id,
             KnowledgeDocumentDB.name == filename,
             KnowledgeDocumentDB.status != "archived",
         )
+        if target_customer_id:
+            old_docs_stmt = old_docs_stmt.where(KnowledgeDocumentDB.customer_id == target_customer_id)
+        else:
+            old_docs_stmt = old_docs_stmt.where(KnowledgeDocumentDB.customer_id.is_(None))
         old_docs_res = await db.execute(old_docs_stmt)
         for old_doc in old_docs_res.scalars().all():
             old_doc.status = "archived"
@@ -146,11 +164,17 @@ async def list_documents(
         customer_id = require_tenant(current_user)
         kb_stmt = select(KnowledgeBaseDB).where(
             KnowledgeBaseDB.id == kb_id,
-            KnowledgeBaseDB.customer_id == customer_id,
+            or_(
+                KnowledgeBaseDB.customer_id == customer_id,
+                KnowledgeBaseDB.is_system == True,
+            ),
         )
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            KnowledgeDocumentDB.customer_id == customer_id,
+            or_(
+                KnowledgeDocumentDB.customer_id == customer_id,
+                KnowledgeDocumentDB.is_system == True,
+            ),
         )
 
     if not (await db.execute(kb_stmt)).scalar_one_or_none():
@@ -205,7 +229,10 @@ async def get_document(
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.id == doc_id,
             KnowledgeDocumentDB.knowledge_base_id == kb_id,
-            KnowledgeDocumentDB.customer_id == customer_id,
+            or_(
+                KnowledgeDocumentDB.customer_id == customer_id,
+                KnowledgeDocumentDB.is_system == True,
+            ),
         )
 
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
@@ -317,6 +344,19 @@ async def update_document(
         )
     else:
         customer_id = require_tenant(current_user)
+        # Check if tenant is attempting to update a system document
+        sys_doc_check = await db.execute(
+            select(KnowledgeDocumentDB).where(
+                KnowledgeDocumentDB.id == doc_id,
+                KnowledgeDocumentDB.knowledge_base_id == kb_id,
+                KnowledgeDocumentDB.is_system == True,
+            )
+        )
+        if sys_doc_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tenants cannot modify system-level documents."
+            )
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.id == doc_id,
             KnowledgeDocumentDB.knowledge_base_id == kb_id,
@@ -326,6 +366,12 @@ async def update_document(
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.is_system and current_user.role != "system_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenants cannot modify system-level documents."
+        )
 
     update_data = payload.model_dump(exclude_unset=True)
     tags_payload = update_data.pop("tags", None)
@@ -363,6 +409,8 @@ async def update_document(
         doc_dict = KnowledgeDocumentResponse.model_validate(doc).model_dump()
         doc_dict["tags"] = await get_document_tags(db, doc.customer_id, doc.id)
         return KnowledgeDocumentResponse(**doc_dict)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("update_document_failed")
         await db.rollback()
@@ -390,6 +438,19 @@ async def delete_document(
         )
     else:
         customer_id = require_tenant(current_user)
+        # Check if tenant is attempting to delete a system document
+        sys_doc_check = await db.execute(
+            select(KnowledgeDocumentDB).where(
+                KnowledgeDocumentDB.id == doc_id,
+                KnowledgeDocumentDB.knowledge_base_id == kb_id,
+                KnowledgeDocumentDB.is_system == True,
+            )
+        )
+        if sys_doc_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tenants cannot delete system-level documents."
+            )
         doc_stmt = select(KnowledgeDocumentDB).where(
             KnowledgeDocumentDB.id == doc_id,
             KnowledgeDocumentDB.knowledge_base_id == kb_id,
@@ -399,6 +460,12 @@ async def delete_document(
     doc = (await db.execute(doc_stmt)).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.is_system and current_user.role != "system_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenants cannot delete system-level documents."
+        )
 
     try:
         # 1. Delete Qdrant Vector DB embeddings

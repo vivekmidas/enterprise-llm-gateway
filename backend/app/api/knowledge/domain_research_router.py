@@ -738,6 +738,7 @@ async def search_domain_knowledge(
             or_(
                 KnowledgeDocumentDB.customer_id == user_tenant_id,
                 KnowledgeDocumentDB.customer_id == str(user_tenant_id),
+                KnowledgeDocumentDB.is_system == True,
             )
         ]
         if payload.knowledge_base_id:

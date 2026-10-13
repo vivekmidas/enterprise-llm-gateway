@@ -1,9 +1,11 @@
-import asyncio
-from app.nodes.base import BaseNode
-from app.core.types.common import NodeInput,NodeOutput
+# BLOCK COMMENT: Self-contained ProfanityGuardAgent system plugin
+# Epic: Independent Custom Node Publishing & Execution Robustness (Phase 2)
+# Presidio analyzer engine is initialized lazily upon first execute call to avoid startup latency.
 
-from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
-from typing import List, Dict, Any
+import asyncio
+from typing import List, Dict, Any, Optional
+from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
 
 class ProfanityGuardAgent(BaseNode):
     name: str = "profanity_guard"
@@ -11,22 +13,24 @@ class ProfanityGuardAgent(BaseNode):
     version: str = "1.1.0"
     category: str = "Guardrails"
 
-
     def __init__(self, **data):
         super().__init__(**data)
-        self._analyzer = AnalyzerEngine()
-        self._register_patterns()
+        self._analyzer = None
+
+    def _ensure_analyzer(self):
+        """Lazy initializer for Presidio AnalyzerEngine."""
+        if self._analyzer is None:
+            from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+            self._analyzer = AnalyzerEngine()
+            patterns = [
+                Pattern(name="strong", regex=r"\b(fuck|shit|asshole|bitch|cunt|bastard)\b", score=0.95),
+                Pattern(name="mild", regex=r"\b(damn|hell|stupid|idiot)\b", score=0.7),
+            ]
+            recognizer = PatternRecognizer(supported_entity="PROFANITY", patterns=patterns)
+            self._analyzer.registry.add_recognizer(recognizer)
 
     async def init(self) -> None:
         await super().init()
-
-    def _register_patterns(self):
-        patterns = [
-            Pattern(name="strong", regex=r"\b(fuck|shit|asshole|bitch|cunt|bastard)\b", score=0.95),
-            Pattern(name="mild", regex=r"\b(damn|hell|stupid|idiot)\b", score=0.7),
-        ]
-        recognizer = PatternRecognizer(supported_entity="PROFANITY", patterns=patterns)
-        self._analyzer.registry.add_recognizer(recognizer)
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)
@@ -37,7 +41,8 @@ class ProfanityGuardAgent(BaseNode):
         )
         
     async def execute(self, inp: NodeInput) -> NodeOutput:
-        # Logic implementation (execute() handles timing and status wrapping)
+        self._ensure_analyzer()
+
         data_val = self.get_input_data(inp)
         violations = []
 
@@ -58,7 +63,7 @@ class ProfanityGuardAgent(BaseNode):
             trace_id=inp.trace_id,
             data=out_data,
             violations=violations,
-            latency_ms=0.0,  # Will be set by execute()
-            start_time=0.0,  # Will be set by execute()
-            end_time=0.0     # Will be set by execute()
+            latency_ms=0.0,
+            start_time=0.0,
+            end_time=0.0
         )

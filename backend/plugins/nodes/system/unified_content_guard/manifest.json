@@ -1,0 +1,96 @@
+{
+    "name": "unified_content_guard",
+    "label": "Unified Content Guard",
+    "description": "Unified safety node filtering PII, profanity, and custom keywords across system, tenant, and workflow scopes.",
+    "file_name": "unified_content_guard_agent.py",
+    "class_name": "UnifiedContentGuardAgent",
+    "category": "Safety Guardrails",
+    "icon": "shield",
+    "color": "#D93838",
+    "version": "2.0.0",
+    "badge": "Guard",
+    "node_type": "NODE",
+    "user_properties": [
+        {
+            "key": "enable_pii",
+            "label": "Enable PII Redaction",
+            "type": "boolean",
+            "default": true,
+            "description": "Masks personally identifiable information (emails, names, phone numbers)."
+        },
+        {
+            "key": "enable_profanity",
+            "label": "Enable Profanity Filtering",
+            "type": "boolean",
+            "default": true,
+            "description": "Blocks offensive, inappropriate, and unsafe language."
+        },
+        {
+            "key": "enable_custom_keywords",
+            "label": "Enable Custom Keywords",
+            "type": "boolean",
+            "default": true,
+            "description": "Redacts user-defined custom keywords."
+        },
+        {
+            "key": "pii_entities",
+            "label": "PII Entities to Redact",
+            "type": "text",
+            "default": "PHONE_NUMBER, EMAIL_ADDRESS, PERSON, CREDIT_CARD",
+            "description": "Comma-separated list of Presidio entities to detect."
+        },
+        {
+            "key": "score_threshold",
+            "label": "PII Score Threshold",
+            "type": "number",
+            "default": 0.6,
+            "description": "Confidence score threshold (0.0 to 1.0) for PII detection."
+        },
+        {
+            "key": "additional_profanity_words",
+            "label": "Additional Profane Words",
+            "type": "textarea",
+            "default": "",
+            "description": "Additional comma-separated profane words to redact."
+        },
+        {
+            "key": "additional_sensitive_keywords",
+            "label": "Additional Sensitive Keywords",
+            "type": "textarea",
+            "default": "",
+            "description": "Additional comma-separated sensitive keywords to redact."
+        },
+        {
+            "key": "filter_mode",
+            "label": "Filter Mode",
+            "type": "choice",
+            "options": ["all", "include", "exclude"],
+            "default": "all",
+            "description": "Select whether to scan all fields, target specific fields, or exclude specific fields."
+        },
+        {
+            "key": "target_fields",
+            "label": "Target Fields",
+            "type": "text",
+            "default": "",
+            "description": "Comma-separated list of target fields to include or exclude (e.g., query, response)."
+        }
+    ],
+    "system_properties": [
+        {
+            "key": "profanity_words_system",
+            "label": "System Baseline Profanities",
+            "type": "textarea",
+            "default": "fuck, shit, asshole, bitch, cunt, bastard",
+            "description": "System-wide baseline profanities (comma-separated)."
+        },
+        {
+            "key": "sensitive_keywords_system",
+            "label": "System Baseline Keywords",
+            "type": "textarea",
+            "default": "confidential, internal-only, secret",
+            "description": "System-wide baseline sensitive keywords (comma-separated)."
+        }
+    ]
+}
+

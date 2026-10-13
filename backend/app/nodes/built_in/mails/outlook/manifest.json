@@ -1,0 +1,12 @@
+{
+    "name": "outlook_email_trigger",
+    "label": "Outlook OAuth Trigger",
+    "description": "Polls Outlook via OAuth2 API for new messages.",
+    "file_name": "outlook_oauth_mail_trigger_node.py",
+    "class_name": "OutlookEmailTriggerNode",
+    "category": "Communication",
+    "icon": "mail",
+    "color": "#EA4335",
+    "version": "0.0.1"
+}
+

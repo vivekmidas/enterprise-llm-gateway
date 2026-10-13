@@ -2,7 +2,7 @@
 from typing import Dict, Any, List, Optional
 import asyncio
 from app.nodes.base import TriggerNode
-from app.nodes.built_in.mails.abstract_mail_node import EmailTriggerNode
+from backend.app.nodes.built_in.mails.abstract_mail_node import EmailTriggerNode
 import httpx
 
 

@@ -309,11 +309,13 @@ class KnowledgeBaseDB(Base):
     description = Column(Text, nullable=True)
     status = Column(String(50), default="active", index=True)
     customer_id = Column(
-        String(36), ForeignKey("customers.id"), nullable=False, index=True
+        String(36), ForeignKey("customers.id"), nullable=True, index=True
     )
     domain_id = Column(
         String(36), ForeignKey("domain_schemas.id"), nullable=True, index=True
     )
+    scope = Column(String(50), default="TENANT", index=True)
+    is_system = Column(Boolean, default=False, index=True)
     created_by = Column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
     )
@@ -343,9 +345,10 @@ class KnowledgeCollectionDB(Base):
     customer_id = Column(
         String(36),
         ForeignKey("customers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    is_system = Column(Boolean, default=False, index=True)
     embedding_model = Column(String(255), nullable=True)
     vector_dimension = Column(Integer, nullable=True)
     distance_metric = Column(String(50), default="COSINE")
@@ -373,8 +376,10 @@ class KnowledgeDocumentDB(Base):
         index=True,
     )
     customer_id = Column(
-        String(36), ForeignKey("customers.id"), nullable=False, index=True
+        String(36), ForeignKey("customers.id"), nullable=True, index=True
     )
+    scope = Column(String(50), default="TENANT", index=True)
+    is_system = Column(Boolean, default=False, index=True)
     created_by = Column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
     )
@@ -438,9 +443,10 @@ class KnowledgeChunkDB(Base):
     customer_id = Column(
         String(36),
         ForeignKey("customers.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    is_system = Column(Boolean, default=False, index=True)
 
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)

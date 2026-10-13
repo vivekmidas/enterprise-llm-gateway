@@ -3,7 +3,7 @@ cd backend
 uv sync
 python3 -m venv .venv
 source .venv/bin/activate
-python -m spacy download en_core_web_lg
+python -m spacy download en_core_web_sm
 uv add presidio-analyzer presidio-anonymizer spacy
 pip install presidio-analyzer presidio-anonymizer spacy
 

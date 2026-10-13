@@ -1,38 +1,48 @@
+# BLOCK COMMENT: Self-contained PresidioNERGuardAgent system plugin
+# Epic: Independent Custom Node Publishing & Execution Robustness (Phase 2)
+# spaCy and Presidio engines are loaded lazily upon first execution to ensure zero startup overhead.
+
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
-from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
-from presidio_analyzer.nlp_engine import NlpEngineProvider
-from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
 
 class PresidioNERGuardAgent(BaseNode):
-    name:str = "presidio_ner_guard"
-    description:str = "Advanced PII + Custom Rules using Presidio"
-    version:str = "1.1.0"
-    category:str = "Guardrails"
+    name: str = "presidio_ner_guard"
+    description: str = "Advanced PII + Custom Rules using Presidio"
+    version: str = "1.1.0"
+    category: str = "Guardrails"
 
     def __init__(self, **data):
         super().__init__(**data)
-        import spacy
-        model_name = "en_core_web_sm"
-        if not spacy.util.is_package("en_core_web_sm"):
+        self._analyzer = None
+        self._anonymizer = None
+
+    def _ensure_engines(self):
+        """Lazy initializer for spaCy and Presidio engines."""
+        if self._analyzer is None or self._anonymizer is None:
+            import spacy
+            from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
+            from presidio_anonymizer import AnonymizerEngine
+
             model_name = "en_core_web_sm"
-        
-        nlp_config = {
-            "nlp_engine_name": "spacy",
-            "models": [
-                {
-                    "lang_code": "en",
-                    "model_name": model_name
-                }
-            ]
-        }
-        provider = NlpEngineProvider(nlp_configuration=nlp_config)
-        nlp_engine = provider.create_engine()
-        self._analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-        self._anonymizer = AnonymizerEngine()
+            if not spacy.util.is_package("en_core_web_sm"):
+                model_name = "en_core_web_sm"
+            
+            nlp_config = {
+                "nlp_engine_name": "spacy",
+                "models": [
+                    {
+                        "lang_code": "en",
+                        "model_name": model_name
+                    }
+                ]
+            }
+            provider = NlpEngineProvider(nlp_configuration=nlp_config)
+            nlp_engine = provider.create_engine()
+            self._analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+            self._anonymizer = AnonymizerEngine()
         
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         return NodeOutput(
@@ -45,6 +55,9 @@ class PresidioNERGuardAgent(BaseNode):
         await super().init()
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
+        self._ensure_engines()
+        from presidio_anonymizer.entities import OperatorConfig
+
         config: Dict[str, Any] = inp.config or {}
 
         entities = config.get("entities", ["PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "CREDIT_CARD"])

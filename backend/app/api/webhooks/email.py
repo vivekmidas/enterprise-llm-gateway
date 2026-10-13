@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, status, Path
 from  app.workflows.store import update_node_tokens_in_db
 from app.nodes.registry import NodesRegistry
-from app.nodes.built_in.mails.pull_mail_trigger_node import ImapEmailPullTriggerNode # Assuming this is the correct path
+from app.nodes.built_in.mails.gmail.pull_mail_trigger_node import ImapEmailPullTriggerNode # Assuming this is the correct path
 
 router = APIRouter(prefix="/webhooks/email", tags=["Email Webhooks"])
 logger = structlog.get_logger(__name__)

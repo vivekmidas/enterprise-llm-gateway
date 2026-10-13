@@ -118,6 +118,10 @@ app.include_router(backup_router)
 
 app.include_router(roles_router)
 
+# BLOCK COMMENT: REGISTER LEGAL AI INTELLIGENCE & MATTER INTAKE ROUTER (EPIC 3.3)
+from app.api.legal.router import router as legal_router
+app.include_router(legal_router, prefix="/api/v1")
+
 
 
 

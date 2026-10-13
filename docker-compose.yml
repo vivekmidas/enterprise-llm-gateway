@@ -5,9 +5,10 @@ services:
       - 8000:8000
       - 8888:8888
     env_file:
-      - backend/.env.local
+      - backend/.env
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
     restart: unless-stopped
     depends_on:
       - redis
@@ -18,7 +19,7 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - frontend/.env.local
+      - frontend/.env
     restart: unless-stopped
     depends_on:
       - backend
@@ -46,6 +47,8 @@ services:
     image: mysql:8.0
     container_name: gateway-mysql
     environment:
+      MYSQL_ROOT_HOST: '%'
+      MYSQL_USER: root
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: enterprise_gateway
     ports:
@@ -59,4 +62,6 @@ services:
       timeout: 5s
       retries: 10
 
-    
+volumes:
+  backend_venv:
+

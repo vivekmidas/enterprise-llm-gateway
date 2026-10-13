@@ -5,7 +5,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException, status
 
 from app.nodes.registry import NodesRegistry
-from app.nodes.built_in.mails.gmail_oauth_mail_trigger_node import EmailTriggerNode
+from backend.app.nodes.built_in.mails.abstract_mail_node import EmailTriggerNode
 
 router = APIRouter(prefix="/webhooks/email", tags=["Email Webhooks"])
 logger = structlog.get_logger(__name__)

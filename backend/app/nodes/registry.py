@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import inspect
 import json
@@ -5,8 +6,142 @@ import os
 import pkgutil
 from pathlib import Path
 import structlog
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type, Any
+from pydantic import PrivateAttr
 from app.nodes.base import BaseNode
+from app.core.types.common import NodeInput, NodeOutput
+
+class LazyPluginNode(BaseNode):
+    """
+    BLOCK COMMENT: Proxy node representing an uninstantiated plugin.
+    Epic: Independent Custom Node Publishing & Execution Robustness (Phase 2)
+    Defers importing the plugin script and external packages until the first execution.
+    This guarantees zero plugin package imports at server startup.
+    """
+    user_properties: Any = None
+    system_properties: Any = None
+
+    _plugin_dir: str = PrivateAttr()
+    _script_path: str = PrivateAttr()
+    _class_name: str = PrivateAttr()
+    _module_name: str = PrivateAttr()
+    _real_instance: Optional[BaseNode] = PrivateAttr(default=None)
+    _load_lock: Any = PrivateAttr(default=None)
+    _raw_user_properties: Any = PrivateAttr(default=None)
+    _raw_system_properties: Any = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        plugin_dir: str,
+        script_path: str,
+        class_name: str,
+        module_name: str,
+        **data
+    ):
+        super().__init__(**data)
+        self._plugin_dir = plugin_dir
+        self._script_path = script_path
+        self._class_name = class_name
+        self._module_name = module_name
+        self._real_instance = None
+        self._load_lock = asyncio.Lock()
+        self._raw_user_properties = data.get("user_properties", [])
+        self._raw_system_properties = data.get("system_properties", [])
+
+    async def init(self) -> None:
+        """Lightweight init populating properties/contracts without importing plugin code."""
+        await super().init()
+
+    async def _ensure_loaded(self) -> BaseNode:
+        """Dynamically imports the plugin script and instantiates the underlying node class on first use."""
+        if self._real_instance is not None:
+            return self._real_instance
+
+        if self._load_lock is None:
+            self._load_lock = asyncio.Lock()
+
+        async with self._load_lock:
+            if self._real_instance is not None:
+                return self._real_instance
+
+            import sys
+            import importlib.util
+
+            if self._plugin_dir not in sys.path:
+                sys.path.append(self._plugin_dir)
+            vendor_dir = os.path.join(self._plugin_dir, "vendor")
+            if os.path.isdir(vendor_dir) and vendor_dir not in sys.path:
+                sys.path.append(vendor_dir)
+
+            spec = importlib.util.spec_from_file_location(self._module_name, self._script_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Cannot create module spec for plugin: {self._script_path}")
+
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[self._module_name] = module
+            spec.loader.exec_module(module)
+
+            cls_obj = getattr(module, self._class_name, None)
+            if not cls_obj or not issubclass(cls_obj, BaseNode) or inspect.isabstract(cls_obj):
+                raise TypeError(
+                    f"Invalid node class '{self._class_name}' in plugin '{self._script_path}'"
+                )
+
+            instance = cls_obj()
+            instance.customer_id = self.customer_id
+            instance.name = self.name
+
+            # Transfer properties and contracts configured in proxy/DB
+            if hasattr(self, "properties") and self.properties:
+                instance.properties = dict(self.properties)
+            if hasattr(self, "user_properties") and self.user_properties:
+                instance.user_properties = self.user_properties
+            if hasattr(self, "system_properties") and self.system_properties:
+                instance.system_properties = self.system_properties
+            if hasattr(self, "input_contract") and self.input_contract:
+                instance.input_contract = self.input_contract
+            if hasattr(self, "output_contract") and self.output_contract:
+                instance.output_contract = self.output_contract
+
+            await instance.init()
+            self._real_instance = instance
+            return self._real_instance
+
+    async def execute(self, inp: NodeInput) -> NodeOutput:
+        real_node = await self._ensure_loaded()
+        return await real_node.execute(inp)
+
+    async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
+        real_node = await self._ensure_loaded()
+        return await real_node.validate_input(inp)
+
+    async def test(
+        self,
+        test_input: Any,
+        override_properties: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        real_node = await self._ensure_loaded()
+        return await real_node.test(
+            test_input=test_input,
+            override_properties=override_properties,
+            context=context
+        )
+
+    def get_resolved_properties(
+        self,
+        instance_overrides: Optional[Dict[str, Any]] = None,
+        tenant_overrides: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        if self._real_instance is not None:
+            return self._real_instance.get_resolved_properties(
+                instance_overrides=instance_overrides,
+                tenant_overrides=tenant_overrides
+            )
+        return super().get_resolved_properties(
+            instance_overrides=instance_overrides,
+            tenant_overrides=tenant_overrides
+        )
 
 class NodesRegistry: 
     """
@@ -91,6 +226,11 @@ class NodesRegistry:
 
         # 2. Discover plugin agents from 'plugins/nodes/system' folder
         plugins_dir = os.path.join(os.getcwd(), "plugins", "nodes", "system")
+        if not os.path.exists(plugins_dir):
+            base_backend_dir = Path(__file__).resolve().parent.parent.parent
+            candidate = base_backend_dir / "plugins" / "nodes" / "system"
+            if candidate.exists():
+                plugins_dir = str(candidate)
         await cls._load_plugins_from_directory(plugins_dir, customer_id=0)
 
         # 3. Discover customer-specific plugins from CustomerDB paths
@@ -208,7 +348,10 @@ class NodesRegistry:
                                 val = []
                         return val
 
-                    if hasattr(node.__class__, "model_fields"):
+                    if isinstance(node, LazyPluginNode):
+                        user_props_code = node._raw_user_properties or node.user_properties or []
+                        system_props_code = node._raw_system_properties or node.system_properties or []
+                    elif hasattr(node.__class__, "model_fields"):
                         user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
                         system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
                     elif hasattr(node.__class__, "__fields__"):
@@ -373,7 +516,10 @@ class NodesRegistry:
                     val = []
             return val
 
-        if hasattr(node.__class__, "model_fields"):
+        if isinstance(node, LazyPluginNode):
+            user_props_code = node._raw_user_properties or node.user_properties or []
+            system_props_code = node._raw_system_properties or node.system_properties or []
+        elif hasattr(node.__class__, "model_fields"):
             user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
             system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
         elif hasattr(node.__class__, "__fields__"):
@@ -534,46 +680,48 @@ class NodesRegistry:
                 sys.path.append(subdir_path)
 
             try:
-                # Load module using SourceFileLoader to prevent namespace collisions
                 if customer_id != 0:
                     module_name = f"client_{customer_id}_{item}"
+                    node_name = f"client_{customer_id}_{manifest['name']}"
                 else:
                     module_name = f"system_plugin_{item}"
-                
-                loader = SourceFileLoader(module_name, script_path)
-                module = loader.load_module()
+                    node_name = manifest["name"]
 
-                class_name = manifest["class_name"]
-                cls_obj = getattr(module, class_name, None)
-                if not cls_obj or not issubclass(cls_obj, BaseNode) or inspect.isabstract(cls_obj):
-                    cls.logger.error(
-                        "invalid_node_class_in_plugin",
-                        class_name=class_name,
-                        path=script_path
-                    )
-                    continue
+                # Register LazyPluginNode to defer loading code/packages until first execution
+                lazy_instance = LazyPluginNode(
+                    plugin_dir=subdir_path,
+                    script_path=script_path,
+                    class_name=manifest["class_name"],
+                    module_name=module_name,
+                    name=node_name,
+                    label=manifest.get("label", manifest["name"]),
+                    description=manifest.get("description", ""),
+                    version=manifest.get("version", "1.0.0"),
+                    category=manifest.get("category", "Custom"),
+                    group=manifest.get("group", "Custom"),
+                    icon=manifest.get("icon", "bot"),
+                    color=manifest.get("color", "#5E0CEC"),
+                    badge=manifest.get("badge", "Plugin"),
+                    sub_label=manifest.get("sub_label"),
+                    node_type=manifest.get("node_type", "NODE"),
+                    user_properties=manifest.get("user_properties", []),
+                    system_properties=manifest.get("system_properties", []),
+                    input_contract=manifest.get("input_contract", {}),
+                    output_contract=manifest.get("output_contract", {}),
+                    customer_id=customer_id
+                )
 
-                instance = cls_obj()
-                instance.customer_id = customer_id
-                
-                # Override name to prevent collisions across tenants
-                if customer_id != 0:
-                    instance.name = f"client_{customer_id}_{manifest['name']}"
-                else:
-                    # For system plugins, keep the manifest name (no prefix)
-                    instance.name = manifest["name"]
-
-                # Register the instantiated custom node
-                await cls.register(instance)
-                await cls.add_node_to_db(instance)
+                # Register and sync node manifest with DB
+                await cls.register(lazy_instance)
+                await cls.add_node_to_db(lazy_instance)
                 cls.logger.info(
-                    "plugin_loaded",
+                    "plugin_registered_lazy",
                     customer_id=customer_id,
-                    node_name=instance.name
+                    node_name=lazy_instance.name
                 )
             except Exception as e:
                 cls.logger.error(
-                    "failed_to_load_plugin",
+                    "failed_to_register_plugin",
                     customer_id=customer_id,
                     path=subdir_path,
                     error=str(e)
