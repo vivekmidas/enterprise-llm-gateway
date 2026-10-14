@@ -85,6 +85,14 @@ def _refresh_customers_table(sync_conn):
     if "allowed_domains" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN allowed_domains JSON")
 
+    indexes = inspector.get_indexes("customers")
+    for idx in indexes:
+        if idx.get("name") in ("domain", "ix_customers_domain") and idx.get("unique"):
+            try:
+                sync_conn.exec_driver_sql(f"ALTER TABLE customers DROP INDEX {idx['name']}")
+            except Exception as e:
+                logger.warning(f"Could not drop unique index {idx['name']} on customers: {e}")
+
 
 def _refresh_permissions_table(sync_conn):
     inspector = inspect(sync_conn)
@@ -186,6 +194,10 @@ def _refresh_knowledge_documents_table(sync_conn):
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN is_system BOOLEAN DEFAULT FALSE")
     if "scope" not in columns:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN scope VARCHAR(50) DEFAULT 'TENANT'")
+    if "external_document_id" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN external_document_id VARCHAR(255)")
+    if "version" not in columns:
+        sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents ADD COLUMN version INTEGER DEFAULT 1")
     try:
         sync_conn.exec_driver_sql("ALTER TABLE knowledge_documents MODIFY COLUMN customer_id INT NULL")
     except Exception:
@@ -330,6 +342,52 @@ def _refresh_legal_tables(sync_conn):
             pass
 
 
+def _refresh_api_keys_table(sync_conn):
+    """
+    ===============================================================================
+    BLOCK COMMENT: API KEYS TABLE MIGRATION & REFRESH (EPIC-AUTH-001 / STORY-1.1)
+    Module: backend/app/core/database.py
+    Description:
+        Ensures api_keys table has all multi-tenant and security columns.
+        If legacy table exists without customer_id or key_hash, safely recreates.
+    ===============================================================================
+    """
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("api_keys"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("api_keys")}
+    # If legacy table had 'key' column without 'key_hash' or 'customer_id'
+    if "key" in columns and "key_hash" not in columns:
+        logger.info("recreating_legacy_api_keys_table_for_epic_auth_001")
+        if "api_keys" in Base.metadata.tables:
+            Base.metadata.tables["api_keys"].drop(sync_conn, checkfirst=True)
+            Base.metadata.tables["api_keys"].create(sync_conn, checkfirst=True)
+        return
+
+    # Add missing columns non-destructively
+    if "allowed_ips" not in columns:
+        try:
+            sync_conn.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN allowed_ips JSON")
+        except Exception:
+            pass
+    if "allowed_workflow_ids" not in columns:
+        try:
+            sync_conn.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN allowed_workflow_ids JSON")
+        except Exception:
+            pass
+    if "role_id" not in columns:
+        try:
+            sync_conn.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN role_id VARCHAR(36)")
+        except Exception:
+            pass
+    if "rate_limit_rpm" not in columns:
+        try:
+            sync_conn.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN rate_limit_rpm INT DEFAULT 60")
+        except Exception:
+            pass
+
+
 async def init_db():
     """Initializes the database schema."""
     await engine.dispose()
@@ -355,6 +413,7 @@ async def init_db():
         await conn.run_sync(_refresh_taxonomy_terms_table)
         await conn.run_sync(_refresh_document_tag_mappings_table)
         await conn.run_sync(_refresh_legal_tables)
+        await conn.run_sync(_refresh_api_keys_table)
         await conn.run_sync(Base.metadata.create_all)
 
     await seed_default_customer_and_admin()

@@ -86,6 +86,18 @@ class RAGNode(BaseNode):
             "default": "You are a helpful assistant. Answer the user query using the provided context.",
             "description": "System prompt instructions for the LLM."
         },
+        # ==============================================================================
+        # BLOCK COMMENT: RAG PROMPT CONFIGURATION (EPIC: RAG-PROMPT-REFACTOR)
+        # Prompts are defined at the RAG node level, decoupled from tenant definition.
+        # Supports {context} and {user_query} placeholders for dynamic prompt composition.
+        # ==============================================================================
+        {
+            "key": "user_prompt",
+            "label": "User Prompt Template",
+            "type": "textarea",
+            "default": "Context:\n{context}\n\nQuery: {user_query}",
+            "description": "User prompt template with {context} and {user_query} placeholders."
+        },
         {
             "key": "ip",
             "label": "LLM IP Override",
@@ -215,6 +227,18 @@ class RAGNode(BaseNode):
             user_query = data["user_query"].strip()
             kb_input = data.get("kb")
 
+            customer_id = self._resolve_customer_id(inp)
+            if customer_id is None:
+                self.logger.error("rag_node_missing_tenant_scope", trace_id=inp.trace_id)
+                return NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_code=400,
+                    error_message="customer_id is required for knowledge retrieval.",
+                    violations=["tenant_scope_missing"],
+                )
+
             # Helper to resolve configuration with overrides
             def get_resolved_val(key: str, default: Any) -> Any:
                 # 1. Node instance config
@@ -222,13 +246,34 @@ class RAGNode(BaseNode):
                 if val is not None and str(val).strip() != "":
                     return val
                 # 2. Unified self.properties
-                val = self.properties.get(key)
-                if val is not None and str(val).strip() != "":
-                    return val
+                if isinstance(self.properties, dict):
+                    val = self.properties.get(key)
+                    if val is not None and str(val).strip() != "":
+                        return val
+                elif isinstance(self.properties, list):
+                    for item in self.properties:
+                        if isinstance(item, dict) and item.get("key") == key:
+                            val = item.get("value") or item.get("default")
+                            if val is not None and str(val).strip() != "":
+                                return val
                 # 3. System properties default
-                val = self.system_properties.get(key)
-                if val is not None and str(val).strip() != "":
-                    return val
+                if isinstance(self.system_properties, dict):
+                    val = self.system_properties.get(key)
+                    if val is not None and str(val).strip() != "":
+                        return val
+                elif isinstance(self.system_properties, list):
+                    for item in self.system_properties:
+                        if isinstance(item, dict) and item.get("key") == key:
+                            val = item.get("default")
+                            if val is not None and str(val).strip() != "":
+                                return val
+                # 4. User properties default
+                if isinstance(self.user_properties, list):
+                    for item in self.user_properties:
+                        if isinstance(item, dict) and item.get("key") == key:
+                            val = item.get("default")
+                            if val is not None and str(val).strip() != "":
+                                return val
                 return default
 
             # ==============================================================================
@@ -236,7 +281,7 @@ class RAGNode(BaseNode):
             # If explicit model/IP overrides are not provided in node config, resolves target
             # execution parameters from the attached KnowledgeBase profile.
             # ==============================================================================
-            raw_model = config.get("model") or self.properties.get("model")
+            raw_model = config.get("model") or (self.properties.get("model") if isinstance(self.properties, dict) else None)
 
             # Determine Knowledge Bases to query
             kb_ids = self._parse_kb_ids(kb_input)
@@ -286,17 +331,6 @@ class RAGNode(BaseNode):
             except (ValueError, TypeError):
                 score_threshold = 0.0
 
-            customer_id = self._resolve_customer_id(inp)
-            if customer_id is None:
-                self.logger.error("rag_node_missing_tenant_scope", trace_id=inp.trace_id)
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    data=inp.data,
-                    status="failure",
-                    error_code=400,
-                    error_message="customer_id is required for knowledge retrieval.",
-                    violations=["tenant_scope_missing"],
-                )
 
             self.logger.info(
                 "rag_node_parameters_resolved",
@@ -340,14 +374,14 @@ class RAGNode(BaseNode):
                     top_k=top_k,
                 )
 
-                from app.services.retrieval_service import RetrievalService
+                from app.nodes.built_in.kb.retrieval_service import RetrievalService
                 from app.knowledge.retrieval_models import RetrievalRequest as RetrievalServiceRequest
 
                 request = RetrievalServiceRequest(
-                    customer_id=customer_id,
+                    customer_id=str(customer_id),
                     user_id=None,
                     query=user_query,
-                    knowledge_base_ids=kb_ids,
+                    knowledge_base_ids=[str(k) for k in kb_ids],
                     top_k=top_k,
                     min_score=score_threshold,
                     include_metadata=True,
@@ -362,8 +396,19 @@ class RAGNode(BaseNode):
                 context_text = retrieval_result.response.context.context
                 citations = self._build_citations(chunks)
 
-            # Run LLM generation
-            user_content = f"Context:\n{context_text}\n\nQuery: {user_query}"
+            # ==============================================================================
+            # BLOCK COMMENT: RESOLVE NODE-LEVEL PROMPT TEMPLATES (EPIC: RAG-PROMPT-REFACTOR)
+            # RAG prompts are controlled directly by workflow designer in node properties.
+            # ==============================================================================
+            user_prompt_template = (
+                config.get("user_prompt")
+                or get_resolved_val("user_prompt", "Context:\n{context}\n\nQuery: {user_query}")
+            )
+            if "{context}" in user_prompt_template or "{user_query}" in user_prompt_template:
+                user_content = user_prompt_template.replace("{context}", context_text).replace("{user_query}", user_query)
+            else:
+                user_content = f"{user_prompt_template}\n\nContext:\n{context_text}\n\nQuery: {user_query}"
+
             endpoint = f"http://{ip}:{port}{path}"
             payload = {
                 "model": model_name,
@@ -428,7 +473,7 @@ class RAGNode(BaseNode):
                 violations=["rag_execution_failed"],
             )
 
-    def _resolve_customer_id(self, inp: NodeInput) -> Optional[int]:
+    def _resolve_customer_id(self, inp: NodeInput) -> Optional[Any]:
         context = inp.context or {}
         customer_id = (
             context.get("customer_id")
@@ -437,7 +482,10 @@ class RAGNode(BaseNode):
         )
         if customer_id is None:
             return None
-        return int(customer_id)
+        try:
+            return int(customer_id)
+        except (ValueError, TypeError):
+            return str(customer_id)
 
     def _parse_kb_ids(self, kb_val: Any) -> list[int]:
         if kb_val is None or kb_val == "":

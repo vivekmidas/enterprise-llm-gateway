@@ -794,7 +794,16 @@ def _validate_value(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
 @debug_log
 def _normalize_type(value: Any) -> Any:
     if isinstance(value, list):
-        return _normalize_type(value[0]) if value else ["string", "number", "integer", "boolean", "array", "object", "null"]
+        if not value:
+            return ["string", "number", "integer", "boolean", "array", "object", "null"]
+        normalized_list = []
+        for item in value:
+            norm = _normalize_type(item)
+            if isinstance(norm, list):
+                normalized_list.extend(norm)
+            else:
+                normalized_list.append(norm)
+        return list(dict.fromkeys(normalized_list))
     normalized = str(value or "json").lower()
     resolved = TYPE_ALIASES.get(normalized, normalized)
     if resolved == "file":

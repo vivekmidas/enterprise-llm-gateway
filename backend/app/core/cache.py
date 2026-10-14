@@ -154,6 +154,23 @@ class TraceStore:
         except Exception as e:
             logger.error(f"Failed to save trace {trace_id}: {e}")
 
+    # =========================================================================
+    # BLOCK COMMENT: SINGLE TRACE RETRIEVAL (EPIC-ARCH-001 / STORY-EXEC-01)
+    # Allows decoupled domain plants (legal, education) to fetch execution
+    # status, output payload, and observability metrics by trace_id.
+    # =========================================================================
+    async def get_trace(self, trace_id: str) -> Optional[dict]:
+        """Retrieve a single trace by trace_id."""
+        key = f"trace:{trace_id}"
+        try:
+            data = await self.client.get(key)
+            if data:
+                return json.loads(data) if isinstance(data, str) else data
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get trace {trace_id}: {e}")
+            return None
+
     async def get_traces_in_range(
         self, 
         start_time: float, 

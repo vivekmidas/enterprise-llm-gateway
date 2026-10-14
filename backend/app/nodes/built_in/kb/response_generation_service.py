@@ -175,32 +175,11 @@ class ResponseGenerationService:
             system_prompt = request.system_prompt.strip()
             logger.info("using_caller_override_system_prompt")
         else:
-            resolved_prompt = None
-
-            # Check Step 2: CustomerDB Tenant Settings ("Client AI Prompts" in UI)
-            if db and request.customer_id:
-                try:
-                    from app.models.db_models import CustomerDB
-                    from sqlalchemy import select, or_
-                    cust_res = await db.execute(
-                        select(CustomerDB).where(
-                            or_(CustomerDB.id == request.customer_id, CustomerDB.id == str(request.customer_id))
-                        )
-                    )
-                    cust = cust_res.scalar_one_or_none()
-                    if cust and cust.settings and isinstance(cust.settings, dict):
-                        cust_prompts = cust.settings.get("prompts", {}) or {}
-                        if not cust_prompts and any(k in cust.settings for k in ("search_system_prompt", "drafting_system_prompt", "synthesize_system_prompt")):
-                            cust_prompts = cust.settings
-                        tenant_search_sys = cust_prompts.get("search_system_prompt") or cust_prompts.get("system_prompt")
-                        if tenant_search_sys and str(tenant_search_sys).strip():
-                            resolved_prompt = str(tenant_search_sys).strip()
-                            logger.info("using_customer_tenant_client_ai_prompt", customer_id=request.customer_id)
-                except Exception as c_err:
-                    logger.warning("failed_to_fetch_customer_prompts", error=str(c_err))
-
-            if resolved_prompt:
-                system_prompt = resolved_prompt
+            # ==============================================================================
+            # BLOCK COMMENT: TENANT PROMPT LOOKUP REMOVED (EPIC: RAG-PROMPT-REFACTOR)
+            # Prompts are defined at RAG node levels rather than tenant definition.
+            # ==============================================================================
+            pass
 
         if has_context:
             context_text = ""

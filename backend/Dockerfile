@@ -21,7 +21,7 @@ RUN uv sync --frozen --no-dev
 
 # Copy application
 COPY app ./app
-COPY .env.local .env
+COPY .env_docker .env
 
 # Install spaCy model (must run as root before USER switch)
 # RUN /app/.venv/bin/python -m spacy download en_core_web_sm

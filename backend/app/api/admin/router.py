@@ -174,15 +174,16 @@ async def create_customer(
 ):
     """Creates a new customer tenant (System Admin only)."""
     name = customer_data.get("name")
-    domain = customer_data.get("domain", "").strip().lower()
+    raw_domain = customer_data.get("domain")
+    domain = raw_domain.strip().lower() if raw_domain and isinstance(raw_domain, str) and raw_domain.strip() else None
     allowed_domains = customer_data.get("allowed_domains", [])
     
-    if not name or not domain:
-        raise HTTPException(status_code=400, detail="Name and domain are required")
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
         
-    dup = await db.execute(select(CustomerDB).where(or_(CustomerDB.name == name, CustomerDB.domain == domain)))
+    dup = await db.execute(select(CustomerDB).where(CustomerDB.name == name))
     if dup.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Customer with this name or domain already exists")
+        raise HTTPException(status_code=400, detail="Customer with this name already exists")
         
     new_cust = CustomerDB(
         name=name,
@@ -248,7 +249,8 @@ async def update_customer(
     if "name" in customer_data:
         customer.name = customer_data["name"]
     if "domain" in customer_data:
-        customer.domain = customer_data["domain"].strip().lower()
+        raw_domain = customer_data["domain"]
+        customer.domain = raw_domain.strip().lower() if raw_domain and isinstance(raw_domain, str) and raw_domain.strip() else None
     if "allowed_domains" in customer_data:
         customer.allowed_domains = customer_data["allowed_domains"]
     if "icon" in customer_data:

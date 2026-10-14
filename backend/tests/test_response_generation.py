@@ -639,59 +639,48 @@ async def test_response_generation_json_cases_with_respondents():
 
 
 @pytest.mark.asyncio
-async def test_response_generation_reads_customer_tenant_client_ai_prompt():
+async def test_response_generation_uses_node_level_prompt():
+    """
+    BLOCK COMMENT: TEST NODE-LEVEL PROMPT ON RESPONSE GENERATION (EPIC: RAG-PROMPT-REFACTOR)
+    Verifies that system_prompt on ResponseGenerationRequest is used directly
+    and decoupled from CustomerDB settings.
+    """
     import uuid
-    from app.models.db_models import CustomerDB
     from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
     from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievedChunk
     from app.knowledge.context_builder import build_context
 
     custom_sys = "You are a specialized Legal Analyzer. Format cases as JSON with fields: case_title, plaintiffs, respondents."
-    test_cust_id = f"cust-prompt-{uuid.uuid4().hex[:8]}"
 
-    async with AsyncSessionLocal() as db_session:
-        test_cust = CustomerDB(
-            id=test_cust_id,
-            name=f"Prompt Test Cust {test_cust_id}",
-            status="ACTIVE",
-            settings={
-                "prompts": {
-                    "search_system_prompt": custom_sys,
-                }
-            },
-        )
-        db_session.add(test_cust)
-        await db_session.commit()
+    chunk = RetrievedChunk(
+        chunk_id="ch-p-1",
+        document_id="doc-p-1",
+        knowledge_base_id="kb-p-1",
+        content="Content text",
+        score=0.9,
+        chunk_index=0,
+    )
+    context = build_context([chunk])
+    service = ResponseGenerationService()
+    request = ResponseGenerationRequest(
+        query="test query",
+        context=context,
+        system_prompt=custom_sys,
+    )
 
-        chunk = RetrievedChunk(
-            chunk_id="ch-p-1",
-            document_id="doc-p-1",
-            knowledge_base_id="kb-p-1",
-            content="Content text",
-            score=0.9,
-            chunk_index=0,
-        )
-        context = build_context([chunk])
-        service = ResponseGenerationService()
-        request = ResponseGenerationRequest(
-            query="test query",
-            context=context,
-            customer_id=test_cust_id,
-        )
+    captured_prompt = None
 
-        captured_prompt = None
+    class CaptureLLM:
+        async def ainvoke(self, messages):
+            nonlocal captured_prompt
+            captured_prompt = messages[0].content
+            from langchain_core.messages import AIMessage
+            return AIMessage(content='{"cases": [{"case_title": "Case A", "plaintiffs": ["P1"], "respondents": ["R1"]}]}')
 
-        class CaptureLLM:
-            async def ainvoke(self, messages):
-                nonlocal captured_prompt
-                captured_prompt = messages[0].content
-                from langchain_core.messages import AIMessage
-                return AIMessage(content='{"cases": [{"case_title": "Case A", "plaintiffs": ["P1"], "respondents": ["R1"]}]}')
-
-        with patch("app.core.llm_router.LLMRouter.get_llm", return_value=CaptureLLM()):
-            res = await service.generate_response(request, db=db_session)
-            assert captured_prompt == custom_sys
-            assert "plaintiffs" in res.answer
+    with patch("app.core.llm_router.LLMRouter.get_llm", return_value=CaptureLLM()):
+        res = await service.generate_response(request)
+        assert captured_prompt == custom_sys
+        assert "plaintiffs" in res.answer
 
 
 @pytest.mark.asyncio

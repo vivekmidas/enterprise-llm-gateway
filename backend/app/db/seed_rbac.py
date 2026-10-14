@@ -63,14 +63,14 @@ MODULES_REGISTRY = [
         "id": "admin_permissions",
         "module": "admin",
         "submodule": "permissions",
-        "label": "Permissions & Routes",
+        "label": "Routes",
         "description": "System-wide RBAC capability catalog and route bindings",
         "route_patterns": ["/admin/permissions", "/admin/permissions/**"],
         "icon": "Lock",
         "display_order": 93,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Permissions & Routes", "description": "View system permissions and route bindings"},
-            {"action": "manage", "label": "Manage Permissions & Routes", "description": "Manage system permissions and route bindings"}
+            {"action": "view", "is_route_guard": True, "label": "View Routes", "description": "View system permissions and route bindings"},
+            {"action": "manage", "label": "Manage Routes", "description": "Manage system permissions and route bindings"}
         ]
     },
 
@@ -94,7 +94,7 @@ MODULES_REGISTRY = [
         "id": "admin_users",
         "module": "admin",
         "submodule": "user_management",
-        "label": "User Accounts",
+        "label": "Users",
         "description": "User accounts, invitations, and role assignments",
         "route_patterns": ["/admin/users", "/admin/users/**"],
         "icon": "Users",
@@ -439,6 +439,29 @@ ROLE_PRESETS = [
             "legal:autopilot:view",
             "admin:knowledge:view",
             "nodes:catalog:view"
+        ]
+    },
+    {
+        # ==============================================================================
+        # BLOCK COMMENT: WORKFLOW DESIGNER SYSTEM ROLE PRESET (STORY 2)
+        # Dedicated role preset granting workflow builder and node catalog permissions.
+        # ==============================================================================
+        "role_type": "workflow_designer",
+        "role_name": "Workflow Designer",
+        "description": "Design and view workflow canvases, configure nodes, test canvas runs, and access node catalog.",
+        "is_system_preset": True,
+        "permissions": [
+            "workflows:builder:view",
+            "workflows:builder:create",
+            "workflows:builder:edit",
+            "workflows:builder:delete",
+            "workflows:builder:execute",
+            "workflows:builder:manage",
+            "nodes:catalog:view",
+            "nodes:catalog:execute",
+            "nodes:catalog:manage",
+            "admin:knowledge:view",
+            "admin:profiles:view"
         ]
     }
 ]

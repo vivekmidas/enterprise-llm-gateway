@@ -178,6 +178,26 @@ async def login(request: LoginRequest, response: Response):
                     "workflow:builder:execute",
                     "node:catalog:view",
                 ]
+            elif user.role == "workflow_designer" or role_type_val == "workflow_designer":
+                permissions_list = [
+                    "workflows:builder:view",
+                    "workflows:builder:create",
+                    "workflows:builder:edit",
+                    "workflows:builder:delete",
+                    "workflows:builder:execute",
+                    "workflows:builder:manage",
+                    "workflow:builder:view",
+                    "workflow:builder:create",
+                    "workflow:builder:edit",
+                    "workflow:builder:delete",
+                    "workflow:builder:execute",
+                    "workflow:builder:manage",
+                    "nodes:catalog:view",
+                    "nodes:catalog:execute",
+                    "nodes:catalog:manage",
+                    "admin:knowledge:view",
+                    "admin:profiles:view",
+                ]
             else:
                 permissions_list = [
                     "legal:research:query",
@@ -185,8 +205,17 @@ async def login(request: LoginRequest, response: Response):
                     "node:catalog:view",
                 ]
 
-        # Resolve destination default route for redirection based on domain_schema default_path & role
-        if (
+        # ==============================================================================
+        # BLOCK COMMENT: RESOLVE DESTINATION DEFAULT ROUTE (STORY 2)
+        # Users with workflow designer role/permissions route directly to /workflow-builder.
+        # ==============================================================================
+        has_wf_view = any(p in permissions_list for p in ("workflow:builder:view", "workflows:builder:view", "workflow:*:*", "*:*:*"))
+        has_wf_design = any(p in permissions_list for p in ("workflow:builder:edit", "workflows:builder:edit", "workflow:builder:create", "workflows:builder:create", "workflow:builder:manage", "workflows:builder:manage", "workflow:*:*", "*:*:*"))
+        is_wf_designer = (user.role == "workflow_designer" or role_type_val == "workflow_designer" or (has_wf_view and has_wf_design and user.role not in ["para_legal", "legal_analyst", "tenant_user"]))
+
+        if is_wf_designer:
+            default_route = "/workflow-builder"
+        elif (
             user.role in ["system_admin", "admin"]
             or role_type_val in ["system_admin", "admin"]
             or "*:*:*" in permissions_list

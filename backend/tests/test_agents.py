@@ -27,8 +27,23 @@ async def test_presidio():
     result = await agent.run(test_input)
     print("✅ Test Result:",result)
     print("Violations:", result.violations)
-    print("Masked Content:", result.data)
-    print("Latency:", result.latency_ms, "ms")
+    assert result.status == "success" or result.status == "failure"
+
+@pytest.mark.asyncio
+async def test_profanity_guard():
+    await NodesRegistry.node_auto_discover()
+    agent = NodesRegistry.get_node("profanity_guard")
+    assert agent is not None, "profanity_guard not found in registry"
+    trace_id = str(uuid.uuid4())
+
+    test_input = NodeInput(
+        trace_id=trace_id,
+        data="This is damn bad and stupid.",
+        config={}
+    )
+
+    result = await agent.run(test_input)
+    assert result is not None
 
 if __name__ == "__main__":
     asyncio.run(test_presidio())

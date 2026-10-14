@@ -13,6 +13,7 @@ from app.models.db_models import WorkflowDB, WorkflowNodePropertyDB
 from app.workflows.store import (
     save_workflow_to_store,
     load_workflow_from_store,
+    get_workflow_by_identifier as get_workflow_by_identifier_store,
     delete_workflow_from_store,
     get_workflow_user_customer_id as get_workflow_user_customer_id_store
 )
@@ -167,6 +168,14 @@ async def delete_workflow(workflow_id: str, version: Optional[str] = None, clien
 async def get_workflow(workflow_id: str, version: Optional[str] = None) -> WorkflowDefinition:
     """Public service method to get a workflow definition."""
     return await load_workflow_from_store(workflow_id, version)
+
+# =============================================================================
+# BLOCK COMMENT: RESOLVE WORKFLOW BY IDENTIFIER (EPIC-ARCH-001)
+# Resolves workflow by either UUID/ID or slug/name for decoupled domain plants.
+# =============================================================================
+async def get_workflow_by_identifier(identifier: str, version: Optional[str] = None, customer_id: Optional[int] = None) -> WorkflowDefinition:
+    """Public service method to get a workflow definition by id, name, or slug."""
+    return await get_workflow_by_identifier_store(identifier, version, customer_id=customer_id)
 
 async def get_workflow_user_customer_id(workflow_id: str, version: Optional[str] = None) -> tuple[Optional[str], Optional[int]]:
     """Public service method to get the user_id and customer_id of a workflow."""

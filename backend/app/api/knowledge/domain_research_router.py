@@ -1015,28 +1015,13 @@ async def search_domain_knowledge(
         client_sys = payload.search_system_prompt or payload.system_prompt
         client_user = payload.search_user_prompt or payload.user_prompt_template
 
-        # Fetch Customer/Tenant prompt settings if present
-        cust_prompts: Dict[str, Any] = {}
-        if user_tenant_id:
-            try:
-                cust_res = await db.execute(select(CustomerDB).where(or_(CustomerDB.id == user_tenant_id, CustomerDB.id == str(user_tenant_id))))
-                cust = cust_res.scalar_one_or_none()
-                if cust and cust.settings and isinstance(cust.settings, dict):
-                    cust_prompts = cust.settings.get("prompts", {}) or {}
-                    if not cust_prompts and any(k in cust.settings for k in ("search_system_prompt", "drafting_system_prompt", "synthesize_system_prompt")):
-                        cust_prompts = cust.settings
-            except Exception as c_err:
-                logger.warning("customer_settings_prompts_lookup_failed", error=str(c_err))
-
-        tenant_search_sys = cust_prompts.get("search_system_prompt")
-        tenant_search_user = cust_prompts.get("search_user_prompt")
-
+        # ==============================================================================
+        # BLOCK COMMENT: DECOUPLE TENANT PROMPTS (EPIC: RAG-PROMPT-REFACTOR)
+        # Prompts are managed at RAG node levels; tenant definition does not store prompts.
+        # ==============================================================================
         if client_sys and client_sys.strip():
             system_prompt = client_sys.strip()
             prompt_source = "client_override"
-        elif tenant_search_sys and str(tenant_search_sys).strip():
-            system_prompt = str(tenant_search_sys).strip()
-            prompt_source = "client_tenant_setting"
         elif domain_prompts.get("search_system_prompt"):
             system_prompt = domain_prompts["search_system_prompt"]
             prompt_source = "domain_schema"
@@ -1239,30 +1224,16 @@ async def synthesize_domain_response(
 
     combined_context = "\n\n---\n\n".join(context_blocks)
 
-    # Load Customer/Tenant prompt settings if present
-    cust_prompts: Dict[str, Any] = {}
-    if user_tenant_id:
-        try:
-            cust_res = await db.execute(select(CustomerDB).where(or_(CustomerDB.id == user_tenant_id, CustomerDB.id == str(user_tenant_id))))
-            cust = cust_res.scalar_one_or_none()
-            if cust and cust.settings and isinstance(cust.settings, dict):
-                cust_prompts = cust.settings.get("prompts", {}) or {}
-                if not cust_prompts and any(k in cust.settings for k in ("drafting_system_prompt", "synthesize_system_prompt")):
-                    cust_prompts = cust.settings
-        except Exception as c_err:
-            logger.warning("customer_settings_prompts_lookup_failed", error=str(c_err))
-
+    # ==============================================================================
+    # BLOCK COMMENT: DECOUPLE TENANT PROMPTS (EPIC: RAG-PROMPT-REFACTOR)
+    # Prompts are managed at RAG node levels; tenant definition does not store prompts.
+    # ==============================================================================
     client_sys = payload.drafting_system_prompt or payload.synthesize_system_prompt or payload.system_prompt
     client_user = payload.drafting_user_prompt or payload.synthesize_user_prompt or payload.user_prompt_template
-    tenant_draft_sys = cust_prompts.get("drafting_system_prompt") or cust_prompts.get("synthesize_system_prompt")
-    tenant_draft_user = cust_prompts.get("drafting_user_prompt") or cust_prompts.get("synthesize_user_prompt")
 
     if client_sys and client_sys.strip():
         system_prompt = client_sys.strip()
         prompt_source = "client_override"
-    elif tenant_draft_sys and str(tenant_draft_sys).strip():
-        system_prompt = str(tenant_draft_sys).strip()
-        prompt_source = "client_tenant_setting"
     else:
         system_prompt = (
             "You are an expert Enterprise AI Assistant and Legal Research Drafter adhering to strict zero-hallucination standards.\n"

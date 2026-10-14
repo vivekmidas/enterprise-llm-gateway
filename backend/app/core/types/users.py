@@ -22,6 +22,8 @@ class User(BaseModel):
     role_type: Optional[str] = None
     permissions: List[str] = Field(default_factory=list)
     permission_methods: Optional[dict] = Field(default_factory=dict) # e.g. {"admin:knowledge:manage": ["GET", "POST"]}
+    api_key_id: Optional[str] = None
+    allowed_workflow_ids: Optional[List[str]] = None
 
 
     def has_permission(self, required_permission: str, http_method: Optional[str] = None) -> bool:

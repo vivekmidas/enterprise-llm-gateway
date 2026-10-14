@@ -1,4 +1,6 @@
 import uuid
+import os
+import time
 from sqlalchemy import Column, String, JSON, Integer, Boolean, Float, ForeignKey, Text, DateTime, Enum
 from app.core.database import Base
 from datetime import datetime
@@ -9,16 +11,28 @@ from app.jobs.enums import EntityType
 
 """
 ===============================================================================
-BLOCK COMMENT: DATABASE MODELS (MYSQL & UUIDv4 COMPATIBLE)
+BLOCK COMMENT: DATABASE MODELS (MYSQL & UUIDv4 / UUIDv7 COMPATIBLE)
 Module: backend/app/models/db_models.py
 Description:
-    Updated primary keys from Integer to String(36) UUIDv4 generator.
+    Primary keys use String(36) UUID format.
     Explicit string lengths added to indexed columns for MySQL key limits.
 ===============================================================================
 """
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
+
+def generate_uuid7() -> str:
+    """
+    Generate RFC 9562 compliant UUIDv7 preserving chronological timestamp ordering.
+    Used for time-ordered primary keys (API keys, workflows, traces).
+    """
+    ms = int(time.time() * 1000)
+    rand_bytes = os.urandom(10)
+    time_bytes = ms.to_bytes(6, byteorder="big")
+    ver_rand_a = (0x7000 | (int.from_bytes(rand_bytes[:2], "big") & 0x0FFF)).to_bytes(2, "big")
+    var_rand_b = (0x80 | (rand_bytes[2] & 0x3F)).to_bytes(1, "big") + rand_bytes[3:10]
+    return str(uuid.UUID(bytes=time_bytes + ver_rand_a + var_rand_b))
 
 # BLOCK COMMENT: STREAMLINED 3-TIER RBAC MODELS (xx:yy:zzz FORMAT)
 # Modified: CustomerDB (allowed_domains), PermissionDB (submodule), RoutePermissionDB (module, submodule, label)
@@ -27,7 +41,7 @@ class CustomerDB(Base):
     __tablename__ = "customers"
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     name = Column(String(255), unique=True, index=True)
-    domain = Column(String(255), unique=True, index=True, nullable=True)  # Useful for auto-assigning users via SSO
+    domain = Column(String(255), unique=False, index=True, nullable=True)  # Reference domain tag
     status = Column(String(50), default="active")  # active, suspended
     icon = Column(String(500), nullable=True)
     color_schema = Column(String(100), nullable=True)
@@ -381,7 +395,7 @@ class KnowledgeDocumentDB(Base):
     scope = Column(String(50), default="TENANT", index=True)
     is_system = Column(Boolean, default=False, index=True)
     created_by = Column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     collection_id = Column(
         String(36),
@@ -391,6 +405,8 @@ class KnowledgeDocumentDB(Base):
     )
 
     name = Column(String(255), nullable=False)
+    external_document_id = Column(String(255), nullable=True, index=True)
+    version = Column(Integer, default=1, nullable=False)
     source_type = Column(String(100), default="upload")
     source_uri = Column(String(500), nullable=True)
     mime_type = Column(String(100), nullable=True)
@@ -835,4 +851,58 @@ class KnowledgeAuditLogDB(Base):
 LegalAuditLogDB = KnowledgeAuditLogDB
 
 
+# ===============================================================================
+# BLOCK COMMENT: TENANT-SCOPED API KEY MANAGEMENT MODEL (EPIC-AUTH-001 / STORY-1.1)
+# Module: backend/app/models/db_models.py
+# Description:
+#     Multi-tenant API keys with cryptographic SHA-256 hash storage.
+#     Raw keys are never persisted. Bound to customer_id and user_id.
+#     Supports granular permission scopes, workflow restrictions, and rate limits.
+#     Includes TODO for future IP CIDR allowlisting.
+# ===============================================================================
+class APIKeyDB(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid7, index=True)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id = Column(String(36), ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    key_prefix = Column(String(16), nullable=False)
+    key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    scopes = Column(JSON, nullable=True, default=list) # Deprecated: Authorization now uses RoleDB (role_id)
+    allowed_workflow_ids = Column(JSON, nullable=True, default=None)
+    rate_limit_rpm = Column(Integer, default=60, nullable=False)
+    # TODO (Future Enhancement): IP CIDR allowlisting e.g. ["203.0.113.50/32", "10.0.0.0/8"]
+    allowed_ips = Column(JSON, nullable=True, default=None)
+    is_active = Column(Boolean, default=True, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# ===============================================================================
+# BLOCK COMMENT: INGESTION SOURCE LEDGER MODEL (EPIC-RAG-003 / STORY-3.7)
+# Module: backend/app/models/db_models.py
+# Description:
+#     Tracks provenance and synchronization state for passive document sources
+#     (S3 buckets, cloud storage, shared paths). Prevents redundant re-reading.
+# ===============================================================================
+class IngestionSourceLedgerDB(Base):
+    __tablename__ = "ingestion_source_ledgers"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True, index=True)
+    source_uri = Column(String(500), nullable=False, index=True)
+    source_type = Column(String(50), default="s3", nullable=False)
+    file_hash = Column(String(64), nullable=True, index=True)
+    etag = Column(String(100), nullable=True)
+    document_id = Column(String(36), ForeignKey("knowledge_documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    document_version = Column(Integer, default=1, nullable=False)
+    sync_status = Column(String(50), default="synced", nullable=False)  # synced, failed, pending
+    last_modified = Column(DateTime, nullable=True)
+    last_synced_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
 

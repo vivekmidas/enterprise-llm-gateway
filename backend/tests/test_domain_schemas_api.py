@@ -33,12 +33,17 @@ async def test_domain_schemas_crud_and_default_path():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = {"Authorization": f"Bearer {token}"}
 
+        suffix = generate_uuid()[:6]
+        d_key = f"healthcare_{suffix}"
+        d_key2 = f"clinical_health_{suffix}"
+        d_key3 = f"finance_audit_{suffix}"
+
         # 1. Create domain schema with default_path and custom config
         create_res = await client.post(
             "/api/knowledge/domains",
             json={
                 "name": "Healthcare & Clinical",
-                "domain_key": "healthcare",
+                "domain_key": d_key,
                 "description": "Clinical and patient records schema",
                 "scope": "SYSTEM",
                 "default_path": "/healthcare",
@@ -78,7 +83,7 @@ async def test_domain_schemas_crud_and_default_path():
             f"/api/knowledge/domains/{domain_id}",
             json={
                 "name": "Healthcare AI Platform",
-                "domain_key": "clinical_health",
+                "domain_key": d_key2,
                 "default_path": "/clinical-research",
                 "theme_color": "#0891b2",
                 "status": "active",
@@ -89,7 +94,7 @@ async def test_domain_schemas_crud_and_default_path():
         assert update_res.status_code == 200
         updated_data = update_res.json()
         assert updated_data["name"] == "Healthcare AI Platform"
-        assert updated_data["domain_key"] == "clinical_health"
+        assert updated_data["domain_key"] == d_key2
         assert updated_data["schema_json"]["default_path"] == "/clinical-research"
         assert updated_data["schema_json"]["theme_color"] == "#0891b2"
         assert "graphrag" in updated_data["schema_json"]["config"]["capabilities"]
@@ -99,7 +104,7 @@ async def test_domain_schemas_crud_and_default_path():
             "/api/knowledge/domains",
             json={
                 "name": "Finance & Audit",
-                "domain_key": "finance_audit",
+                "domain_key": d_key3,
                 "scope": "SYSTEM",
             },
             headers=headers,
@@ -108,22 +113,22 @@ async def test_domain_schemas_crud_and_default_path():
         second_id = create2_res.json()["id"]
 
         # 5. Attempt duplicate create -> should fail 400
-        dup_create_res = await client.post(
+        dup_res = await client.post(
             "/api/knowledge/domains",
             json={
-                "name": "Duplicate Finance",
-                "domain_key": "finance_audit",
+                "name": "Finance Duplicate",
+                "domain_key": d_key3,
                 "scope": "SYSTEM",
             },
             headers=headers,
         )
-        assert dup_create_res.status_code == 400
+        assert dup_res.status_code == 400
 
         # 6. Attempt updating domain_key to duplicate key -> should fail 400
         dup_update_res = await client.put(
             f"/api/knowledge/domains/{domain_id}",
             json={
-                "domain_key": "finance_audit",
+                "domain_key": d_key3,
             },
             headers=headers,
         )

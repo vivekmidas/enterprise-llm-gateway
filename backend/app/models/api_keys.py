@@ -1,15 +1,12 @@
-# app/models/api_key.py
-import secrets
+# ===============================================================================
+# BLOCK COMMENT: RE-EXPORT FOR BACKWARD COMPATIBILITY (EPIC-AUTH-001 / STORY-1.1)
+# Module: backend/app/models/api_keys.py
+# Description:
+#     Re-exports APIKeyDB as APIKey for backward-compatible imports across codebase.
+# ===============================================================================
+from app.models.db_models import APIKeyDB
 
-from sqlalchemy import Column, String, Boolean, DateTime
-from sqlalchemy.sql import func
-from sqlalchemy.ext.declarative import declarative_base
+# Backward compatibility alias
+APIKey = APIKeyDB
 
-Base = declarative_base()
-
-class APIKey(Base):
-    __tablename__ = "api_keys"
-    key = Column(String(255), primary_key=True, default=lambda: secrets.token_urlsafe(32))
-    name = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, server_default=func.now())
+__all__ = ["APIKeyDB", "APIKey"]

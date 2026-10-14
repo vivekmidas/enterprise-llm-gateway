@@ -289,67 +289,67 @@ class DocumentIngestionService:
                     comparison_report=comparison_report,
                 )
 
-                # 5. Domain Knowledge Extraction
-                kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
-                kb_res = await db.execute(kb_stmt)
-                target_kb = kb_res.scalar_one_or_none()
-
+                # 5. Domain Knowledge Extraction (Non-fatal, optional legacy extraction)
                 metadata = dict(document.metadata_json or {})
+                try:
+                    kb_stmt = select(KnowledgeBaseDB).where(KnowledgeBaseDB.id == knowledge_base_id)
+                    kb_res = await db.execute(kb_stmt)
+                    target_kb = kb_res.scalar_one_or_none()
 
-                if target_kb and target_kb.domain_id:
-                    domain_stmt = select(DomainSchemaDB).where(DomainSchemaDB.id == target_kb.domain_id)
-                    domain_res = await db.execute(domain_stmt)
-                    domain_schema = domain_res.scalar_one_or_none()
+                    if target_kb and target_kb.domain_id:
+                        domain_stmt = select(DomainSchemaDB).where(DomainSchemaDB.id == target_kb.domain_id)
+                        domain_res = await db.execute(domain_stmt)
+                        domain_schema = domain_res.scalar_one_or_none()
 
-                    if domain_schema:
-                        await job_service.update_progress(job_id, 25, message="Extracting domain metadata")
+                        if domain_schema:
+                            await job_service.update_progress(job_id, 25, message="Extracting domain metadata")
 
-                        # Resolve LLM Profile
-                        llm_profile = None
-                        try:
-                            kb_settings = target_kb.settings or {}
-                            kb_profile_id = kb_settings.get("llm_profile_id")
-                            cust_id = target_kb.customer_id if target_kb else customer_id
-                            if kb_profile_id:
-                                prof_res = await db.execute(
-                                    select(LLMProfileDB).where(LLMProfileDB.id == str(kb_profile_id))
-                                )
-                                llm_profile = prof_res.scalar_one_or_none()
-                            if not llm_profile:
-                                prof_res = await db.execute(
-                                    select(LLMProfileDB).where(
-                                        LLMProfileDB.customer_id == cust_id,
-                                        LLMProfileDB.is_default == True,
+                            llm_profile = None
+                            try:
+                                kb_settings = target_kb.settings or {}
+                                kb_profile_id = kb_settings.get("llm_profile_id")
+                                cust_id = target_kb.customer_id if target_kb else customer_id
+                                if kb_profile_id:
+                                    prof_res = await db.execute(
+                                        select(LLMProfileDB).where(LLMProfileDB.id == str(kb_profile_id))
                                     )
-                                )
-                                llm_profile = prof_res.scalar_one_or_none()
-                            if not llm_profile:
-                                prof_res = await db.execute(
-                                    select(LLMProfileDB).where(LLMProfileDB.customer_id == cust_id)
-                                )
-                                llm_profile = prof_res.scalars().first()
-                        except Exception as prof_err:
-                            logger.error("domain_extractor_profile_lookup_failed", error=str(prof_err))
+                                    llm_profile = prof_res.scalar_one_or_none()
+                                if not llm_profile:
+                                    prof_res = await db.execute(
+                                        select(LLMProfileDB).where(
+                                            LLMProfileDB.customer_id == cust_id,
+                                            LLMProfileDB.is_default == True,
+                                        )
+                                    )
+                                    llm_profile = prof_res.scalar_one_or_none()
+                                if not llm_profile:
+                                    prof_res = await db.execute(
+                                        select(LLMProfileDB).where(LLMProfileDB.customer_id == cust_id)
+                                    )
+                                    llm_profile = prof_res.scalars().first()
+                            except Exception as prof_err:
+                                logger.warning("domain_extractor_profile_lookup_failed", error=str(prof_err))
 
-                        extractor = DomainExtractor.from_llm_profile(llm_profile)
-
-                        domain_info = await extractor.extract_domain_knowledge(
-                            text=text,
-                            filename=document.name,
-                            domain_name=domain_schema.name,
-                            domain_key=domain_schema.domain_key,
-                            schema_json=domain_schema.schema_json,
-                            schema_extraction_system_prompt=domain_schema.system_prompt,
-                            schema_extraction_user_prompt=domain_schema.user_prompt,
-                        )
-                        document.extracted_json = domain_info
-                        metadata.pop("extracted_json", None)
-                        metadata.pop("domain_info", None)
-                else:
+                            if llm_profile:
+                                extractor = DomainExtractor.from_llm_profile(llm_profile)
+                                domain_info = await extractor.extract_domain_knowledge(
+                                    text=text,
+                                    filename=document.name,
+                                    domain_name=domain_schema.name,
+                                    domain_key=domain_schema.domain_key,
+                                    schema_json=domain_schema.schema_json,
+                                    schema_extraction_system_prompt=domain_schema.system_prompt,
+                                    schema_extraction_user_prompt=domain_schema.user_prompt,
+                                )
+                                document.extracted_json = domain_info
+                    else:
+                        document.extracted_json = None
+                except Exception as dom_err:
+                    logger.warning("domain_knowledge_extraction_bypassed", error=str(dom_err))
                     document.extracted_json = None
-                    metadata.pop("extracted_json", None)
-                    metadata.pop("domain_info", None)
 
+                metadata.pop("extracted_json", None)
+                metadata.pop("domain_info", None)
                 document.metadata_json = metadata
                 await db.commit()
 

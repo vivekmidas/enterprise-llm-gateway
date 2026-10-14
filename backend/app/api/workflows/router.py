@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path, Query
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any, Dict
+import json
+import time
+import asyncio
 import structlog
 from app.core.types.users import User
-from app.api.workflows.schemas import WorkflowSaveRequest
+from app.api.workflows.schemas import WorkflowSaveRequest, WorkflowExecutionRequest, WorkflowExecutionResponse
 from app.nodes.registry import NodesRegistry
 from app.workflows.store import update_node_tokens_in_db,get_workflow_node_properties,_get_workflow_node_details
 from pydantic import BaseModel, Field
@@ -14,7 +17,9 @@ from app.workflows.store import (
 )
 from sqlalchemy import select
 
-from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_user_customer_id
+from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_by_identifier, get_workflow_user_customer_id
+from app.workflows.executor import execute_dynamic_agent
+from app.core.cache import trace_store
 from app.workflows.class_models import WorkflowDefinition
 from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission
 
@@ -43,6 +48,166 @@ async def get_workflows(
         workflows = await list_workflows_from_store(customer_id=target_cid)
     logger.info("get_workflows_response", count=len(workflows))
     return workflows
+
+
+# =============================================================================
+# BLOCK COMMENT: WORKFLOW TRACE OBSERVABILITY ENDPOINT (EPIC-ARCH-001)
+# Allows decoupled domain plants (legal, education) and external clients to
+# retrieve execution trace status, step transitions, latency, and output payload.
+# Enforces tenant boundary isolation.
+# Defined prior to GET /{workflow_id} to prevent path parameter collision.
+# =============================================================================
+@router.get("/traces/{trace_id}", response_model=dict, summary="Get workflow execution trace by ID [EPIC-ARCH-001]")
+async def get_workflow_execution_trace(
+    trace_id: str = Path(..., description="Trace identifier"),
+    current_user: User = Depends(get_current_user)
+):
+    logger.info("get_workflow_trace_request", trace_id=trace_id, tenant_id=current_user.customer_id)
+    trace_data = await trace_store.get_trace(trace_id)
+    if not trace_data:
+        raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found")
+
+    # Enforce tenant isolation on trace data
+    trace_cust = trace_data.get("customer_id")
+    if current_user.role != "system_admin" and trace_cust is not None and str(trace_cust) != str(current_user.customer_id):
+        raise HTTPException(status_code=403, detail="Access denied to this trace")
+
+    return trace_data
+
+
+# =============================================================================
+# BLOCK COMMENT: DOMAIN-AGNOSTIC WORKFLOW EXECUTION API (EPIC-ARCH-001)
+# Main gateway execution entrypoint enabling external domain plants (e.g. Legal
+# Plant, Education Plant) to execute workflows via REST API with arbitrary JSON
+# input data in either synchronous or asynchronous mode.
+# Validates tenant ownership, active workflow status, and returns trace IDs.
+# =============================================================================
+@router.post(
+    "/{workflow_id}/execute",
+    response_model=WorkflowExecutionResponse,
+    summary="Execute workflow dynamically (Sync or Async) [EPIC-ARCH-001]"
+)
+async def execute_workflow_by_id(
+    workflow_id: str = Path(..., description="Workflow ID, name, or slug"),
+    request: Optional[WorkflowExecutionRequest] = None,
+    current_user: User = Depends(get_current_user),
+):
+    if request is None:
+        request = WorkflowExecutionRequest()
+
+    logger.info(
+        "execute_workflow_request_received",
+        workflow_id=workflow_id,
+        tenant_id=current_user.customer_id,
+        mode=request.execution_mode
+    )
+
+    # 1. Resolve workflow by ID, name, or slug
+    workflow = await get_workflow_by_identifier(workflow_id)
+
+    # 2. Enforce tenant authorization
+    if current_user.role != "system_admin" and workflow.customer_id is not None and str(workflow.customer_id) != str(current_user.customer_id):
+        raise HTTPException(status_code=403, detail="Access denied: workflow belongs to another tenant")
+
+    # 2b. Enforce API key workflow restrictions if configured
+    if current_user.allowed_workflow_ids is not None:
+        if workflow.id not in current_user.allowed_workflow_ids and getattr(workflow, "name", None) not in current_user.allowed_workflow_ids:
+            raise HTTPException(status_code=403, detail=f"API Key is not authorized to execute workflow '{workflow.id}'")
+
+    # 3. Check enabled status
+    if not workflow.is_enabled:
+        raise HTTPException(status_code=400, detail=f"Workflow '{workflow.id}' is disabled")
+
+    # 4. Serialize input payload
+    if isinstance(request.input_data, (dict, list)):
+        input_payload_str = json.dumps(request.input_data)
+    elif isinstance(request.input_data, str):
+        input_payload_str = request.input_data
+    else:
+        input_payload_str = str(request.input_data or "")
+
+    trace_id = request.trace_id or f"exec-{workflow.id}-{int(time.time() * 1000)}"
+
+    context = {
+        "user_data": {
+            "user_id": str(current_user.id),
+            "customer_id": current_user.customer_id,
+            "role": current_user.role,
+            "status": True,
+        },
+        "metadata": request.metadata or {},
+        "caller_domain": (request.metadata or {}).get("caller_domain", "external"),
+    }
+
+    workflow_dict = workflow.model_dump()
+
+    # 5. Handle Async Execution
+    if request.execution_mode.lower() == "async":
+        asyncio.create_task(
+            execute_dynamic_agent(
+                workflow_dict,
+                input_payload_str,
+                trace_id,
+                context=context,
+            )
+        )
+        return WorkflowExecutionResponse(
+            status="accepted",
+            workflow_id=workflow.id,
+            trace_id=trace_id,
+            result={"message": "Workflow execution scheduled in background", "trace_id": trace_id},
+        )
+
+    # 6. Handle Sync Execution
+    try:
+        execution_res = await execute_dynamic_agent(
+            workflow_dict,
+            input_payload_str,
+            trace_id,
+            context=context,
+        )
+
+        final_response = execution_res.get("final_response")
+        parsed_result = final_response
+        if isinstance(final_response, str) and (final_response.startswith("{") or final_response.startswith("[")):
+            try:
+                parsed_result = json.loads(final_response)
+            except Exception:
+                parsed_result = final_response
+
+        return WorkflowExecutionResponse(
+            status=execution_res.get("status", "completed"),
+            workflow_id=workflow.id,
+            trace_id=trace_id,
+            latency_ms=execution_res.get("latency_ms"),
+            result=parsed_result,
+            violations=execution_res.get("violations", []),
+            error_message=execution_res.get("error_message") or None,
+        )
+    except Exception as exc:
+        logger.error("workflow_execution_failed", workflow_id=workflow.id, trace_id=trace_id, error=str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Execution failed for workflow '{workflow.id}': {str(exc)}"
+        )
+
+
+@router.post(
+    "/run/{workflow_slug:path}",
+    response_model=WorkflowExecutionResponse,
+    summary="Alias to execute workflow by slug/name [EPIC-ARCH-001]"
+)
+async def execute_workflow_by_slug(
+    workflow_slug: str = Path(..., description="Workflow slug or identifier"),
+    request: Optional[WorkflowExecutionRequest] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Convenience alias route for decoupled domain plants invoking workflows by slug."""
+    return await execute_workflow_by_id(
+        workflow_id=workflow_slug.strip("/"),
+        request=request,
+        current_user=current_user,
+    )
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)

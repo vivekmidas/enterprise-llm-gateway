@@ -3,11 +3,25 @@ import uuid
 import pytest
 import json
 from app.core.types.common import NodeInput
-from app.nodes.built_in.presidio.unified_content_guard_agent import UnifiedContentGuardAgent
+from app.nodes.registry import NodesRegistry, LazyPluginNode
+
+async def get_guard_agent():
+    await NodesRegistry.node_auto_discover()
+    agent = NodesRegistry.get_node("unified_content_guard")
+    assert agent is not None, "unified_content_guard not found in registry"
+    return agent
+
+@pytest.mark.asyncio
+async def test_unified_guard_lazy_loading():
+    await NodesRegistry.node_auto_discover()
+    agent = NodesRegistry.get_node("unified_content_guard")
+    assert isinstance(agent, LazyPluginNode)
+    # Ensure real instance is not loaded before execution
+    assert agent._real_instance is None
 
 @pytest.mark.asyncio
 async def test_unified_guard_pii_redaction():
-    agent = UnifiedContentGuardAgent()
+    agent = await get_guard_agent()
     trace_id = str(uuid.uuid4())
     
     test_input = NodeInput(
@@ -33,7 +47,7 @@ async def test_unified_guard_pii_redaction():
 
 @pytest.mark.asyncio
 async def test_unified_guard_profanity_blending():
-    agent = UnifiedContentGuardAgent()
+    agent = await get_guard_agent()
     trace_id = str(uuid.uuid4())
     
     # Test blending of system, tenant, and additional profanity words
@@ -62,7 +76,7 @@ async def test_unified_guard_profanity_blending():
 
 @pytest.mark.asyncio
 async def test_unified_guard_field_targeting():
-    agent = UnifiedContentGuardAgent()
+    agent = await get_guard_agent()
     trace_id = str(uuid.uuid4())
     
     # We specify to target ONLY the 'target_field' and ignore the 'safe_field'
@@ -94,7 +108,7 @@ async def test_unified_guard_field_targeting():
 
 @pytest.mark.asyncio
 async def test_unified_guard_custom_regex_and_threat_rating():
-    agent = UnifiedContentGuardAgent()
+    agent = await get_guard_agent()
     trace_id = str(uuid.uuid4())
     
     test_input = NodeInput(

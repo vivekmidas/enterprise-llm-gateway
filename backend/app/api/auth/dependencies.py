@@ -140,29 +140,131 @@ async def resolve_role_and_id(
 
 
 # ==============================================================================
-# BLOCK COMMENT: GET CURRENT USER DEPENDENCY SUPPORTING COOKIE & BEARER TOKENS
+# BLOCK COMMENT: GET CURRENT USER DEPENDENCY SUPPORTING DUAL-AUTH, M2M & JWT SESSIONS
+# Module: backend/app/api/auth/dependencies.py
+# Epic: EPIC-AUTH-001 / Story 1.3
+# Capabilities:
+# 1. Dual-Authentication: If both X-API-Key and JWT token are supplied, validates both
+#    and strictly verifies api_key.customer_id == jwt_user.customer_id (fails 403 on mismatch).
+# 2. Headless M2M Auth: If only X-API-Key (or Bearer gw_live_...) is supplied,
+#    resolves service account User with tenant customer_id and scopes.
+# 3. Direct Session Auth: If only JWT / cookie is supplied, resolves interactive user.
 # ==============================================================================
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    token = None
-    if credentials:
-        token = credentials.credentials
-    elif request.cookies.get("token"):
-        token = request.cookies.get("token")
-    elif request.headers.get("Authorization") and request.headers.get("Authorization").startswith("Bearer "):
-        token = request.headers.get("Authorization").split()[1]
+    from app.core.security.api_keys import lookup_api_key
+    from datetime import datetime
 
-    if not token:
+    # 1. Extract API Key (via X-API-Key header or Authorization: Bearer gw_live_...)
+    raw_api_key = request.headers.get("X-API-Key")
+    jwt_token = None
+
+    if credentials and credentials.credentials:
+        if credentials.credentials.startswith("gw_live_"):
+            raw_api_key = credentials.credentials
+        else:
+            jwt_token = credentials.credentials
+    elif request.headers.get("Authorization") and request.headers.get("Authorization").startswith("Bearer "):
+        bearer_val = request.headers.get("Authorization").split()[1]
+        if bearer_val.startswith("gw_live_"):
+            raw_api_key = bearer_val
+        else:
+            jwt_token = bearer_val
+
+    if not jwt_token and request.cookies.get("token"):
+        jwt_token = request.cookies.get("token")
+
+    # If neither API key nor JWT provided -> 401
+    if not raw_api_key and not jwt_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    payload = decode_access_token(token)
+
+    # 2. Validate API Key if present
+    api_key_obj = None
+    if raw_api_key:
+        api_key_obj = await lookup_api_key(db, raw_api_key)
+        if not api_key_obj:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, inactive, or expired API Key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Touch last_used_at timestamp
+        api_key_obj.last_used_at = datetime.utcnow()
+        await db.commit()
+
+    # 3. Pure Headless M2M Mode (API Key ONLY, no JWT)
+    if api_key_obj and not jwt_token:
+        from app.models.db_models import RoleDB, RolePermissionDB
+
+        # Load user who created/owns this key
+        user_stmt = select(UserDB).where(UserDB.id == api_key_obj.user_id)
+        u_res = await db.execute(user_stmt)
+        creator_user = u_res.scalar_one_or_none()
+
+        role_obj = None
+        target_role_id = api_key_obj.role_id or (creator_user.role_id if creator_user else None)
+        if target_role_id:
+            role_res = await db.execute(select(RoleDB).where(RoleDB.id == str(target_role_id)))
+            role_obj = role_res.scalar_one_or_none()
+
+        if not role_obj and creator_user:
+            role_obj = await resolve_role_for_user(
+                db,
+                role_id=creator_user.role_id,
+                role_str=creator_user.role,
+                customer_id=api_key_obj.customer_id,
+            )
+
+        permissions_list = []
+        permission_methods_map = {}
+        role_id_val = None
+        role_name_val = None
+        role_type_val = None
+
+        if role_obj:
+            role_id_val = str(role_obj.id)
+            role_name_val = role_obj.role_name
+            role_type_val = role_obj.role_type
+            perm_stmt = select(RolePermissionDB).where(RolePermissionDB.role_id == role_obj.id)
+            perm_res = await db.execute(perm_stmt)
+            rps = perm_res.scalars().all()
+            permissions_list = [p.permission_id for p in rps]
+            permission_methods_map = {p.permission_id: p.allowed_methods for p in rps if p.allowed_methods}
+            if role_type_val == "system_admin":
+                permissions_list = ["*:*:*"]
+
+        # If no permissions resolved from role, fall back to api_key_obj.scopes (backward compatibility) or default
+        if not permissions_list:
+            if api_key_obj.scopes and isinstance(api_key_obj.scopes, list) and len(api_key_obj.scopes) > 0:
+                permissions_list = api_key_obj.scopes
+            else:
+                permissions_list = ["workflow:execute"]
+
+        return User(
+            id=str(api_key_obj.user_id),
+            role=role_name_val or "service_account",
+            email=creator_user.email_id if creator_user else f"key-{api_key_obj.key_prefix}@service.gateway",
+            customer_id=str(api_key_obj.customer_id),
+            name=api_key_obj.name,
+            status="active",
+            role_id=role_id_val,
+            role_name=role_name_val,
+            role_type=role_type_val or "service_account",
+            permissions=permissions_list,
+            permission_methods=permission_methods_map,
+            api_key_id=str(api_key_obj.id),
+            allowed_workflow_ids=api_key_obj.allowed_workflow_ids if isinstance(api_key_obj.allowed_workflow_ids, list) else None,
+        )
+
+    # 4. Validate JWT Token (Direct UI Mode or Dual-Auth Mode)
+    payload = decode_access_token(jwt_token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -214,6 +316,14 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is deactivated or suspended",
         )
+
+    # 5. Dual-Authentication Cross-Validation: API Key and User must belong to same customer
+    if api_key_obj:
+        if str(api_key_obj.customer_id) != str(db_user.customer_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-tenant access denied: API Key and User token belong to different tenants",
+            )
         
     # Resolve Granular Role & Permissions
     role_obj = None
@@ -287,6 +397,26 @@ async def get_current_user(
                 "workflow:builder:execute",
                 "node:catalog:view",
             ]
+        elif db_user.role == "workflow_designer" or role_type_val == "workflow_designer":
+            permissions_list = [
+                "workflows:builder:view",
+                "workflows:builder:create",
+                "workflows:builder:edit",
+                "workflows:builder:delete",
+                "workflows:builder:execute",
+                "workflows:builder:manage",
+                "workflow:builder:view",
+                "workflow:builder:create",
+                "workflow:builder:edit",
+                "workflow:builder:delete",
+                "workflow:builder:execute",
+                "workflow:builder:manage",
+                "nodes:catalog:view",
+                "nodes:catalog:execute",
+                "nodes:catalog:manage",
+                "admin:knowledge:view",
+                "admin:profiles:view",
+            ]
         else:
             permissions_list = [
                 "legal:research:query",
@@ -294,8 +424,17 @@ async def get_current_user(
                 "node:catalog:view",
             ]
 
-    # Compute default route
-    if db_user.role == "system_admin" or role_type_val == "system_admin":
+    # ==============================================================================
+    # BLOCK COMMENT: RESOLVE DESTINATION DEFAULT ROUTE (STORY 2)
+    # Users with workflow designer role/permissions route directly to /workflow-builder.
+    # ==============================================================================
+    has_wf_view = any(p in permissions_list for p in ("workflow:builder:view", "workflows:builder:view", "workflow:*:*", "*:*:*"))
+    has_wf_design = any(p in permissions_list for p in ("workflow:builder:edit", "workflows:builder:edit", "workflow:builder:create", "workflows:builder:create", "workflow:builder:manage", "workflows:builder:manage", "workflow:*:*", "*:*:*"))
+    is_wf_designer = (db_user.role == "workflow_designer" or role_type_val == "workflow_designer" or (has_wf_view and has_wf_design and db_user.role not in ["para_legal", "legal_analyst", "tenant_user"]))
+
+    if is_wf_designer:
+        default_route = "/workflow-builder"
+    elif db_user.role == "system_admin" or role_type_val == "system_admin":
         default_route = "/admin"
     elif domain_schema and domain_schema.schema_json and isinstance(domain_schema.schema_json, dict) and domain_schema.schema_json.get("default_path"):
         default_route = domain_schema.schema_json.get("default_path")
@@ -326,7 +465,9 @@ async def get_current_user(
         role_name=role_name_val,
         role_type=role_type_val,
         permissions=permissions_list,
-        permission_methods=permission_methods_map
+        permission_methods=permission_methods_map,
+        api_key_id=str(api_key_obj.id) if api_key_obj else None,
+        allowed_workflow_ids=api_key_obj.allowed_workflow_ids if (api_key_obj and isinstance(api_key_obj.allowed_workflow_ids, list)) else None,
     )
 
 

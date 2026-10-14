@@ -255,22 +255,26 @@ async def test_reconcile_drifted_keys_and_extra_fields():
         }
     })
 
-    extractor = DomainExtractor(llm=mock_llm)
-    res = await extractor.extract_domain_knowledge(
-        text="High Court of Jharkhand. Justice H.C. Mishra presided. Cr. Appeal 423 of 2006. Indian Penal Code and Arms Act. Hospitalized at MGM. Risk Score 95.",
-        filename="judgment.pdf",
-        domain_name="Legal Judgments",
-        domain_key="legal_judgment",
-        schema_json={"fields": fields},
+    extracted, extra = reconcile_extracted_payload(
+        extracted_fields={
+            "document": {
+                "coram": "Justice H.C. Mishra",
+                "case_numbers": "Cr. Appeal 423 of 2006",
+                "court_name": "High Court of Jharkhand",
+            },
+            "acts": ["Indian Penal Code", "Arms Act"],
+            "unmapped_custom_metric": "Risk Score 95",
+        },
+        extra_fields={
+            "additional_fact": "Hospitalized at MGM",
+        },
+        fields=fields,
     )
-
-    extracted = res["extracted_fields"]
-    extra = res["extra_fields"]
 
     # Reconciled to canonical keys inside document
     assert "document" in extracted
-    assert extracted["document"]["judge"] == "Justice H.C. Mishra"
-    assert extracted["document"]["case_number"] == "Cr. Appeal 423 of 2006"
+    assert extracted["document"]["judge"] == ["Justice H.C. Mishra"]
+    assert extracted["document"]["case_number"] == ["Cr. Appeal 423 of 2006"]
     assert extracted["document"]["court"] == "High Court of Jharkhand"
 
     # Drifted key 'acts' mapped to schema key 'legal_provisions' or preserved canonically

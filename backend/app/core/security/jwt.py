@@ -125,9 +125,16 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         # ==============================================================================
-        # BLOCK COMMENT: EXTRACT TOKEN FROM AUTHORIZATION HEADER OR HTTPONLY COOKIE
+        # BLOCK COMMENT: API KEY DELEGATION (EPIC-AUTH-001 / STORY-1.3)
+        # If request supplies X-API-Key header or Authorization: Bearer gw_live_...,
+        # delegate authentication to FastAPI get_current_user dependency which validates
+        # the token against api_keys table / cache with tenant scoping.
         # ==============================================================================
         auth = request.headers.get("Authorization")
+        raw_api_key = request.headers.get("X-API-Key")
+        if raw_api_key or (auth and auth.startswith("Bearer gw_live_")):
+            return await call_next(request)
+
         token = None
         if auth and auth.startswith("Bearer "):
             token = auth.split()[1]

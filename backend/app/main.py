@@ -118,9 +118,15 @@ app.include_router(backup_router)
 
 app.include_router(roles_router)
 
+# BLOCK COMMENT: REGISTER TENANT ADMIN API KEYS ROUTER (EPIC-AUTH-001)
+from app.api.admin.api_keys.router import router as api_keys_router
+app.include_router(api_keys_router)
+app.include_router(api_keys_router, prefix="/api/v1")
+
 # BLOCK COMMENT: REGISTER LEGAL AI INTELLIGENCE & MATTER INTAKE ROUTER (EPIC 3.3)
 from app.api.legal.router import router as legal_router
 app.include_router(legal_router, prefix="/api/v1")
+
 
 
 

@@ -61,14 +61,16 @@ class KnowledgeDocumentResponse(BaseModel):
     customer_id: Optional[str] = None
     scope: Optional[str] = "TENANT"
     is_system: Optional[bool] = False
-    created_by: str
+    created_by: Optional[str] = None
 
     name: str
+    external_document_id: Optional[str] = None
+    version: Optional[int] = 1
     source_type: str
-    source_uri: Optional[str]
-    mime_type: Optional[str]
+    source_uri: Optional[str] = None
+    mime_type: Optional[str] = None
 
-    metadata_json: Optional[Dict[str, Any]]
+    metadata_json: Optional[Dict[str, Any]] = None
     extracted_json: Optional[Dict[str, Any]] = None
     tags: Optional[List[Dict[str, Any]]] = None
 

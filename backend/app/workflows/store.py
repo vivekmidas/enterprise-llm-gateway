@@ -906,8 +906,72 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None,
             )
 
 
+# =============================================================================
+# BLOCK COMMENT: RESOLVE WORKFLOW BY ID OR NAME/SLUG (EPIC-ARCH-001)
+# Allows decoupled domain plants to invoke workflows by stable name or slug
+# (e.g. "legal-matter-analysis") as well as UUID/ID.
+# =============================================================================
+async def get_workflow_by_identifier(
+    identifier: str,
+    version: Optional[str] = None,
+    customer_id: Optional[int] = None
+) -> WorkflowDefinition:
+    with tracer.start_as_current_span("get_workflow_by_identifier") as span:
+        _safe_set_span_attribute(span, "identifier", identifier)
+        try:
+            async with AsyncSessionLocal() as session:
+                # 1. First try by exact ID
+                stmt = select(WorkflowDB).where(WorkflowDB.id == identifier)
+                if customer_id is not None:
+                    stmt = stmt.where(WorkflowDB.customer_id == customer_id)
+                res = await session.execute(stmt)
+                db_workflow = res.scalar_one_or_none()
+
+                # 2. If not found by ID, try by name
+                if not db_workflow:
+                    stmt = select(WorkflowDB).where(WorkflowDB.name == identifier)
+                    if customer_id is not None:
+                        stmt = stmt.where(WorkflowDB.customer_id == customer_id)
+                    res = await session.execute(stmt)
+                    db_workflow = res.scalars().first()
+
+                # 3. If still not found, try slug match (name with dashes/underscores)
+                if not db_workflow:
+                    all_stmt = select(WorkflowDB)
+                    if customer_id is not None:
+                        all_stmt = all_stmt.where(WorkflowDB.customer_id == customer_id)
+                    all_res = await session.execute(all_stmt)
+                    norm_id = identifier.strip().lower().replace("_", "-")
+                    for wf in all_res.scalars().all():
+                        wf_slug = (wf.name or "").strip().lower().replace(" ", "-").replace("_", "-")
+                        if wf_slug == norm_id:
+                            db_workflow = wf
+                            break
+
+                if not db_workflow:
+                    raise FileNotFoundError
+
+                definition = _build_workflow_definition_from_db(db_workflow)
+                return await _hydrate_workflow_definition(session, definition, customer_id=db_workflow.customer_id)
+        except FileNotFoundError:
+            logger.warning("workflow_not_found_by_identifier", identifier=identifier)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Workflow '{identifier}' not found"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("get_workflow_by_identifier_failed", identifier=identifier, error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error loading workflow: {str(e)}"
+            )
+
+
 async def list_workflows_from_store(customer_id: Optional[str] = None) -> list: 
     """List all available workflows."""
+    workflows = []
     with tracer.start_as_current_span("list_workflows_from_store"):
         try:
             async with AsyncSessionLocal() as session:
@@ -915,7 +979,6 @@ async def list_workflows_from_store(customer_id: Optional[str] = None) -> list:
                 if customer_id is not None:
                     stmt = stmt.where(WorkflowDB.customer_id == customer_id)
                 result = await session.execute(stmt)
-                workflows = []
                 for workflow in result.scalars().all():
                     definition = _build_workflow_definition_from_db(workflow)
                     workflows.append(await _hydrate_workflow_definition(session, definition, customer_id=workflow.customer_id))
