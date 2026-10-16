@@ -34,5 +34,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-#CMD ["/app/.venv/bin/uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
-CMD ["/app/.venv/bin/python","-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+# ==============================================================================
+# BLOCK COMMENT: PRE-START MIGRATION & SEED EXECUTION (EPIC-DB-MIGRATION-001 / CHANGE-1)
+# Executes idempotent schema migrations and seed data before starting uvicorn
+# on every container start or restart.
+# ==============================================================================
+CMD ["sh", "-c", "/app/.venv/bin/python -m app.db.migrations && exec /app/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]

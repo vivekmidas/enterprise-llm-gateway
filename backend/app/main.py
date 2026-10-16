@@ -46,14 +46,19 @@ logger = get_logger()
 @app.on_event("startup")
 async def startup_event():
     """
-    Handles the application startup lifecycle.
-    1. Initializes the database schema.
-    2. Automatically discovers all available nodes (built-in and plugins).
-    3. Activates triggers for all enabled workflows to start background listeners.
+    ===========================================================================
+    BLOCK COMMENT: APPLICATION STARTUP LIFECYCLE & UNIFIED MIGRATION HOOK
+    Reference: EPIC-DB-MIGRATION-001 / CHANGE-1
+    Description:
+        1. Executes unified, idempotent database schema migrations and all seed
+           data via `init_db()` (`app.db.migrations.run_migrations`).
+        2. Auto-discovers available nodes (built-in and plugins).
+        3. Synchronizes workflow runnability and activates workflow triggers.
+    ===========================================================================
     """
     logger.info("starting_gateway", version="0.2.3")
     
-    # Initialize the database and ensure all tables exist
+    # Initialize the database schema and execute all idempotent seed data
     await init_db()
     
     # Scan the project for node definitions and register them in memory
@@ -63,15 +68,8 @@ async def startup_event():
     # Sync workflow runnability status
     from app.core.database import AsyncSessionLocal
     from app.workflows.service import sync_workflows_runnability
-    # Seed default provider presets if missing
-    from app.core.seed_provider_presets import seed_provider_presets
-    from app.db.seed_rbac import seed_rbac
-    from app.core.seed_data import seed_all_domains
     async with AsyncSessionLocal() as session:
         await sync_workflows_runnability(session)
-        await seed_provider_presets(session)
-        await seed_rbac(session)
-        await seed_all_domains(session)
     
     # Find all workflows marked as 'enabled' in the DB and activate their trigger nodes
     # (e.g., starting webhook servers or cron tasks).
@@ -131,7 +129,10 @@ app.include_router(legal_router, prefix="/api/v1")
 
 
 
-
 if __name__ == "__main__":
+    import asyncio
     import uvicorn
+    from app.db.migrations import run_migrations
+
+    asyncio.run(run_migrations())
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
