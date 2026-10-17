@@ -1437,15 +1437,25 @@ def _refresh_api_keys_table(sync_conn):
 
 async def run_schema_migrations(target_engine: Optional[AsyncEngine] = None) -> None:
     """
-    Executes all non-destructive table column/index migrations and creates missing tables.
+    ===========================================================================
+    BLOCK COMMENT: SCHEMA MIGRATION EXECUTION WITH DB READINESS POLLING
+    Reference: EPIC-DB-MIGRATION-001 / CHANGE-1 & STORY-DB-RETRY-001
+    Description:
+        Waits for the database server to become reachable via `wait_for_db`,
+        then executes all non-destructive table column/index migrations and
+        creates missing tables.
+    ===========================================================================
     """
-    from app.core.database import Base, engine as default_engine
+    from app.core.database import Base, engine as default_engine, wait_for_db
     from app.models import db_models  # noqa: F401
     from app.models import legal_models  # noqa: F401
 
     active_engine = target_engine or default_engine
     if active_engine.url.database != ":memory:":
         await active_engine.dispose()
+
+    # Wait until the database server accepts connections before running schema inspection
+    await wait_for_db(target_engine=active_engine)
 
     async with active_engine.begin() as conn:
         await conn.run_sync(_refresh_workflow_node_properties_table)

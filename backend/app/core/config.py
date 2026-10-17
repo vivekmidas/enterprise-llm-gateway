@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     # Changed default DATABASE_URL from SQLite to MySQL async connection string
     DATABASE_URL: str = "mysql+aiomysql://root:password@localhost:3306/enterprise_gateway"
+    # ==========================================================================
+    # BLOCK COMMENT: DATABASE STARTUP CONNECTION RETRY SETTINGS
+    # Reference: EPIC-DB-MIGRATION-001 / STORY-DB-RETRY-001
+    # Description:
+    #   Configures startup database readiness polling when the database server
+    #   is not yet reachable.
+    #   - DB_RETRY_INTERVAL: Seconds to sleep between connection attempts (default: 10).
+    #   - DB_MAX_RETRIES: Maximum retry attempts before exiting (0 = retry indefinitely).
+    # ==========================================================================
+    DB_RETRY_INTERVAL: int = 10
+    DB_MAX_RETRIES: int = 0
     SECRET_KEY: str = "super-secret-change-this-in-production"
     ISSUER: str = "http://localhost.com"
     AUDIENCE: str = "enterprise"    
