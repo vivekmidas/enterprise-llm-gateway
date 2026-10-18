@@ -1,11 +1,19 @@
 {
     "name": "presidio_ner_guard",
     "label": "Presidio NER Guard",
+    "node_type": "NODE",
     "description": "Advanced PII + Custom Rules using Presidio NER engine with spaCy",
-    "file_name": "presidio_ner_guard_agent.py",
-    "class_name": "PresidioNERGuardAgent",
-    "category": "Guardrails",
+    "version": "1.1.0",
+    "category": "fence",
+    "group": "Custom",
     "icon": "shield",
     "color": "#ff6803",
-    "version": "1.1.0"
+    "badge": "Plugin",
+    "sub_label": null,
+    "file_name": "presidio_ner_guard_agent.py",
+    "class_name": "PresidioNERGuardAgent",
+    "user_properties": [],
+    "system_properties": [],
+    "input_contract": {},
+    "output_contract": {}
 }

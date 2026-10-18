@@ -1,0 +1,49 @@
+{
+    "name": "text_chunker_node",
+    "label": "Text Chunker",
+    "node_type": "NODE",
+    "description": "Splits long text or document content into smaller overlapping chunks.",
+    "version": "1.0.0",
+    "category": "brain",
+    "group": "Custom",
+    "icon": "blocks",
+    "color": "#06b6d4",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "text_chunker_node.py",
+    "class_name": "TextChunkerNode",
+    "user_properties": [
+        {
+            "key": "chunking_strategy",
+            "type": "choice",
+            "label": "Chunking Strategy",
+            "default": "recursive",
+            "options": [
+                "none",
+                "character",
+                "recursive"
+            ]
+        },
+        {
+            "key": "chunk_size",
+            "type": "number",
+            "label": "Chunk Size",
+            "default": 1000
+        },
+        {
+            "key": "chunk_overlap",
+            "type": "number",
+            "label": "Chunk Overlap",
+            "default": 200
+        },
+        {
+            "key": "text",
+            "type": "textarea",
+            "label": "Source Text",
+            "placeholder": "Enter text or use Jinja expression like {{ data.text }}"
+        }
+    ],
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

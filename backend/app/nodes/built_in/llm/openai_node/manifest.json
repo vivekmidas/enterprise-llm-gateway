@@ -1,0 +1,19 @@
+{
+    "name": "openai_node",
+    "label": "OpenAI Chat",
+    "node_type": "NODE",
+    "description": "Executes chat completions on OpenAI, Grok, DeepSeek, or other OpenAI-compatible APIs.",
+    "version": "1.0.0",
+    "category": "voice",
+    "group": "LLM",
+    "icon": "bot",
+    "color": "#10A37F",
+    "badge": "OpenAI",
+    "sub_label": "Chat Completion",
+    "file_name": "openai_node.py",
+    "class_name": "OpenAINode",
+    "user_properties": [],
+    "system_properties": [],
+    "input_contract": {},
+    "output_contract": {}
+}

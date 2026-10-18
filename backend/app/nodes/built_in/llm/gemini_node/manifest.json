@@ -1,0 +1,50 @@
+{
+    "name": "gemini_node",
+    "label": "Gemini Chat",
+    "node_type": "NODE",
+    "description": "Executes chat completions on Google Gemini developer API.",
+    "version": "1.0.0",
+    "category": "voice",
+    "group": "LLM",
+    "icon": "bot",
+    "color": "#1A73E8",
+    "badge": "Gemini",
+    "sub_label": "Google Cloud",
+    "file_name": "gemini_node.py",
+    "class_name": "GeminiNode",
+    "user_properties": [],
+    "system_properties": [
+        {
+            "key": "base_url",
+            "type": "string",
+            "label": "Base URL",
+            "default": "https://generativelanguage.googleapis.com"
+        },
+        {
+            "key": "api_key",
+            "type": "password",
+            "label": "API Key",
+            "default": ""
+        },
+        {
+            "key": "timeout_seconds",
+            "type": "number",
+            "label": "Timeout (seconds)",
+            "default": 60
+        },
+        {
+            "key": "max_retries",
+            "type": "number",
+            "label": "Max Retries",
+            "default": 3
+        },
+        {
+            "key": "default_model",
+            "type": "string",
+            "label": "Default Model",
+            "default": "gemini-1.5-flash"
+        }
+    ],
+    "input_contract": {},
+    "output_contract": {}
+}

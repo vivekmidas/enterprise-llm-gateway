@@ -1,5 +1,5 @@
 # backend/nodes/built-in/api_request_node.py
-from app.nodes.built_in.api_request_node import ApiRequestNode
+from app.nodes.built_in.external_api_node.api_request_node import ApiRequestNode
 from typing import Dict, Any, List, Optional
 import time
 import urllib.parse

@@ -1,0 +1,21 @@
+{
+    "name": "stocks_webhook_agent",
+    "label": "Stocks Webhook Agent",
+    "node_type": "TRIGGER",
+    "description": "Triggers workflows on stock price movements or API alerts",
+    "version": "1.0.0",
+    "category": "test",
+    "group": "Custom",
+    "icon": "trending-up",
+    "color": "#2ECC71",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "stocks_webhook_agent.py",
+    "class_name": "StocksWebhookAgent",
+    "user_properties": {},
+    "system_properties": {
+        "base_path": "stocks"
+    },
+    "input_contract": {},
+    "output_contract": {}
+}

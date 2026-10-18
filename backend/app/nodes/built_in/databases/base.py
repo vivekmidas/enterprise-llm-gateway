@@ -18,9 +18,12 @@ class DBExecutor(BaseNode, abc.ABC):
     """
 
     db_type: str = "generic_db"
-    category: str = "Database"
-    node_type: str = "tool"
+    category: str = "database"
+    node_type: str = "NODE"
     group: str = "Data"
+    icon="database"
+    description: str = "Abstract base for database executor nodes. Concrete implementations must define their own connection and execution logic."
+    version: str = "1.0"
 
     def __init__(self, **data):
         super().__init__(**data)

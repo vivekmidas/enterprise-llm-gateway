@@ -1,0 +1,130 @@
+{
+    "name": "generic_llm_vector_db",
+    "label": "Vector DB Integration",
+    "node_type": "NODE",
+    "description": "Connects to a Vector Database via URL to write embeddings (text, docs, images) or perform similarity searches.",
+    "version": "1.0.0",
+    "category": "data",
+    "group": "Custom",
+    "icon": "blocks",
+    "color": "#2cb23cff",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "generic_vector_db_node.py",
+    "class_name": "GenericLLMVectorDB",
+    "user_properties": [
+        {
+            "key": "url",
+            "type": "string",
+            "label": "Vector DB URL",
+            "default": "http://localhost:6333"
+        },
+        {
+            "key": "db_type",
+            "type": "choice",
+            "label": "Vector DB Type",
+            "default": "qdrant",
+            "options": [
+                "qdrant",
+                "pinecone",
+                "faiss"
+            ]
+        },
+        {
+            "key": "api_key",
+            "type": "password",
+            "label": "API Key",
+            "default": ""
+        },
+        {
+            "key": "collection_name",
+            "type": "string",
+            "label": "Collection Name",
+            "default": "documents"
+        },
+        {
+            "key": "operation",
+            "type": "choice",
+            "label": "Operation",
+            "default": "upsert",
+            "options": [
+                "upsert",
+                "search"
+            ]
+        },
+        {
+            "key": "chunking_strategy",
+            "type": "choice",
+            "label": "Chunking Strategy",
+            "default": "recursive",
+            "options": [
+                "none",
+                "character",
+                "recursive"
+            ]
+        },
+        {
+            "key": "chunk_size",
+            "type": "number",
+            "label": "Chunk Size",
+            "default": 1000
+        },
+        {
+            "key": "chunk_overlap",
+            "type": "number",
+            "label": "Chunk Overlap",
+            "default": 200
+        },
+        {
+            "key": "embedding_api_url",
+            "type": "string",
+            "label": "Embedding API URL",
+            "default": "http://127.0.0.1:11434/v1/embeddings"
+        },
+        {
+            "key": "embedding_model",
+            "type": "string",
+            "label": "Embedding Model",
+            "default": "nomic-embed-text"
+        },
+        {
+            "key": "embedding_api_key",
+            "type": "password",
+            "label": "Embedding API Key",
+            "default": ""
+        },
+        {
+            "key": "similarity_threshold",
+            "type": "number",
+            "label": "Similarity Threshold",
+            "default": 0.7
+        },
+        {
+            "key": "    ",
+            "type": "number",
+            "label": "Top K Results",
+            "default": 5
+        },
+        {
+            "key": "text",
+            "type": "textarea",
+            "label": "Input Text",
+            "placeholder": "Text to embed/upsert or search query"
+        },
+        {
+            "key": "pdf_path",
+            "type": "string",
+            "label": "PDF File / Base64 Document",
+            "placeholder": "Local file path or base64 data string"
+        },
+        {
+            "key": "image_path",
+            "type": "string",
+            "label": "Image File / Base64 Image",
+            "placeholder": "Local file path or base64 data string"
+        }
+    ],
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

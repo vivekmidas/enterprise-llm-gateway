@@ -1,0 +1,21 @@
+{
+    "name": "qdrant_webhook_node",
+    "label": "Qdrant Webhook Node",
+    "node_type": "TRIGGER",
+    "description": "Triggers workflows on Qdrant Vector Database events",
+    "version": "1.0.0",
+    "category": "brain",
+    "group": "Custom",
+    "icon": "database",
+    "color": "#2ECC71",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "qdrant_webhook_agent.py",
+    "class_name": "QdrantWebhookNode",
+    "user_properties": {},
+    "system_properties": {
+        "base_path": "qdrant"
+    },
+    "input_contract": {},
+    "output_contract": {}
+}

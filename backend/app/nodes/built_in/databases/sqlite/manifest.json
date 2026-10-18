@@ -1,0 +1,19 @@
+{
+    "name": "sqlite_query_executor",
+    "label": "SQLite Node",
+    "node_type": "TOOL",
+    "description": "Executes SQL queries on SQLite databases. Supports parameterized queries and Jinja templating.",
+    "version": "1.0.0",
+    "category": "data",
+    "group": "Data",
+    "icon": "database",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "sqlite_node.py",
+    "class_name": "SQLiteDBExecutor",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

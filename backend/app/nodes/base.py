@@ -333,11 +333,23 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
         Loads an optional manifest.json co-located with the node class definition
         (e.g. <module_dir>/<node_name>/manifest.json or <module_dir>/manifest.json).
         """
+        import inspect
+        from pathlib import Path
         if self.__class__.__name__ == "LazyPluginNode":
+            plugin_dir = getattr(self, "_plugin_dir", None)
+            if not plugin_dir:
+                return None
+            manifest_file = Path(plugin_dir).resolve() / "manifest.json"
+            if manifest_file.is_file():
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception:
+                    pass
             return None
         try:
-            import inspect
-            from pathlib import Path
             cls_file = inspect.getfile(self.__class__)
             if not cls_file:
                 return None

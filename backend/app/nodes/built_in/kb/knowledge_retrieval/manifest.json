@@ -1,0 +1,19 @@
+{
+    "name": "knowledge_retrieval",
+    "label": "Knowledge Retrieval",
+    "node_type": "NODE",
+    "description": "Retrieve relevant context from configured knowledge bases.",
+    "version": "1.0.0",
+    "category": "book",
+    "group": "Knowledge",
+    "icon": "book-open",
+    "color": "#2563EB",
+    "badge": "RAG",
+    "sub_label": "Knowledge Base Search",
+    "file_name": "knowledge_retrieval_node.py",
+    "class_name": "KnowledgeRetrievalNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

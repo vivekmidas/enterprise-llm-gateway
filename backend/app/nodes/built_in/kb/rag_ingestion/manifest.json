@@ -1,0 +1,169 @@
+{
+    "name": "rag_ingestion",
+    "label": "RAG Document Ingestion",
+    "node_type": "NODE",
+    "description": "Ingest, chunk, embed, and version documents directly into tenant knowledge bases.",
+    "version": "1.0.0",
+    "category": "book",
+    "group": "Knowledge",
+    "icon": "file-up",
+    "color": "#10B981",
+    "badge": "RAG",
+    "sub_label": "Document Intake",
+    "file_name": "rag_ingestion_node.py",
+    "class_name": "RAGIngestionNode",
+    "user_properties": [
+        {
+            "key": "knowledge_base_id",
+            "type": "source",
+            "label": "Target Knowledge Base",
+            "source": "/api/knowledge/bases",
+            "required": true,
+            "description": "Select the Knowledge Base. Inherits embedding model and chunking defaults from bound LLM Profile."
+        },
+        {
+            "key": "execution_mode",
+            "type": "select",
+            "label": "Execution Mode",
+            "default": "sync",
+            "options": [
+                "sync",
+                "async"
+            ],
+            "description": "Sync waits for vector indexing; async returns queued job ID immediately."
+        },
+        {
+            "key": "versioning_strategy",
+            "type": "select",
+            "label": "Versioning Strategy",
+            "default": "replace_chunks",
+            "options": [
+                "replace_chunks",
+                "new_version",
+                "skip_if_exists"
+            ],
+            "description": "replace_chunks purges old vectors and updates chunks; new_version preserves revision history."
+        }
+    ],
+    "system_properties": {},
+    "input_contract": {
+        "type": "object",
+        "required": [
+            "document_content"
+        ],
+        "properties": {
+            "metadata": {
+                "type": "object",
+                "description": "Custom metadata to attach to document and vectors"
+            },
+            "mime_type": {
+                "type": "string",
+                "description": "MIME type (e.g. application/pdf)"
+            },
+            "source_uri": {
+                "type": "string",
+                "description": "Provenance identifier (e.g. s3://bucket/doc.pdf)"
+            },
+            "source_type": {
+                "enum": [
+                    "s3",
+                    "api",
+                    "upload",
+                    "shared_storage"
+                ],
+                "type": "string",
+                "default": "api"
+            },
+            "document_name": {
+                "type": "string",
+                "description": "Filename or document title"
+            },
+            "document_content": {
+                "type": "string",
+                "description": "Raw text, Base64 data string, or file path"
+            },
+            "document_version": {
+                "type": "integer",
+                "default": 1,
+                "description": "Document version number"
+            },
+            "knowledge_base_id": {
+                "type": "string",
+                "description": "Target Knowledge Base ID override"
+            },
+            "external_document_id": {
+                "type": "string",
+                "description": "Caller document identifier for version tracking"
+            }
+        }
+    },
+    "output_contract": {
+        "type": "object",
+        "required": [
+            "document_id",
+            "status"
+        ],
+        "properties": {
+            "job_id": {
+                "type": [
+                    "string",
+                    "null"
+                ],
+                "description": "Background indexing job ID (if async)"
+            },
+            "status": {
+                "enum": [
+                    "indexed",
+                    "queued",
+                    "version_updated",
+                    "skipped",
+                    "failed"
+                ],
+                "type": "string"
+            },
+            "checksum": {
+                "type": "string",
+                "description": "SHA-256 hash"
+            },
+            "metadata": {
+                "type": "object",
+                "description": "Persisted document metadata"
+            },
+            "source_uri": {
+                "type": "string",
+                "description": "Persisted provenance source URI"
+            },
+            "chunk_count": {
+                "type": "integer",
+                "description": "Active chunks indexed into vector store"
+            },
+            "document_id": {
+                "type": "string",
+                "description": "UUID of created or updated KnowledgeDocumentDB"
+            },
+            "source_type": {
+                "type": "string",
+                "description": "Origin type of document"
+            },
+            "collection_name": {
+                "type": "string",
+                "description": "Vector store collection name"
+            },
+            "document_version": {
+                "type": "integer",
+                "description": "Active document version"
+            },
+            "external_document_id": {
+                "type": [
+                    "string",
+                    "null"
+                ],
+                "description": "Caller document identifier"
+            },
+            "previous_chunks_purged": {
+                "type": "integer",
+                "description": "Obsolete chunks purged during version update"
+            }
+        }
+    }
+}

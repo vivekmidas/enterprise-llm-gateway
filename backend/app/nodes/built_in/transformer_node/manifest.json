@@ -1,0 +1,19 @@
+{
+    "name": "transformer_node",
+    "label": "Data Transformer",
+    "node_type": "NODE",
+    "description": "Transforms input data using Jinja2 templates to match the next node's contract.",
+    "version": "1.0.0",
+    "category": "brain",
+    "group": "Custom",
+    "icon": "shuffle",
+    "color": "#FFD700",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "transform_node.py",
+    "class_name": "TransformNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

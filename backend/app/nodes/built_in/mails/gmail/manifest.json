@@ -1,12 +1,19 @@
 {
     "name": "gmail_email_trigger",
     "label": "Gmail OAuth Trigger",
+    "node_type": "TRIGGER",
     "description": "Polls Gmail via OAuth2 API for new messages.",
-    "file_name": "gmail_oauth_mail_trigger_node.py",
-    "class_name": "GmailEmailTriggerNode",
-    "category": "Communication",
+    "version": "1.0.0",
+    "category": "key",
+    "group": "Custom",
     "icon": "mail",
     "color": "#EA4335",
-    "version": "1.0.0"
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "gmail_oauth_mail_trigger_node.py",
+    "class_name": "GmailEmailTriggerNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
 }
-

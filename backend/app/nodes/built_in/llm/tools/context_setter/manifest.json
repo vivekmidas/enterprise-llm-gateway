@@ -1,0 +1,19 @@
+{
+    "name": "context_setter",
+    "label": "Context Setter",
+    "node_type": "NODE",
+    "description": "Enriches input with user context from CRM / DB",
+    "version": "1.0.0",
+    "category": "fence",
+    "group": "Custom",
+    "icon": "userstatus",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "context_setter_agent.py",
+    "class_name": "ContextSetterAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

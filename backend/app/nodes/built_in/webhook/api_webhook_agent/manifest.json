@@ -1,0 +1,19 @@
+{
+    "name": "api_webhook_agent",
+    "label": "API Webhook",
+    "node_type": "TRIGGER",
+    "description": "API Webhook Agent for external system integration",
+    "version": "1.0.0",
+    "category": "cloud",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "api_webhook_agent.py",
+    "class_name": "WebhookAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

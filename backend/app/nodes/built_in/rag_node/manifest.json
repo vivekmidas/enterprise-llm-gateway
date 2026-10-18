@@ -1,0 +1,144 @@
+{
+    "name": "rag_node",
+    "label": "RAG Node",
+    "node_type": "NODE",
+    "description": "Retrieve context from knowledge bases and generate a response using an LLM.",
+    "version": "1.0.0",
+    "category": "book",
+    "group": "LLM",
+    "icon": "book-open",
+    "color": "#A855F7",
+    "badge": "RAG",
+    "sub_label": "Retrieval & Generation",
+    "file_name": "rag_node.py",
+    "class_name": "RAGNode",
+    "user_properties": [
+        {
+            "key": "model",
+            "type": "string",
+            "label": "Model Name",
+            "default": "qwen:0.5b",
+            "description": "The name of the LLM model to generate response."
+        },
+        {
+            "key": "temperature",
+            "type": "number",
+            "label": "Temperature",
+            "default": 0.7,
+            "description": "Temperature parameter for response generation."
+        },
+        {
+            "key": "system_prompt",
+            "type": "textarea",
+            "label": "System Prompt",
+            "default": "You are a helpful assistant. Answer the user query using the provided context.",
+            "description": "System prompt instructions for the LLM."
+        },
+        {
+            "key": "ip",
+            "type": "string",
+            "label": "LLM IP Override",
+            "default": "",
+            "description": "Override default LLM IP address."
+        },
+        {
+            "key": "port",
+            "type": "string",
+            "label": "LLM Port Override",
+            "default": "",
+            "description": "Override default LLM Port."
+        },
+        {
+            "key": "top_k",
+            "type": "number",
+            "label": "Top K Override",
+            "default": 5,
+            "description": "Override default retrieval limit."
+        },
+        {
+            "key": "score_threshold",
+            "type": "number",
+            "label": "Score Threshold Override",
+            "default": 0.0,
+            "description": "Override minimum score threshold."
+        }
+    ],
+    "system_properties": [
+        {
+            "key": "knowledge_bases",
+            "type": "string",
+            "label": "Default Knowledge Bases",
+            "default": "",
+            "description": "Default comma-separated Knowledge Base IDs."
+        },
+        {
+            "key": "ip",
+            "type": "string",
+            "label": "Default LLM IP",
+            "default": "127.0.0.1",
+            "description": "Default LLM IP address."
+        },
+        {
+            "key": "port",
+            "type": "string",
+            "label": "Default LLM Port",
+            "default": "11434",
+            "description": "Default LLM Port."
+        },
+        {
+            "key": "path",
+            "type": "string",
+            "label": "LLM Path",
+            "default": "/v1/chat/completions",
+            "description": "OpenAI-compatible completions path."
+        },
+        {
+            "key": "top_k",
+            "type": "number",
+            "label": "Default Top K",
+            "default": 5,
+            "description": "Default number of chunks to retrieve."
+        },
+        {
+            "key": "score_threshold",
+            "type": "number",
+            "label": "Default Score Threshold",
+            "default": 0.0,
+            "description": "Default minimum similarity score."
+        }
+    ],
+    "input_contract": {
+        "type": "object",
+        "required": [
+            "user_query",
+            "kb"
+        ],
+        "properties": {
+            "kb": {
+                "type": "string"
+            },
+            "user_query": {
+                "type": "string"
+            }
+        }
+    },
+    "output_contract": {
+        "type": "object",
+        "required": [
+            "answer",
+            "context",
+            "citations"
+        ],
+        "properties": {
+            "answer": {
+                "type": "string"
+            },
+            "context": {
+                "type": "string"
+            },
+            "citations": {
+                "type": "array"
+            }
+        }
+    }
+}

@@ -1,0 +1,19 @@
+{
+    "name": "sentiment_analyzer",
+    "label": "Base Node",
+    "node_type": "NODE",
+    "description": "Analyzes sentiment of user message",
+    "version": "1.0.0",
+    "category": "brain",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "sentiment_analyzer_agent.py",
+    "class_name": "SentimentAnalyzerAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

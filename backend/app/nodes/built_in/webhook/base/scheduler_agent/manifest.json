@@ -1,0 +1,19 @@
+{
+    "name": "scheduler_agent",
+    "label": "Scheduler ",
+    "node_type": "TRIGGER",
+    "description": "Runs a command or triggers an agent recurringly in the background",
+    "version": "1.0.0",
+    "category": "brain",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "scheduler_node.py",
+    "class_name": "SchedulerAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

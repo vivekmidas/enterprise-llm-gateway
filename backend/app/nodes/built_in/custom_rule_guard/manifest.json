@@ -1,0 +1,19 @@
+{
+    "name": "custom_rule_guard",
+    "label": "Custom Rule Guard",
+    "node_type": "NODE",
+    "description": "Dynamic rule-based guard using JSON config",
+    "version": "1.0.0",
+    "category": "fence",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "custom_rule_guard_agent.py",
+    "class_name": "CustomRuleGuardAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

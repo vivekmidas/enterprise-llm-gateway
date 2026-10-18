@@ -1,0 +1,120 @@
+{
+    "name": "document_categorizer_agent",
+    "label": "Document Categorizer",
+    "node_type": "NODE",
+    "description": "Parses documents (Text, PDF, Word DOCX), generates an N-word summary, extracts keywords/tags, and classifies into target document categories.",
+    "version": "1.0.0",
+    "category": "book",
+    "group": "Data",
+    "icon": "file-text",
+    "color": "#8b5cf6",
+    "badge": "NLP",
+    "sub_label": null,
+    "file_name": "document_categorizer_node.py",
+    "class_name": "DocumentCategorizerNode",
+    "user_properties": [
+        {
+            "key": "summary_words",
+            "type": "number",
+            "label": "Summary Target (Words)",
+            "default": 15,
+            "description": "Approximate number of words for document summary."
+        },
+        {
+            "key": "max_tags",
+            "type": "number",
+            "label": "Max Keywords/Tags",
+            "default": 5,
+            "description": "Maximum number of keywords/tags to extract."
+        },
+        {
+            "key": "categories",
+            "type": "string",
+            "label": "Target Categories",
+            "default": "Invoice, Resume, Contract, Policy, Report, Technical, General",
+            "description": "Comma-separated list of allowed document categories."
+        },
+        {
+            "key": "llm_profile",
+            "type": "source",
+            "label": "LLM Profile",
+            "source": "/api/profiles",
+            "description": "Select LLM Profile preset for endpoint, model, and authentication settings."
+        },
+        {
+            "key": "model_type",
+            "type": "string",
+            "label": "Model Type",
+            "default": "generation",
+            "description": "Matching section in LLM profile (e.g. generation, embedding, reranking)."
+        },
+        {
+            "key": "model",
+            "type": "string",
+            "label": "Model Name",
+            "default": "qwen:0.5b"
+        },
+        {
+            "key": "file_path",
+            "type": "path",
+            "label": "Input Document(s)",
+            "accept": ".pdf,.docx,.doc,.txt",
+            "multiple": true,
+            "description": "Select one or more documents to process. Accepted: PDF, Word (.docx/.doc), plain text. The server reads these paths at execution time."
+        }
+    ],
+    "system_properties": [
+        {
+            "key": "ip_address",
+            "type": "string",
+            "label": "IP Address",
+            "default": "127.0.0.1"
+        },
+        {
+            "key": "port",
+            "type": "string",
+            "label": "Port",
+            "default": "11434"
+        },
+        {
+            "key": "url_path",
+            "type": "string",
+            "label": "Path",
+            "default": "/v1/chat/completions"
+        }
+    ],
+    "input_contract": {
+        "text": {
+            "type": "string",
+            "required": false,
+            "description": "Plain text content or document text"
+        },
+        "file_path": {
+            "type": "string",
+            "required": false,
+            "description": "Local file path(s) to document (.pdf, .docx, .txt)"
+        }
+    },
+    "output_contract": {
+        "tags": {
+            "type": "array",
+            "required": true
+        },
+        "summary": {
+            "type": "string",
+            "required": true
+        },
+        "category": {
+            "type": "string",
+            "required": true
+        },
+        "word_count": {
+            "type": "integer",
+            "required": true
+        },
+        "extracted_text": {
+            "type": "string",
+            "required": false
+        }
+    }
+}

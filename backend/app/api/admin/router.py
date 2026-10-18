@@ -10,7 +10,7 @@ import os
 from app.nodes.registry import NodesRegistry
 from app.nodes.base import TriggerNode
 from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
-from app.nodes.built_in.webhook.base.scheduler_node import SchedulerAgent
+from app.nodes.built_in.webhook.base.scheduler_agent.scheduler_node import SchedulerAgent
 from app.core.database import get_db
 from app.models.db_models import (
     CustomerDB, UserDB, AuditLogDB, NodeDB, CustomerNodeDB, WorkflowDB,

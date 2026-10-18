@@ -1,0 +1,21 @@
+{
+    "name": "db_webhook_agent",
+    "label": "Database Webhook",
+    "node_type": "TRIGGER",
+    "description": "DB Webhook Agent for DB operations",
+    "version": "1.0.0",
+    "category": "data",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "db_hook_agent.py",
+    "class_name": "DBWebhookAgent",
+    "user_properties": {},
+    "system_properties": {
+        "base_path": "db"
+    },
+    "input_contract": {},
+    "output_contract": {}
+}

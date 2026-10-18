@@ -1,0 +1,19 @@
+{
+    "name": "output_guard",
+    "label": "Output Guard",
+    "node_type": "NODE",
+    "description": "Final safety check - PII leak, MAD, policy compliance",
+    "version": "1.0.0",
+    "category": "fence",
+    "group": "Custom",
+    "icon": "bot",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "output_guard_agent.py",
+    "class_name": "OutputGuardAgent",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

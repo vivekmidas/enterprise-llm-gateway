@@ -1,0 +1,19 @@
+{
+    "name": "stocks_api_request_node",
+    "label": "Stocks API Request NODE",
+    "node_type": "NODE",
+    "description": "Call STOCKS API to get latest stock quotes",
+    "version": "1.0.0",
+    "category": "test",
+    "group": "Custom",
+    "icon": "\ud83d\udcc8",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "stocks_api_request_node.py",
+    "class_name": "StocksApiRequestNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

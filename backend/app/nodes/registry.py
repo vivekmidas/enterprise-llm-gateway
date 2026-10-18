@@ -387,10 +387,12 @@ class NodesRegistry:
             else:
                 system_props_code = defn.get("system_properties") if defn.get("system_properties") is not None else []
 
-        # Map node category to the corresponding Category ID
-        node_category = str(getattr(node, "category", "") or "Node")
-        category_id = "1"
-        if node_category.lower() in ["guardrails", "safety guardrails"]:
+        # Map node category to the corresponding Category ID (preserving direct category IDs from manifest/DB)
+        node_category = str(getattr(node, "category", "") or "Node").strip()
+        known_category_ids = {"1", "2", "3", "4", "5", "6", "fence", "data", "cloud", "book", "voice", "brain", "key", "test"}
+        if node_category in known_category_ids:
+            category_id = node_category
+        elif node_category.lower() in ["guardrails", "safety guardrails"]:
             category_id = "2"
         elif node_category.lower() in ["external systems", "external"]:
             category_id = "3"

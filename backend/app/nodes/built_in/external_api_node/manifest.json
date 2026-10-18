@@ -1,0 +1,19 @@
+{
+    "name": "external_api_node",
+    "label": "External API Request",
+    "node_type": "NODE",
+    "description": "Call any third-party REST API using GET/POST/PUT/DELETE",
+    "version": "1.0.0",
+    "category": "cloud",
+    "group": "Custom",
+    "icon": "\ud83c\udf10",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "api_request_node.py",
+    "class_name": "ApiRequestNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

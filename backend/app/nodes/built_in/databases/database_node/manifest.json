@@ -1,0 +1,19 @@
+{
+    "name": "database_node",
+    "label": "Database",
+    "node_type": "NODE",
+    "description": "Connect to SQL databases and execute queries",
+    "version": "1.0.0",
+    "category": "data",
+    "group": "Custom",
+    "icon": "database",
+    "color": "#336791",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "database_node.py",
+    "class_name": "DatabaseNode",
+    "user_properties": {},
+    "system_properties": {},
+    "input_contract": {},
+    "output_contract": {}
+}

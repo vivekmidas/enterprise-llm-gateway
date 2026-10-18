@@ -1,11 +1,19 @@
 {
     "name": "profanity_guard",
     "label": "Profanity Guard",
+    "node_type": "NODE",
     "description": "Profanity Guard guards against usage of profanity",
-    "file_name": "profanity_guard_agent.py",
-    "class_name": "ProfanityGuardAgent",
-    "category": "Guardrails",
+    "version": "1.1.0",
+    "category": "fence",
+    "group": "Custom",
     "icon": "shield",
     "color": "#ff6803",
-    "version": "1.1.0"
+    "badge": "Plugin",
+    "sub_label": null,
+    "file_name": "profanity_guard_agent.py",
+    "class_name": "ProfanityGuardAgent",
+    "user_properties": [],
+    "system_properties": [],
+    "input_contract": {},
+    "output_contract": {}
 }

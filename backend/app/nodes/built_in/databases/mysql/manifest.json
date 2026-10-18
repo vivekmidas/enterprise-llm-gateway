@@ -1,0 +1,32 @@
+{
+    "name": "generic_mysql_query_executor",
+    "label": "MySQL ",
+    "node_type": "TOOL",
+    "description": "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating.",
+    "version": "1.0.0",
+    "category": "data",
+    "group": "Data",
+    "icon": "database",
+    "color": "#5E0CEC",
+    "badge": "Node",
+    "sub_label": null,
+    "file_name": "generic_mysql_node.py",
+    "class_name": "GenericMySQLDBExecutor",
+    "user_properties": [
+        {
+            "key": "allow_node_testing",
+            "type": "string",
+            "label": "allow_node_testing",
+            "value": true,
+            "default": true,
+            "description": ""
+        }
+    ],
+    "system_properties": [],
+    "input_contract": {
+        "rules": [],
+        "version": "1.0",
+        "additional_fields": true
+    },
+    "output_contract": {}
+}
