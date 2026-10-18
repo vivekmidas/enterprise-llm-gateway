@@ -150,12 +150,44 @@ class NodesRegistry:
     _nodes: Dict[str, BaseNode] = {}
     logger = structlog.get_logger("NodesRegistry")
 
+    @staticmethod
+    def _parse_version_tuple(version_str: Optional[str]) -> tuple:
+        """
+        Parses a version string (e.g. '1.2.3') into a comparable tuple of integers.
+        Non-numeric suffixes are stripped or compared safely.
+        """
+        import re
+        if not version_str:
+            return (0, 0, 0)
+        parts = re.findall(r"\d+", str(version_str))
+        if not parts:
+            return (0, 0, 0)
+        nums = tuple(int(p) for p in parts)
+        if len(nums) < 3:
+            nums = nums + (0,) * (3 - len(nums))
+        return nums
+
+    @classmethod
+    def _is_newer_version(cls, new_version: Optional[str], db_version: Optional[str]) -> bool:
+        """
+        Returns True strictly when `new_version` is greater than `db_version`.
+        """
+        if not new_version:
+            return False
+        if not db_version:
+            return True
+        return cls._parse_version_tuple(new_version) > cls._parse_version_tuple(db_version)
+
     @classmethod
     async def register(cls, agent: BaseNode):
         """Registers an instantiated node."""
         if not agent.name or agent.name == "base_node":
             cls.logger.debug("skip_registration_base_agent", agent_name=agent.name)
             return
+
+        agent.node_type = (agent.node_type or "NODE").strip().upper()
+        if agent.node_type == "DEFAULT":
+            agent.node_type = "NODE"
 
         # Enrich node with external properties (from JSON) if they exist
         cls._enrich_node_from_storage(agent)
@@ -179,11 +211,22 @@ class NodesRegistry:
                     external_data = json.load(f)
                     if "properties" in external_data:
                         node.properties.update(external_data["properties"])
-                   
+                    if "user_properties" in external_data:
+                        merged_u = node.merge_property_definitions(node._definition_user_properties, external_data["user_properties"])
+                        node._definition_user_properties = merged_u
+                        if isinstance(node.user_properties, list) or not node.user_properties:
+                            node.user_properties = merged_u
+                    if "system_properties" in external_data:
+                        merged_s = node.merge_property_definitions(node._definition_system_properties, external_data["system_properties"])
+                        node._definition_system_properties = merged_s
+                        if isinstance(node.system_properties, list) or not node.system_properties:
+                            node.system_properties = merged_s
                     if "input_contract" in external_data:
-                        node.input_contract = external_data["input_contract"]
+                        node.input_contract = node.merge_contract_definitions(node.input_contract, external_data["input_contract"])
+                        node._definition_input_contract = dict(node.input_contract)
                     if "output_contract" in external_data:
-                        node.output_contract = external_data["output_contract"]
+                        node.output_contract = node.merge_contract_definitions(node.output_contract, external_data["output_contract"])
+                        node._definition_output_contract = dict(node.output_contract)
                     cls.logger.debug("node_properties_enriched", name=node.name)
             except Exception as e:
                 cls.logger.error("failed_to_enrich_node", name=node.name, error=str(e))
@@ -202,7 +245,6 @@ class NodesRegistry:
     @classmethod
     def list_nodes(cls) -> List[BaseNode]:
         """Returns a list of all registered nodes."""
-        
         cls.logger.debug("list_nodes_request", count=len(cls._nodes))
         return list(cls._nodes.values())
 
@@ -243,197 +285,15 @@ class NodesRegistry:
             registered_nodes=list(cls._nodes.keys())
         )
 
-        # Sync definitions with DB to load global properties/schema overrides 
-        # await cls.sync_with_db()
-
     @classmethod
     async def sync_with_db(cls):
         """
-        Syncs discovered nodes and categories from files/classes into the database.
-        This ensures the DB is populated for the API to consume.
+        Syncs all registered nodes into the database using canonical `add_node_to_db`.
         """
-        from app.core.database import AsyncSessionLocal
-        from app.models.db_models import NodeDB, CategoryDB
-        from sqlalchemy import select
-
         cls.logger.info("syncing_registry_with_db")
-
-        def merge_properties(db_props, code_props):
-            # If both are dicts, merge them directly, preserving DB values
-            if isinstance(db_props, dict) and isinstance(code_props, dict):
-                merged = dict(code_props)
-                merged.update(db_props)
-                return merged
-
-            # Otherwise, treat as lists of property entries (schemas)
-            db_list = db_props if isinstance(db_props, list) else []
-            if isinstance(db_props, dict):
-                db_list = [{"key": k, "value": v} for k, v in db_props.items()]
-
-            code_list = code_props if isinstance(code_props, list) else []
-            if isinstance(code_props, dict):
-                code_list = [{"key": k, "default": v} for k, v in code_props.items()]
-
-            # Decode stringified items if they exist
-            parsed_db_list = []
-            for item in db_list:
-                if isinstance(item, str):
-                    try:
-                        parsed_db_list.append(json.loads(item))
-                    except Exception:
-                        pass
-                elif isinstance(item, dict):
-                    parsed_db_list.append(item)
-
-            parsed_code_list = []
-            for item in code_list:
-                if isinstance(item, str):
-                    try:
-                        parsed_code_list.append(json.loads(item))
-                    except Exception:
-                        pass
-                elif isinstance(item, dict):
-                    parsed_code_list.append(item)
-
-            db_keys = {item.get("key"): item for item in parsed_db_list if isinstance(item, dict) and "key" in item}
-            code_keys = {item.get("key"): item for item in parsed_code_list if isinstance(item, dict) and "key" in item}
-
-            merged_list = []
-
-            # 1. Keep existing DB entries, merging structural metadata from code
-            for key, db_item in db_keys.items():
-                if key in code_keys:
-                    updated_item = {**code_keys[key], **db_item}
-                    if "value" in db_item:
-                        updated_item["value"] = db_item["value"]
-                    elif "default" in db_item:
-                        updated_item["default"] = db_item["default"]
-                    merged_list.append(updated_item)
-                else:
-                    # Retain properties deprecated in code but configured in DB for safety
-                    merged_list.append(db_item)
-
-            # 2. Add new properties defined in code
-            for key, code_item in code_keys.items():
-                if key not in db_keys:
-                    merged_list.append(code_item)
-
-            return merged_list
-
-        from sqlalchemy import text
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                # 1. Sync Discovered Nodes
-                for node_name, node in cls._nodes.items():
-                    stmt = select(NodeDB).where(NodeDB.name == node_name)
-                    result = await session.execute(stmt)
-                    db_node = result.scalars().first()
-
-                    # Load original, unmutated defaults from Python node class definition
-                    user_props_code = []
-                    system_props_code = []
-
-                    def get_clean_default(field_obj):
-                        if not field_obj:
-                            return []
-                        val = getattr(field_obj, "default", [])
-                        if val is None or "Undefined" in val.__class__.__name__:
-                            factory = getattr(field_obj, "default_factory", None)
-                            if factory is not None:
-                                try:
-                                    val = factory()
-                                except Exception:
-                                    val = []
-                            else:
-                                val = []
-                        return val
-
-                    if isinstance(node, LazyPluginNode):
-                        user_props_code = node._raw_user_properties or node.user_properties or []
-                        system_props_code = node._raw_system_properties or node.system_properties or []
-                    elif hasattr(node.__class__, "model_fields"):
-                        user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
-                        system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
-                    elif hasattr(node.__class__, "__fields__"):
-                        user_props_code = get_clean_default(node.__class__.__fields__.get("user_properties"))
-                        system_props_code = get_clean_default(node.__class__.__fields__.get("system_properties"))
-                    else:
-                        user_props_code = node.user_properties or []
-                        system_props_code = node.system_properties or []
-
-                    if not db_node:
-                        cls.logger.info("registering_new_node_to_db", name=node_name)
-                        
-                        # Dynamically map node category string to database category ID
-                        node_category = str(getattr(node, "category", "") or "Custom")
-                        category_id = "1"
-                        if node_category.lower() in ["guardrails", "safety guardrails"]:
-                            category_id = "2"
-                        elif node_category.lower() in ["external systems", "external"]:
-                            category_id = "3"
-                        elif node_category.lower() in ["data operations", "transform"]:
-                            category_id = "4"
-                        elif node_category.lower() in ["databases", "database"]:
-                            category_id = "5"
-                        elif node_category.lower() in ["triggers", "trigger"]:
-                            category_id = "6"
-
-                        new_db_node = NodeDB(
-                            name=node.name,
-                            label=node.label,
-                            node_type=node.node_type.upper() if node.node_type else "NODE",
-                            description=node.description,
-                            version=node.version,
-                            category=category_id,
-                            group=node.group,
-                            icon="bot",
-                            color=node.color,
-                            badge=node.badge,
-                            sub_label=node.sub_label,
-                            user_properties=user_props_code,
-                            system_properties=system_props_code,
-                            input_contract=node.input_contract,
-                            output_contract=node.output_contract,
-                            customer_id=None if getattr(node, "customer_id", None) == 0 else getattr(node, "customer_id", None)
-                        )
-                        session.add(new_db_node)
-                        
-                        # Automatically create and enable the node assignment for customer-scoped custom nodes
-                        cust_id = getattr(node, "customer_id", None)
-                        if cust_id is not None and cust_id != 0:
-                            from app.models.db_models import CustomerNodeDB
-                            stmt_cn = select(CustomerNodeDB).where(
-                                CustomerNodeDB.customer_id == cust_id,
-                                CustomerNodeDB.node_name == node_name
-                            )
-                            res_cn = await session.execute(stmt_cn)
-                            db_cn = res_cn.scalar_one_or_none()
-                            if not db_cn:
-                                new_cn = CustomerNodeDB(
-                                    customer_id=cust_id,
-                                    node_name=node_name,
-                                    properties={},
-                                    is_enabled=True
-                                )
-                                session.add(new_cn)
-                    # else:
-                    #     cls.logger.info("syncing_existing_node_schema_to_db", name=node_name)
-
-                    #     # Merge properties non-destructively
-                    #     merged_user_props = merge_properties(db_node.user_properties, user_props_code)
-                    #     merged_sys_props = merge_properties(db_node.system_properties, system_props_code)
-
-                    #     # Update core implementations fields, keeping user-customized ones
-                    #     db_node.node_type = node.node_type.upper() if node.node_type else db_node.node_type
-                    #     db_node.version = node.version or db_node.version
-                    #     db_node.input_contract = node.input_contract or db_node.input_contract
-                    #     db_node.output_contract = node.output_contract or db_node.output_contract
-                    #     db_node.user_properties = merged_user_props
-                    #     db_node.system_properties = merged_sys_props
-
-                    #     session.add(db_node)
-
-            cls.logger.info("nodes_synced_with_db", count=len(cls._nodes))
+        for node in cls._nodes.values():
+            await cls.add_node_to_db(node)
+        cls.logger.info("nodes_synced_with_db", count=len(cls._nodes))
 
     @classmethod
     async def _scan_package(cls, package_paths: List[str], prefix: str):
@@ -462,7 +322,7 @@ class NodesRegistry:
 
     @classmethod
     async def _load_module(cls, module_name: str):
-        """Loads a module and registers any BaseAgent subclasses found within."""
+        """Loads a module and registers any BaseNode subclasses found within."""
         cls.logger.debug("loading_module", module=module_name)
         try:
             # Import the module. 
@@ -477,60 +337,57 @@ class NodesRegistry:
                     cls.logger.info("found_node_class", class_name=obj.__name__, module=module_name)
                     try:
                         instance = obj()
-                        await cls.register(instance)
+                        cls._enrich_node_from_storage(instance)
                         await cls.add_node_to_db(instance)
+                        await cls.register(instance)
                     except Exception as e:
                         cls.logger.error("node_instantiation_failed", node=obj.__name__, error=str(e))
         except Exception as e:
             cls.logger.error("node_module_load_failed", module=module_name, error=str(e))
 
+    # ==========================================================================
+    # BLOCK COMMENT: NODE DB INITIALIZATION & SEMANTIC VERSION UPGRADE
+    # Reference: EPIC-NODE-BASE-001 / STORY-NODE-INIT-001
+    # Description:
+    #     Initializes or updates the node row in `nodes` table (NodeDB) using
+    #     the 12 standardized base properties under two conditions:
+    #       a) Node `name` does not exist in `nodes` table.
+    #       b) Node definition has a newer semantic version (`node.version > db_node.version`).
+    #     Normalizes `node_type` to uppercase (default "NODE") and persists `db_node.version`.
+    # ==========================================================================
     @classmethod
     async def add_node_to_db(cls, node: BaseNode):
         """
-        Saves the node's manifest data / metadata to the database.
-        If a node with the same name already exists in NodeDB, it is overwritten/updated
-        only if its version number matches the new node's version.
+        Saves the node's definition and metadata to the database when:
+          a) No node with `node.name` exists in `nodes` table, OR
+          b) The node definition version is strictly newer (`node.version > db_node.version`).
         """
         from app.core.database import AsyncSessionLocal
         from app.models.db_models import NodeDB, CustomerNodeDB
         from sqlalchemy import select
 
+        if not node.name or node.name == "base_node":
+            return
+
         cls.logger.info("adding_node_to_db_started", node_name=node.name, version=node.version)
 
-        # Retrieve default properties cleanly from the class schema
-        user_props_code = []
-        system_props_code = []
+        defn = node.get_node_definition() if hasattr(node, "get_node_definition") else {}
 
-        def get_clean_default(field_obj):
-            if not field_obj:
-                return []
-            val = getattr(field_obj, "default", [])
-            if val is None or "Undefined" in val.__class__.__name__:
-                factory = getattr(field_obj, "default_factory", None)
-                if factory is not None:
-                    try:
-                        val = factory()
-                    except Exception:
-                        val = []
-                else:
-                    val = []
-            return val
-
+        # Extract merged unmutated schema properties (respecting direct list assignments on node)
         if isinstance(node, LazyPluginNode):
-            user_props_code = node._raw_user_properties or node.user_properties or []
-            system_props_code = node._raw_system_properties or node.system_properties or []
-        elif hasattr(node.__class__, "model_fields"):
-            user_props_code = get_clean_default(node.__class__.model_fields.get("user_properties"))
-            system_props_code = get_clean_default(node.__class__.model_fields.get("system_properties"))
-        elif hasattr(node.__class__, "__fields__"):
-            user_props_code = get_clean_default(node.__class__.__fields__.get("user_properties"))
-            system_props_code = get_clean_default(node.__class__.__fields__.get("system_properties"))
+            user_props_code = node._raw_user_properties or defn.get("user_properties") or []
+            system_props_code = node._raw_system_properties or defn.get("system_properties") or []
         else:
-            user_props_code = node.user_properties or []
-            system_props_code = node.system_properties or []
+            if isinstance(node.user_properties, list) and node.user_properties:
+                user_props_code = node.user_properties
+            else:
+                user_props_code = defn.get("user_properties") if defn.get("user_properties") is not None else []
+            if isinstance(node.system_properties, list) and node.system_properties:
+                system_props_code = node.system_properties
+            else:
+                system_props_code = defn.get("system_properties") if defn.get("system_properties") is not None else []
 
         # Map node category to the corresponding Category ID
-        # todo : this need to change
         node_category = str(getattr(node, "category", "") or "Node")
         category_id = "1"
         if node_category.lower() in ["guardrails", "safety guardrails"]:
@@ -546,6 +403,10 @@ class NodesRegistry:
         else:
             category_id = "1"
 
+        raw_node_type = (node.node_type or "NODE").strip().upper()
+        if raw_node_type == "DEFAULT" or not raw_node_type:
+            raw_node_type = "NODE"
+
         cust_id = getattr(node, "customer_id", None)
         db_cust_id = None if cust_id == 0 else cust_id
 
@@ -556,51 +417,58 @@ class NodesRegistry:
                 db_node = result.scalars().first()
 
                 if not db_node:
-                    cls.logger.info("registering_new_node_to_db", name=node.name)
+                    # Condition (a): Node name does not exist in nodes table
+                    cls.logger.info("registering_new_node_to_db", name=node.name, version=node.version)
                     new_db_node = NodeDB(
                         name=node.name,
                         label=node.label,
-                        node_type=node.node_type.upper() if node.node_type else "NODE",
+                        node_type=raw_node_type,
                         description=node.description,
                         version=node.version,
                         category=category_id,
                         group=node.group,
                         icon=node.icon or "bot",
-                        color=node.color,
+                        color=node.color or "#5E0CEC",
                         badge=node.badge,
                         sub_label=node.sub_label,
                         user_properties=user_props_code,
                         system_properties=system_props_code,
-                        input_contract=node.input_contract,
-                        output_contract=node.output_contract,
+                        input_contract=node.input_contract if node.input_contract is not None else {},
+                        output_contract=node.output_contract if node.output_contract is not None else {},
                         customer_id=db_cust_id
                     )
                     session.add(new_db_node)
+                elif cls._is_newer_version(node.version, db_node.version):
+                    # Condition (b): New version of the node definition (new_version > db_version)
+                    cls.logger.info(
+                        "overwriting_existing_node_in_db",
+                        name=node.name,
+                        old_version=db_node.version,
+                        new_version=node.version
+                    )
+                    db_node.label = node.label
+                    db_node.node_type = raw_node_type
+                    db_node.description = node.description
+                    db_node.version = node.version
+                    db_node.category = category_id
+                    db_node.group = node.group
+                    db_node.icon = node.icon or "bot"
+                    db_node.color = node.color or "#5E0CEC"
+                    db_node.badge = node.badge
+                    db_node.sub_label = node.sub_label
+                    db_node.user_properties = user_props_code
+                    db_node.system_properties = system_props_code
+                    db_node.input_contract = node.input_contract if node.input_contract is not None else {}
+                    db_node.output_contract = node.output_contract if node.output_contract is not None else {}
+                    db_node.customer_id = db_cust_id
+                    session.add(db_node)
                 else:
-                    if db_node.version != node.version:
-                        cls.logger.info("overwriting_existing_node_in_db", name=node.name, version=node.version)
-                        db_node.label = node.label
-                        db_node.node_type = node.node_type.upper() if node.node_type else "NODE"
-                        db_node.description = node.description
-                        db_node.category = category_id
-                        db_node.group = node.group
-                        db_node.icon = node.icon or "bot"
-                        db_node.color = node.color
-                        db_node.badge = node.badge
-                        db_node.sub_label = node.sub_label
-                        db_node.user_properties = user_props_code
-                        db_node.system_properties = system_props_code
-                        db_node.input_contract = node.input_contract or db_node.input_contract
-                        db_node.output_contract = node.output_contract or db_node.output_contract
-                        db_node.customer_id = db_cust_id
-                        session.add(db_node)
-                    else:
-                        cls.logger.info(
-                            "skipping_db_overwrite_same_version",
-                            name=node.name,
-                            db_version=db_node.version,
-                            node_version=node.version
-                        )
+                    cls.logger.info(
+                        "skipping_db_overwrite_version_not_newer",
+                        name=node.name,
+                        db_version=db_node.version,
+                        node_version=node.version
+                    )
 
                 # Automatically assign/enable node for customer-scoped custom nodes
                 if cust_id is not None and cust_id != 0:
@@ -703,7 +571,7 @@ class NodesRegistry:
                     color=manifest.get("color", "#5E0CEC"),
                     badge=manifest.get("badge", "Plugin"),
                     sub_label=manifest.get("sub_label"),
-                    node_type=manifest.get("node_type", "NODE"),
+                    node_type=(manifest.get("node_type") or "NODE").upper(),
                     user_properties=manifest.get("user_properties", []),
                     system_properties=manifest.get("system_properties", []),
                     input_contract=manifest.get("input_contract", {}),
@@ -711,9 +579,9 @@ class NodesRegistry:
                     customer_id=customer_id
                 )
 
-                # Register and sync node manifest with DB
-                await cls.register(lazy_instance)
+                # Sync node manifest with DB first, then register & initialize in memory
                 await cls.add_node_to_db(lazy_instance)
+                await cls.register(lazy_instance)
                 cls.logger.info(
                     "plugin_registered_lazy",
                     customer_id=customer_id,

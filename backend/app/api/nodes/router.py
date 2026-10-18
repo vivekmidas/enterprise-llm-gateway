@@ -39,12 +39,23 @@ def _nodes_with_categories_query():
 
 async def _fetch_nodes(db: AsyncSession, statement):
     result = await db.execute(statement)
-    return [dict(row) for row in result.mappings().all()]
+    rows = []
+    for row in result.mappings().all():
+        d = dict(row)
+        raw_nt = str(d.get("node_type") or "NODE").strip().upper()
+        d["node_type"] = "NODE" if raw_nt == "DEFAULT" or not raw_nt else raw_nt
+        rows.append(d)
+    return rows
 
 async def _fetch_node(db: AsyncSession, statement):
     result = await db.execute(statement)
     row = result.mappings().one_or_none()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    raw_nt = str(d.get("node_type") or "NODE").strip().upper()
+    d["node_type"] = "NODE" if raw_nt == "DEFAULT" or not raw_nt else raw_nt
+    return d
 
 
 def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive: bool = False) -> dict:
@@ -718,6 +729,9 @@ async def update_node(
 
     if "category" in node_data and node_data["category"]:
         node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
+    if "node_type" in node_data:
+        raw_nt = str(node_data.get("node_type") or "NODE").strip().upper()
+        node_data["node_type"] = "NODE" if raw_nt == "DEFAULT" or not raw_nt else raw_nt
 
     defaults = _defaults_from_payload(node_data)
 
@@ -744,6 +758,8 @@ async def create_node(
     """Creates a new global node definition in the registry catalog (Super-Admin only)."""
     if "category" in node_data and node_data["category"]:
         node_data["category"] = await _resolve_category_id(str(node_data["category"]), db)
+    raw_nt = str(node_data.get("node_type") or "NODE").strip().upper()
+    node_data["node_type"] = "NODE" if raw_nt == "DEFAULT" or not raw_nt else raw_nt
 
     new_node = NodeDB(**{key: value for key, value in node_data.items() if key != "id" and hasattr(NodeDB, key)})
     db.add(new_node)

@@ -152,12 +152,19 @@ class CategoryDB(Base):
     label = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
 
+# ==============================================================================
+# BLOCK COMMENT: BASE NODE PROPERTIES & DB INITIALIZATION STANDARDIZATION
+# Reference: EPIC-NODE-BASE-001 / STORY-NODE-INIT-001
+# Description:
+#     Standardizes NodeDB default node_type to "NODE" (uppercase, case-insensitive)
+#     and aligns all 12 core base node properties for DB initialization and version upgrades.
+# ==============================================================================
 class NodeDB(Base):
     __tablename__ = "nodes"
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
     name = Column(String(255), unique=True, index=True)
     label = Column(String(255))
-    node_type = Column(String(50), default="default")  # trigger, tool, or default
+    node_type = Column(String(50), default="NODE")  # TRIGGER, TOOL, CONNECTOR, or NODE
     description = Column(Text)
     version = Column(String(50))
     category = Column(String(255))

@@ -60,7 +60,54 @@ class JinjaFallbackDict(dict):
             return True
         return self._should_fallback(key)
 
-class BaseNode(BaseModel, abc.ABC):
+# ==============================================================================
+# BLOCK COMMENT: STANDARDIZED BASE NODE & HIERARCHICAL PROPERTY INHERITANCE
+# Reference: EPIC-NODE-BASE-001 / STORY-NODE-INIT-001
+# Description:
+#     1. Standardizes the 12 core node properties on BaseNode:
+#        (user_properties, system_properties, input_contract, output_contract,
+#         name, label, node_type [default "NODE", uppercase], description,
+#         category, icon, color, sub_label).
+#     2. Merges user_properties, system_properties, input_contract, and
+#        output_contract across the class MRO hierarchy (parent -> child) so
+#        child node definitions extend base/parent definitions and override
+#        matching keys.
+#     3. Supports optional co-located manifest.json (<node_dir>/<node_name>/manifest.json
+#        or <node_dir>/manifest.json) as part of the node definition.
+#     4. Preserves unmutated schema definitions (_definition_user_properties,
+#        _definition_system_properties) for NodeDB initialization & version upgrades
+#        before init() flattens runtime properties into dicts.
+# ==============================================================================
+class _BaseNodeMeta(type(BaseModel), abc.ABCMeta):
+    """
+    Metaclass that allows BaseNode subclasses to override base node properties
+    either with or without explicit type annotations.
+    """
+    def __new__(mcs, cls_name, bases, namespace, **kwargs):
+        base_fields = {}
+        for base in reversed(bases):
+            if hasattr(base, "model_fields"):
+                for fname, finfo in base.model_fields.items():
+                    base_fields[fname] = finfo.annotation or Any
+            for k, v in getattr(base, "__annotations__", {}).items():
+                base_fields.setdefault(k, v)
+
+        if base_fields:
+            annotations = dict(namespace.get("__annotations__", {}))
+            for attr_name, attr_val in list(namespace.items()):
+                if (
+                    attr_name in base_fields
+                    and attr_name not in annotations
+                    and not callable(attr_val)
+                    and not isinstance(attr_val, (property, cached_property, classmethod, staticmethod))
+                ):
+                    annotations[attr_name] = Any
+            namespace["__annotations__"] = annotations
+
+        return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+
+
+class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
     """
     Standardized Base Class for all Enterprise LLM Gateway nodes.
 
@@ -84,9 +131,9 @@ class BaseNode(BaseModel, abc.ABC):
     description: str = "Standard node base"
     version: str = "1.0.0"
     category: str = "Custom"       # Internal functional category
-    node_type: str = "default"     # trigger, tool, connector, or default
+    node_type: str = "NODE"        # TRIGGER, TOOL, CONNECTOR, or NODE (case-insensitive, stored uppercase)
     group: str = "Custom"          # UI grouping (matches frontend 'group')
-    customer_id: Optional[int] = None # Scoped customer ID for custom tenant plugins
+    customer_id: Optional[Union[int, str]] = None # Scoped customer ID for custom tenant plugins
 
     # Contract and Envelope definitions
     input_contract: Dict[str, Any] = Field(default_factory=dict) # e.g. {"user_id": {"required": True}}
@@ -97,9 +144,337 @@ class BaseNode(BaseModel, abc.ABC):
     color: str = "#5E0CEC"         # Brand color (hex code)
     badge: Optional[str] = "Node"  # Optional badge text (e.g., "Model")
     sub_label: Optional[str] = None # Optional sub-label
-    user_properties: Dict[str, Any] = Field(default_factory=dict) # Default configuration values
-    system_properties: Dict[str, Any] = Field(default_factory=dict) # Admin-only infra settings
+    user_properties: Union[List[Dict[str, Any]], Dict[str, Any]] = Field(default_factory=dict) # Default configuration values / schema
+    system_properties: Union[List[Dict[str, Any]], Dict[str, Any]] = Field(default_factory=dict) # Admin-only infra settings / schema
     properties: Dict[str, Any] = Field(default_factory=dict) # Unified properties list
+
+    _definition_user_properties: Any = PrivateAttr(default=None)
+    _definition_system_properties: Any = PrivateAttr(default=None)
+    _definition_input_contract: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _definition_output_contract: Dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    def __init__(self, **data):
+        explicit_user_props = data.get("user_properties", None)
+        explicit_sys_props = data.get("system_properties", None)
+        explicit_in_contract = data.get("input_contract", None)
+        explicit_out_contract = data.get("output_contract", None)
+        super().__init__(**data)
+        self._resolve_node_definition(
+            explicit_user_props=explicit_user_props,
+            explicit_sys_props=explicit_sys_props,
+            explicit_in_contract=explicit_in_contract,
+            explicit_out_contract=explicit_out_contract,
+            explicit_data=data,
+        )
+
+    @staticmethod
+    def _extract_class_field_default(cls_obj: type, field_name: str) -> Any:
+        """Extracts a clean copy of a field default directly defined on `cls_obj`."""
+        import copy
+        if field_name in cls_obj.__dict__:
+            raw = cls_obj.__dict__[field_name]
+            if hasattr(raw, "default") or hasattr(raw, "default_factory"):
+                val = getattr(raw, "default", None)
+                if val is None or "Undefined" in val.__class__.__name__:
+                    factory = getattr(raw, "default_factory", None)
+                    val = factory() if callable(factory) else None
+                return copy.deepcopy(val)
+            return copy.deepcopy(raw)
+
+        # Fallback: check Pydantic __annotations__ / model_fields if annotated with default on this class
+        if hasattr(cls_obj, "model_fields") and field_name in cls_obj.model_fields:
+            # Only return if this class actually overrode the field or is BaseNode
+            field_info = cls_obj.model_fields[field_name]
+            parent_fields = {}
+            for base in cls_obj.__bases__:
+                if hasattr(base, "model_fields"):
+                    parent_fields.update(base.model_fields)
+            if cls_obj is BaseNode or parent_fields.get(field_name) is not field_info:
+                val = getattr(field_info, "default", None)
+                if val is None or "Undefined" in val.__class__.__name__:
+                    factory = getattr(field_info, "default_factory", None)
+                    val = factory() if callable(factory) else None
+                return copy.deepcopy(val)
+        return None
+
+    @classmethod
+    def merge_property_definitions(cls, parent_props: Any, child_props: Any) -> Any:
+        """
+        Merges parent and child property definitions (schema lists or dicts).
+        Child properties override parent properties with the same 'key'; new keys are appended.
+        """
+        import copy
+        if not parent_props and not child_props:
+            return [] if isinstance(child_props, list) or isinstance(parent_props, list) else {}
+        if not parent_props:
+            return copy.deepcopy(child_props)
+        if not child_props:
+            return copy.deepcopy(parent_props)
+
+        if isinstance(parent_props, dict) and isinstance(child_props, dict):
+            return {**copy.deepcopy(parent_props), **copy.deepcopy(child_props)}
+
+        def _to_schema_list(props: Any) -> List[Dict[str, Any]]:
+            if isinstance(props, str):
+                try:
+                    props = json.loads(props)
+                except Exception:
+                    return []
+            if isinstance(props, dict):
+                return [{"key": k, "default": v} for k, v in props.items()]
+            if isinstance(props, list):
+                out = []
+                for item in props:
+                    if isinstance(item, str):
+                        try:
+                            item = json.loads(item)
+                        except Exception:
+                            continue
+                    if isinstance(item, dict):
+                        out.append(copy.deepcopy(item))
+                return out
+            return []
+
+        parent_list = _to_schema_list(parent_props)
+        child_list = _to_schema_list(child_props)
+
+        merged_by_key: Dict[str, Dict[str, Any]] = {}
+        order: List[str] = []
+        unnamed: List[Dict[str, Any]] = []
+
+        for entry in parent_list:
+            key = entry.get("key")
+            if key:
+                if key not in merged_by_key:
+                    order.append(key)
+                merged_by_key[key] = entry
+            else:
+                unnamed.append(entry)
+
+        for entry in child_list:
+            key = entry.get("key")
+            if key:
+                if key in merged_by_key:
+                    merged_by_key[key] = {**merged_by_key[key], **entry}
+                else:
+                    order.append(key)
+                    merged_by_key[key] = entry
+            else:
+                unnamed.append(entry)
+
+        return [merged_by_key[k] for k in order] + unnamed
+
+    @classmethod
+    def merge_contract_definitions(cls, parent_contract: Optional[Dict[str, Any]], child_contract: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Merges parent and child contract definitions across class hierarchy.
+        Child rules/properties override parent rules/properties with the same field name.
+        """
+        import copy
+        if not parent_contract and not child_contract:
+            return {}
+        if not parent_contract:
+            return copy.deepcopy(child_contract) if isinstance(child_contract, dict) else {}
+        if not child_contract:
+            return copy.deepcopy(parent_contract) if isinstance(parent_contract, dict) else {}
+
+        p = copy.deepcopy(parent_contract)
+        c = copy.deepcopy(child_contract)
+
+        # Case 1: Both use flat 'rules' list format
+        if isinstance(p.get("rules"), list) and isinstance(c.get("rules"), list):
+            rules_by_name: Dict[str, Dict[str, Any]] = {}
+            rule_order: List[str] = []
+            extra_rules: List[Dict[str, Any]] = []
+
+            for r in p["rules"]:
+                if isinstance(r, dict):
+                    fname = r.get("field_name") or r.get("name")
+                    if fname:
+                        if fname not in rules_by_name:
+                            rule_order.append(fname)
+                        rules_by_name[fname] = r
+                    else:
+                        extra_rules.append(r)
+
+            for r in c["rules"]:
+                if isinstance(r, dict):
+                    fname = r.get("field_name") or r.get("name")
+                    if fname:
+                        if fname in rules_by_name:
+                            rules_by_name[fname] = {**rules_by_name[fname], **r}
+                        else:
+                            rule_order.append(fname)
+                            rules_by_name[fname] = r
+                    else:
+                        extra_rules.append(r)
+
+            merged = {**p, **c}
+            merged["rules"] = [rules_by_name[k] for k in rule_order] + extra_rules
+            return merged
+
+        # Case 2: JSON Schema format with 'properties'
+        if isinstance(p.get("properties"), dict) and isinstance(c.get("properties"), dict):
+            merged = {**p, **c}
+            merged["properties"] = {**p["properties"], **c["properties"]}
+            if isinstance(p.get("required"), list) or isinstance(c.get("required"), list):
+                req_p = p.get("required") if isinstance(p.get("required"), list) else []
+                req_c = c.get("required") if isinstance(c.get("required"), list) else []
+                merged["required"] = list(dict.fromkeys(req_p + req_c))
+            return merged
+
+        # Case 3: Generic dict contract merge (if same format) or child override
+        if ("rules" in p) != ("rules" in c):
+            return c
+        return {**p, **c}
+
+    def _load_colocated_manifest(self) -> Optional[Dict[str, Any]]:
+        """
+        Loads an optional manifest.json co-located with the node class definition
+        (e.g. <module_dir>/<node_name>/manifest.json or <module_dir>/manifest.json).
+        """
+        if self.__class__.__name__ == "LazyPluginNode":
+            return None
+        try:
+            import inspect
+            from pathlib import Path
+            cls_file = inspect.getfile(self.__class__)
+            if not cls_file:
+                return None
+            module_dir = Path(cls_file).resolve().parent
+            candidates = [
+                module_dir / self.name / "manifest.json",
+                module_dir / "manifest.json",
+            ]
+            for candidate in candidates:
+                if candidate.is_file():
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    if isinstance(manifest, dict):
+                        m_name = manifest.get("name")
+                        m_cls = manifest.get("class_name")
+                        # Match if inside <node_name>/manifest.json or if manifest targets this node/class
+                        if candidate.parent.name == self.name or m_name == self.name or m_cls == self.__class__.__name__:
+                            return manifest
+        except Exception:
+            pass
+        return None
+
+    def _resolve_node_definition(
+        self,
+        explicit_user_props: Any = None,
+        explicit_sys_props: Any = None,
+        explicit_in_contract: Any = None,
+        explicit_out_contract: Any = None,
+        explicit_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Resolves and merges node properties, contracts, and metadata across the
+        BaseNode class hierarchy (MRO) and optional co-located manifest.json.
+        """
+        import copy
+        mro_classes = [c for c in reversed(self.__class__.__mro__) if issubclass(c, BaseNode)]
+
+        merged_user_props: Any = None
+        merged_sys_props: Any = None
+        merged_in_contract: Dict[str, Any] = {}
+        merged_out_contract: Dict[str, Any] = {}
+
+        for cls_obj in mro_classes:
+            cls_user = self._extract_class_field_default(cls_obj, "user_properties")
+            if cls_user:
+                merged_user_props = self.merge_property_definitions(merged_user_props, cls_user)
+
+            cls_sys = self._extract_class_field_default(cls_obj, "system_properties")
+            if cls_sys:
+                merged_sys_props = self.merge_property_definitions(merged_sys_props, cls_sys)
+
+            cls_in = self._extract_class_field_default(cls_obj, "input_contract")
+            if cls_in:
+                merged_in_contract = self.merge_contract_definitions(merged_in_contract, cls_in)
+
+            cls_out = self._extract_class_field_default(cls_obj, "output_contract")
+            if cls_out:
+                merged_out_contract = self.merge_contract_definitions(merged_out_contract, cls_out)
+
+        # Merge explicit kwargs passed to __init__
+        if explicit_user_props is not None:
+            merged_user_props = self.merge_property_definitions(merged_user_props, explicit_user_props)
+        if explicit_sys_props is not None:
+            merged_sys_props = self.merge_property_definitions(merged_sys_props, explicit_sys_props)
+        if explicit_in_contract is not None:
+            merged_in_contract = self.merge_contract_definitions(merged_in_contract, explicit_in_contract)
+        if explicit_out_contract is not None:
+            merged_out_contract = self.merge_contract_definitions(merged_out_contract, explicit_out_contract)
+
+        # Merge optional co-located manifest.json if present alongside node definition
+        manifest = self._load_colocated_manifest()
+        if manifest:
+            explicit_keys = set((explicit_data or {}).keys())
+            for scalar_key in ("name", "label", "description", "version", "category", "node_type", "group", "icon", "color", "badge", "sub_label"):
+                if scalar_key in manifest and manifest[scalar_key] is not None and scalar_key not in explicit_keys:
+                    setattr(self, scalar_key, manifest[scalar_key])
+            if "user_properties" in manifest:
+                merged_user_props = self.merge_property_definitions(merged_user_props, manifest["user_properties"])
+            if "system_properties" in manifest:
+                merged_sys_props = self.merge_property_definitions(merged_sys_props, manifest["system_properties"])
+            if "input_contract" in manifest:
+                merged_in_contract = self.merge_contract_definitions(merged_in_contract, manifest["input_contract"])
+            if "output_contract" in manifest:
+                merged_out_contract = self.merge_contract_definitions(merged_out_contract, manifest["output_contract"])
+
+        # Normalize node_type: case-insensitive, default "NODE", always uppercase
+        raw_node_type = (self.node_type or "NODE").strip()
+        if raw_node_type.lower() == "default" or not raw_node_type:
+            raw_node_type = "NODE"
+        self.node_type = raw_node_type.upper()
+
+        self.user_properties = merged_user_props if merged_user_props is not None else {}
+        self.system_properties = merged_sys_props if merged_sys_props is not None else {}
+        self.input_contract = merged_in_contract
+        self.output_contract = merged_out_contract
+
+        # Store unmutated schema definitions for DB sync
+        self._definition_user_properties = copy.deepcopy(self.user_properties) if self.user_properties else []
+        self._definition_system_properties = copy.deepcopy(self.system_properties) if self.system_properties else []
+        self._definition_input_contract = copy.deepcopy(self.input_contract)
+        self._definition_output_contract = copy.deepcopy(self.output_contract)
+
+    def get_node_definition(self) -> Dict[str, Any]:
+        """
+        Returns the complete, unmutated node definition (all 12 core properties + metadata)
+        used to initialize or upgrade the node in the `nodes` table.
+        """
+        import copy
+        user_props = self._definition_user_properties
+        if user_props is None:
+            user_props = self.user_properties if isinstance(self.user_properties, list) else []
+        sys_props = self._definition_system_properties
+        if sys_props is None:
+            sys_props = self.system_properties if isinstance(self.system_properties, list) else []
+
+        norm_node_type = (self.node_type or "NODE").strip().upper()
+        if norm_node_type == "DEFAULT":
+            norm_node_type = "NODE"
+
+        return {
+            "name": self.name,
+            "label": self.label,
+            "node_type": norm_node_type,
+            "description": self.description,
+            "version": self.version,
+            "category": self.category,
+            "group": self.group,
+            "icon": self.icon or "bot",
+            "color": self.color or "#5E0CEC",
+            "badge": self.badge,
+            "sub_label": self.sub_label,
+            "user_properties": copy.deepcopy(user_props),
+            "system_properties": copy.deepcopy(sys_props),
+            "input_contract": copy.deepcopy(self._definition_input_contract if self._definition_input_contract is not None else self.input_contract),
+            "output_contract": copy.deepcopy(self._definition_output_contract if self._definition_output_contract is not None else self.output_contract),
+            "customer_id": self.customer_id,
+        }
 
     @cached_property
     def logger(self):
@@ -123,7 +498,7 @@ class BaseNode(BaseModel, abc.ABC):
         return getattr(self, "user_properties")
 
     async def _get_db_node_data(self) -> Dict[str, Any]:
-        """Fetches properties for this node type from the global catalog in the DB."""
+        """Fetches properties and metadata for this node type from the global catalog in the DB."""
         import sys
         if "pytest" in sys.modules:
             return {}
@@ -138,29 +513,51 @@ class BaseNode(BaseModel, abc.ABC):
                 db_node = result.scalar_one_or_none()
                 if db_node:
                     return {
+                        "name": db_node.name,
+                        "label": db_node.label,
+                        "node_type": (db_node.node_type or "NODE").upper(),
+                        "description": db_node.description,
+                        "category": db_node.category,
+                        "icon": db_node.icon,
+                        "color": db_node.color,
+                        "sub_label": db_node.sub_label,
                         "user_properties": db_node.user_properties or {},
                         "system_properties": db_node.system_properties or {},
                         "input_contract": db_node.input_contract or {},
                         "output_contract": db_node.output_contract or {},
-
                     }
         except Exception as e:
             self.logger.warning("db_properties_fetch_failed", error=str(e))
         return {}
 
-    @abc.abstractmethod
     async def init(self) -> None:
         """
-        Initializes the node. Default implementation loads properties from DB.
-        Should be called during registration/discovery.
+        Initializes the node. Default implementation loads properties and contracts from DB.
+        Should be called during registration/discovery after DB synchronization.
         """
         self.logger.info(f"Initiating node start {self.name}")
+
+        self.node_type = (self.node_type or "NODE").strip().upper()
+        if self.node_type == "DEFAULT":
+            self.node_type = "NODE"
 
         user_props_dict = property_entries_to_dict(self.user_properties)
         system_props_dict = property_entries_to_dict(self.system_properties)
 
         db_data = await self._get_db_node_data()
         if db_data:
+            if db_data.get("label"):
+                self.label = db_data["label"]
+            if db_data.get("node_type"):
+                self.node_type = str(db_data["node_type"]).strip().upper()
+            if db_data.get("description") is not None:
+                self.description = db_data["description"]
+            if db_data.get("icon"):
+                self.icon = db_data["icon"]
+            if db_data.get("color"):
+                self.color = db_data["color"]
+            if db_data.get("sub_label") is not None:
+                self.sub_label = db_data["sub_label"]
             if db_data.get("user_properties"):
                 user_props_dict.update(property_entries_to_dict(db_data.get("user_properties")))
             if db_data.get("system_properties"):
