@@ -9,6 +9,7 @@ description: Use this skill when writing the feature doc for a feature request.
 When thinking about the feature think about different user personas e.g. user / admin / teannt admin etc and how the feature will impact their functinality. the ui planned should be responsive and all click thru should be documented. if the uaer has not given the specs, suggest. their should not be any iterations.
 
 - all features should be part of a main EPIC and any addition of features should be added to the epic as stories and linked to the implementation plan. DO NOT MAKE ANY EXCEPTION TO THE PLAN AT ANY COST. e.g. user management will be part of the admin epic and all features should be catpured as stories under this epic. EPIC are living document.
+- ask questions, dont assume the functionality, list out every feature every field every click thru and every ui change. if the user has not provided the details, ask for it. do not assume anything.
 
 - read the exsting epics and ensure there is no drift from the existing implementation. if there is drift suggest the changes in the existing epic.
 
