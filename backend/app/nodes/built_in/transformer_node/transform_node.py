@@ -3,13 +3,6 @@ from typing import Any, Dict, List, Optional, Union
 from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 class TransformNode(BaseNode):
-    name: str = "transformer_node"
-    label: str = "Data Transformer"
-    description: str = "Transforms input data using Jinja2 templates to match the next node's contract."
-    version: str = "1.0.0"
-    category: str = "Data"
-    icon: str = "shuffle" # or "exchange", "code"
-    color: str = "#FFD700" # Gold color
 
     async def init(self) -> None:
         await super().init()

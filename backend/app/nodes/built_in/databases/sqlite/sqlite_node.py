@@ -17,8 +17,6 @@ class SQLiteDBExecutor(DBExecutor):
     """
 
     db_type: str = "sqlite"
-    name: str = "sqlite_query_executor"
-    description: str = "Executes SQL queries on SQLite databases. Supports parameterized queries and Jinja templating."
 
     # Helper to quote identifiers for SQLite
     def _quote_identifier(self, identifier: str) -> str:

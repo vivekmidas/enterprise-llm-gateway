@@ -8,10 +8,6 @@ from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 
 class ProfanityGuardAgent(BaseNode):
-    name: str = "profanity_guard"
-    description: str = "Profanity and offensive content detection"
-    version: str = "1.1.0"
-    category: str = "Guardrails"
 
     def __init__(self, **data):
         super().__init__(**data)

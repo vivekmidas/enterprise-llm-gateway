@@ -8,17 +8,7 @@ from app.core.types.common import NodeInput, NodeOutput
 from app.nodes.built_in.webhook.base.base_webhook_agent import BaseWebhookAgent
 
 class StocksWebhookAgent(BaseWebhookAgent):
-    name: str = "stocks_webhook_agent"
-    label: str = "Stocks Webhook Agent"
-    description: str = "Triggers workflows on stock price movements or API alerts"
-    category: str = "Integration"
-    icon: str = "trending-up"
-    color: str = "#2ECC71"
     
-    system_properties: Dict[str, Any] = {
-        "base_path": "stocks"
-    }
-    user_properties: Dict[str, Any] = {}
     
     async def validate_request(self, request: Request, payload: str) -> bool:
         # Custom authorization logic

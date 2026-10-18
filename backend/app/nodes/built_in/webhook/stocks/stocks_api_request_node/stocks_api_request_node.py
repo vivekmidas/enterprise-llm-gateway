@@ -12,12 +12,6 @@ from pydantic import BaseModel, Field
 
 class StocksApiRequestNode(ApiRequestNode):
     """Generic External API Request Node - Flexible & Production Ready"""
-    name: str = "stocks_api_request_node"
-    node_type: str = "NODE"
-    label: str = "Stocks API Request NODE"
-    description: str = "Call STOCKS API to get latest stock quotes"
-    category: str = "stocks"
-    icon: str = "📈"
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         """

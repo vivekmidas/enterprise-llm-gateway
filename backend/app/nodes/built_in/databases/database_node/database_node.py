@@ -11,12 +11,6 @@ class DatabaseNode(BaseNode):
     Enterprise Database Node for executing SQL queries.
     Supports PostgreSQL, MySQL, and Oracle.
     """
-    name: str = "database_node"
-    label: str = "Database"
-    description: str = "Connect to SQL databases and execute queries"
-    category: str = "Data"
-    icon: str = "database"
-    color: str = "#336791" # Database Blue
 
     async def init(self) -> None:
         """Load global properties from DB if they exist."""

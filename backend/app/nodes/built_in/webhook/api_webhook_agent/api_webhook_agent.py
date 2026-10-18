@@ -7,19 +7,8 @@ class WebhookAgent(BaseWebhookAgent):
     Standard Webhook Agent.
     Validates optional Bearer tokens configured by admins.
     """
-    name: str = "api_webhook_agent"
-    description: str = "API Webhook Agent for external system integration"
-    version: str = "1.0.0"
-    category: str = "Integration"
-    node_type: str = "trigger"
 
     # Define default contracts and properties
-    input_contract: Dict[str, Any] = {
-      
-    }
-    output_contract: Dict[str, Any] = {}
-    system_properties: Dict[str, Any] = {}
-    user_properties: Dict[str, Any] = {}
 
     async def validate_request(self, request: Request, payload: str) -> bool:
         # Check standard headers for Authorization bearer token if configured

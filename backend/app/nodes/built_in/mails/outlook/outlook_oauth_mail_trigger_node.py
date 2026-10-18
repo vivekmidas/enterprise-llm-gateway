@@ -10,9 +10,6 @@ class OutlookEmailTriggerNode(EmailTriggerNode):
     """
     Outlook-specific OAuth polling trigger.
     """
-    name: str = "outlook_email_trigger"
-    label: str = "Outlook OAuth Trigger"
-    description: str = "Polls Outlook via Microsoft Graph API for new messages."
 
 
 

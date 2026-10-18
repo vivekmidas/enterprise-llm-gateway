@@ -328,12 +328,51 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
             return c
         return {**p, **c}
 
+    @staticmethod
+    def _load_class_manifest(cls_obj: type, fallback_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Loads an optional manifest.json co-located with `cls_obj`
+        (matching by class_name, file_name, or node name).
+        """
+        import inspect
+        from pathlib import Path
+        if cls_obj is BaseNode or cls_obj.__name__ in ("TriggerNode", "LazyPluginNode"):
+            return None
+        try:
+            cls_file = inspect.getfile(cls_obj)
+            if not cls_file:
+                return None
+            cls_path = Path(cls_file).resolve()
+            module_dir = cls_path.parent
+            cls_name_val = BaseNode._extract_class_field_default(cls_obj, "name") or fallback_name
+            candidates = []
+            if cls_name_val and cls_name_val != "base_node":
+                candidates.append(module_dir / str(cls_name_val) / "manifest.json")
+            candidates.append(module_dir / "manifest.json")
+
+            for candidate in candidates:
+                if candidate.is_file():
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    if isinstance(manifest, dict):
+                        m_name = manifest.get("name")
+                        m_cls = manifest.get("class_name")
+                        m_file = manifest.get("file_name")
+                        if (
+                            m_cls == cls_obj.__name__
+                            or m_file == cls_path.name
+                            or (cls_name_val and cls_name_val != "base_node" and (candidate.parent.name == cls_name_val or m_name == cls_name_val))
+                        ):
+                            return manifest
+        except Exception:
+            pass
+        return None
+
     def _load_colocated_manifest(self) -> Optional[Dict[str, Any]]:
         """
         Loads an optional manifest.json co-located with the node class definition
         (e.g. <module_dir>/<node_name>/manifest.json or <module_dir>/manifest.json).
         """
-        import inspect
         from pathlib import Path
         if self.__class__.__name__ == "LazyPluginNode":
             plugin_dir = getattr(self, "_plugin_dir", None)
@@ -349,28 +388,7 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 except Exception:
                     pass
             return None
-        try:
-            cls_file = inspect.getfile(self.__class__)
-            if not cls_file:
-                return None
-            module_dir = Path(cls_file).resolve().parent
-            candidates = [
-                module_dir / self.name / "manifest.json",
-                module_dir / "manifest.json",
-            ]
-            for candidate in candidates:
-                if candidate.is_file():
-                    with open(candidate, "r", encoding="utf-8") as f:
-                        manifest = json.load(f)
-                    if isinstance(manifest, dict):
-                        m_name = manifest.get("name")
-                        m_cls = manifest.get("class_name")
-                        # Match if inside <node_name>/manifest.json or if manifest targets this node/class
-                        if candidate.parent.name == self.name or m_name == self.name or m_cls == self.__class__.__name__:
-                            return manifest
-        except Exception:
-            pass
-        return None
+        return self._load_class_manifest(self.__class__, fallback_name=self.name)
 
     def _resolve_node_definition(
         self,
@@ -382,10 +400,12 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
     ) -> None:
         """
         Resolves and merges node properties, contracts, and metadata across the
-        BaseNode class hierarchy (MRO) and optional co-located manifest.json.
+        BaseNode class hierarchy (MRO) and co-located manifest.json files.
         """
         import copy
         mro_classes = [c for c in reversed(self.__class__.__mro__) if issubclass(c, BaseNode)]
+        explicit_keys = set((explicit_data or {}).keys())
+        scalar_keys = ("name", "label", "description", "version", "category", "node_type", "group", "icon", "color", "badge", "sub_label")
 
         merged_user_props: Any = None
         merged_sys_props: Any = None
@@ -393,6 +413,14 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
         merged_out_contract: Dict[str, Any] = {}
 
         for cls_obj in mro_classes:
+            # 1. Class-level attribute defaults on cls_obj
+            if cls_obj is not BaseNode:
+                for sk in scalar_keys:
+                    if sk not in explicit_keys and sk in cls_obj.__dict__:
+                        val = self._extract_class_field_default(cls_obj, sk)
+                        if val is not None:
+                            setattr(self, sk, val)
+
             cls_user = self._extract_class_field_default(cls_obj, "user_properties")
             if cls_user:
                 merged_user_props = self.merge_property_definitions(merged_user_props, cls_user)
@@ -409,6 +437,21 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
             if cls_out:
                 merged_out_contract = self.merge_contract_definitions(merged_out_contract, cls_out)
 
+            # 2. Co-located manifest.json for cls_obj
+            cls_manifest = self._load_class_manifest(cls_obj, fallback_name=self.name if cls_obj is self.__class__ else None)
+            if cls_manifest:
+                for sk in scalar_keys:
+                    if sk in cls_manifest and cls_manifest[sk] is not None and sk not in explicit_keys:
+                        setattr(self, sk, cls_manifest[sk])
+                if "user_properties" in cls_manifest:
+                    merged_user_props = self.merge_property_definitions(merged_user_props, cls_manifest["user_properties"])
+                if "system_properties" in cls_manifest:
+                    merged_sys_props = self.merge_property_definitions(merged_sys_props, cls_manifest["system_properties"])
+                if "input_contract" in cls_manifest:
+                    merged_in_contract = self.merge_contract_definitions(merged_in_contract, cls_manifest["input_contract"])
+                if "output_contract" in cls_manifest:
+                    merged_out_contract = self.merge_contract_definitions(merged_out_contract, cls_manifest["output_contract"])
+
         # Merge explicit kwargs passed to __init__
         if explicit_user_props is not None:
             merged_user_props = self.merge_property_definitions(merged_user_props, explicit_user_props)
@@ -418,22 +461,6 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
             merged_in_contract = self.merge_contract_definitions(merged_in_contract, explicit_in_contract)
         if explicit_out_contract is not None:
             merged_out_contract = self.merge_contract_definitions(merged_out_contract, explicit_out_contract)
-
-        # Merge optional co-located manifest.json if present alongside node definition
-        manifest = self._load_colocated_manifest()
-        if manifest:
-            explicit_keys = set((explicit_data or {}).keys())
-            for scalar_key in ("name", "label", "description", "version", "category", "node_type", "group", "icon", "color", "badge", "sub_label"):
-                if scalar_key in manifest and manifest[scalar_key] is not None and scalar_key not in explicit_keys:
-                    setattr(self, scalar_key, manifest[scalar_key])
-            if "user_properties" in manifest:
-                merged_user_props = self.merge_property_definitions(merged_user_props, manifest["user_properties"])
-            if "system_properties" in manifest:
-                merged_sys_props = self.merge_property_definitions(merged_sys_props, manifest["system_properties"])
-            if "input_contract" in manifest:
-                merged_in_contract = self.merge_contract_definitions(merged_in_contract, manifest["input_contract"])
-            if "output_contract" in manifest:
-                merged_out_contract = self.merge_contract_definitions(merged_out_contract, manifest["output_contract"])
 
         # Normalize node_type: case-insensitive, default "NODE", always uppercase
         raw_node_type = (self.node_type or "NODE").strip()
@@ -544,9 +571,29 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
 
     async def init(self) -> None:
         """
-        Initializes the node. Default implementation loads properties and contracts from DB.
-        Should be called during registration/discovery after DB synchronization.
+        Initializes the node. Reads properties, contracts, and metadata from co-located
+        manifest.json (and class hierarchy), then applies any DB catalog overrides.
         """
+        manifest = self._load_colocated_manifest()
+        if manifest:
+            for scalar_key in ("name", "label", "description", "version", "category", "node_type", "group", "icon", "color", "badge", "sub_label"):
+                if scalar_key in manifest and manifest[scalar_key] is not None:
+                    setattr(self, scalar_key, manifest[scalar_key])
+            if "user_properties" in manifest:
+                merged_u = self.merge_property_definitions(self._definition_user_properties or self.user_properties, manifest["user_properties"])
+                self._definition_user_properties = merged_u
+                self.user_properties = merged_u
+            if "system_properties" in manifest:
+                merged_s = self.merge_property_definitions(self._definition_system_properties or self.system_properties, manifest["system_properties"])
+                self._definition_system_properties = merged_s
+                self.system_properties = merged_s
+            if "input_contract" in manifest:
+                self.input_contract = self.merge_contract_definitions(self.input_contract, manifest["input_contract"])
+                self._definition_input_contract = dict(self.input_contract)
+            if "output_contract" in manifest:
+                self.output_contract = self.merge_contract_definitions(self.output_contract, manifest["output_contract"])
+                self._definition_output_contract = dict(self.output_contract)
+
         self.logger.info(f"Initiating node start {self.name}")
 
         self.node_type = (self.node_type or "NODE").strip().upper()

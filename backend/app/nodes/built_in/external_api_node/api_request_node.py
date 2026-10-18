@@ -34,12 +34,6 @@ class ApiRequestConfig(BaseModel):
 
 class ApiRequestNode(BaseNode, abc.ABC):
     """Generic External API Request Node - Flexible & Production Ready"""
-    name: str = "external_api_node"
-    node_type: str = "NODE"
-    label: str = "External API Request"
-    description: str = "Call any third-party REST API using GET/POST/PUT/DELETE"
-    category: str = "Built-in"
-    icon: str = "🌐"
 
 
     async def init(self) -> None:

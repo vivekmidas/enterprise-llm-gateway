@@ -8,10 +8,6 @@ from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 
 class PresidioNERGuardAgent(BaseNode):
-    name: str = "presidio_ner_guard"
-    description: str = "Advanced PII + Custom Rules using Presidio"
-    version: str = "1.1.0"
-    category: str = "Guardrails"
 
     def __init__(self, **data):
         super().__init__(**data)

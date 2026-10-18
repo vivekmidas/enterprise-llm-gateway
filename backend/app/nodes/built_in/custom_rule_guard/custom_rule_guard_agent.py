@@ -5,10 +5,6 @@ from app.nodes.base import BaseNode
 from app.core.types.common import NodeInput, NodeOutput
 
 class CustomRuleGuardAgent(BaseNode):
-    name: str = "custom_rule_guard"
-    description: str = "Dynamic rule-based guard using JSON config"
-    version: str = "1.0.0"
-    category: str = "Guardrails"
     
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)

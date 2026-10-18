@@ -21,23 +21,10 @@ class KnowledgeRetrievalNode(BaseNode):
     - citations: source metadata for attribution
     """
 
-    name: str = "knowledge_retrieval"
-    label: str = "Knowledge Retrieval"
-    description: str = "Retrieve relevant context from configured knowledge bases."
-    version: str = "1.0.0"
 
-    category: str = "Data Operations"
-    node_type: str = "Node"
-    group: str = "Knowledge"
 
-    icon: str = "book-open"
-    color: str = "#2563EB"
-    badge: Optional[str] = "RAG"
-    sub_label: Optional[str] = "Knowledge Base Search"
 
     # Contracts are loaded dynamically from DB (NodeDB/CustomerNodeDB)
-    input_contract: dict[str, Any] = {}
-    output_contract: dict[str, Any] = {}
 
     # Workflow-configurable properties.
     # user_properties: list[dict[str, Any]] = [

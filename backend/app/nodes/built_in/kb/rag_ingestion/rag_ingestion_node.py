@@ -49,81 +49,11 @@ class RAGIngestionNode(BaseNode):
     Workflow node for ingesting and versioning documents into tenant Knowledge Bases.
     """
 
-    name: str = "rag_ingestion"
-    label: str = "RAG Document Ingestion"
-    description: str = "Ingest, chunk, embed, and version documents directly into tenant knowledge bases."
-    version: str = "1.0.0"
 
-    category: str = "Data Operations"
-    node_type: str = "Node"
-    group: str = "Knowledge"
 
-    icon: str = "file-up"
-    color: str = "#10B981"
-    badge: Optional[str] = "RAG"
-    sub_label: Optional[str] = "Document Intake"
 
-    input_contract: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "document_content": {"type": "string", "description": "Raw text, Base64 data string, or file path"},
-            "document_name": {"type": "string", "description": "Filename or document title"},
-            "external_document_id": {"type": "string", "description": "Caller document identifier for version tracking"},
-            "document_version": {"type": "integer", "default": 1, "description": "Document version number"},
-            "source_uri": {"type": "string", "description": "Provenance identifier (e.g. s3://bucket/doc.pdf)"},
-            "source_type": {"type": "string", "enum": ["s3", "api", "upload", "shared_storage"], "default": "api"},
-            "knowledge_base_id": {"type": "string", "description": "Target Knowledge Base ID override"},
-            "mime_type": {"type": "string", "description": "MIME type (e.g. application/pdf)"},
-            "metadata": {"type": "object", "description": "Custom metadata to attach to document and vectors"},
-        },
-        "required": ["document_content"],
-    }
 
-    output_contract: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "document_id": {"type": "string", "description": "UUID of created or updated KnowledgeDocumentDB"},
-            "external_document_id": {"type": ["string", "null"], "description": "Caller document identifier"},
-            "document_version": {"type": "integer", "description": "Active document version"},
-            "source_uri": {"type": "string", "description": "Persisted provenance source URI"},
-            "source_type": {"type": "string", "description": "Origin type of document"},
-            "status": {"type": "string", "enum": ["indexed", "queued", "version_updated", "skipped", "failed"]},
-            "chunk_count": {"type": "integer", "description": "Active chunks indexed into vector store"},
-            "previous_chunks_purged": {"type": "integer", "description": "Obsolete chunks purged during version update"},
-            "collection_name": {"type": "string", "description": "Vector store collection name"},
-            "checksum": {"type": "string", "description": "SHA-256 hash"},
-            "job_id": {"type": ["string", "null"], "description": "Background indexing job ID (if async)"},
-            "metadata": {"type": "object", "description": "Persisted document metadata"},
-        },
-        "required": ["document_id", "status"],
-    }
 
-    user_properties: list[dict[str, Any]] = [
-        {
-            "key": "knowledge_base_id",
-            "label": "Target Knowledge Base",
-            "type": "source",
-            "source": "/api/knowledge/bases",
-            "required": True,
-            "description": "Select the Knowledge Base. Inherits embedding model and chunking defaults from bound LLM Profile.",
-        },
-        {
-            "key": "execution_mode",
-            "label": "Execution Mode",
-            "type": "select",
-            "options": ["sync", "async"],
-            "default": "sync",
-            "description": "Sync waits for vector indexing; async returns queued job ID immediately.",
-        },
-        {
-            "key": "versioning_strategy",
-            "label": "Versioning Strategy",
-            "type": "select",
-            "options": ["replace_chunks", "new_version", "skip_if_exists"],
-            "default": "replace_chunks",
-            "description": "replace_chunks purges old vectors and updates chunks; new_version preserves revision history.",
-        },
-    ]
 
     async def init(self) -> None:
         """Initialize node properties."""

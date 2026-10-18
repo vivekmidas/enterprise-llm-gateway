@@ -35,6 +35,13 @@
             "description": "System prompt instructions for the LLM."
         },
         {
+            "key": "user_prompt",
+            "type": "textarea",
+            "label": "User Prompt Template",
+            "default": "Context:\n{context}\n\nQuery: {user_query}",
+            "description": "User prompt template with {context} and {user_query} placeholders."
+        },
+        {
             "key": "ip",
             "type": "string",
             "label": "LLM IP Override",

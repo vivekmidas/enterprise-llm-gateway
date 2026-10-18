@@ -3,10 +3,6 @@ from app.core.types.common import NodeInput, NodeOutput
 import time
 
 class ContextSetterAgent(BaseNode):
-    name: str = "context_setter"
-    description: str = "Enriches input with user context from CRM / DB"
-    version: str = "1.0.0"
-    category: str = "Context Enrichment"
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)

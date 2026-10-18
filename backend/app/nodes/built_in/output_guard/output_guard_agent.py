@@ -5,10 +5,6 @@ from typing import List, Dict, Any
 import time
 
 class OutputGuardAgent(BaseNode):
-    name: str = "output_guard"
-    description: str = "Final safety check - PII leak, MAD, policy compliance"
-    version: str = "1.0.0"
-    category: str = "Guardrails"
     
     async def validate_input(self, inp: NodeInput) -> NodeOutput:
         await super().validate_input(inp)

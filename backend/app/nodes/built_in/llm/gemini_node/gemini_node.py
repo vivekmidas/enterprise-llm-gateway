@@ -2,24 +2,9 @@ from typing import Any, Dict, List, Optional
 from app.nodes.built_in.llm.base_llm_node import BaseLLMNode
 
 class GeminiNode(BaseLLMNode):
-    name: str = "gemini_node"
-    label: str = "Gemini Chat"
-    description: str = "Executes chat completions on Google Gemini developer API."
-    version: str = "1.0.0"
 
-    icon: str = "bot"
-    color: str = "#1A73E8"  # Google Blue
-    badge: str = "Gemini"
-    sub_label: str = "Google Cloud"
 
     # Standard System Properties with Gemini defaults
-    system_properties: List[Dict[str, Any]] = [
-        {"key": "base_url", "label": "Base URL", "type": "string", "default": "https://generativelanguage.googleapis.com"},
-        {"key": "api_key", "label": "API Key", "type": "password", "default": ""},
-        {"key": "timeout_seconds", "label": "Timeout (seconds)", "type": "number", "default": 60},
-        {"key": "max_retries", "label": "Max Retries", "type": "number", "default": 3},
-        {"key": "default_model", "label": "Default Model", "type": "string", "default": "gemini-1.5-flash"}
-    ]
 
     def build_auth_headers(self, api_key: str) -> Dict[str, str]:
         # Google Gemini takes api_key in URL parameters, so headers remain empty

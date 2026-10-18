@@ -2,15 +2,7 @@ from typing import Any, Dict, List, Optional
 from app.nodes.built_in.llm.base_llm_node import BaseLLMNode
 
 class OpenAINode(BaseLLMNode):
-    name: str = "openai_node"
-    label: str = "OpenAI Chat"
-    description: str = "Executes chat completions on OpenAI, Grok, DeepSeek, or other OpenAI-compatible APIs."
-    version: str = "1.0.0"
 
-    icon: str = "bot"
-    color: str = "#10A37F"  # OpenAI Green
-    badge: str = "OpenAI"
-    sub_label: str = "Chat Completion"
 
     def build_auth_headers(self, api_key: str) -> Dict[str, str]:
         headers = {}

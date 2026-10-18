@@ -4,9 +4,6 @@ from app.core.types.common import NodeInput, NodeOutput
 import time
 
 class SentimentAnalyzerAgent(BaseNode ):
-    name: str = "sentiment_analyzer"
-    description: str = "Analyzes sentiment of user message"
-    version: str = "1.0.0"
 
     async def init(self) -> None:
         await super().init()

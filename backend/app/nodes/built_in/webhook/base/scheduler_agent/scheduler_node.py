@@ -11,11 +11,6 @@ class SchedulerAgent(TriggerNode):
     Agent that schedules a background task to run a command or another agent
     at a specific interval.
     """
-    name:str = "scheduler_agent"
-    description:str = "Runs a command or triggers an agent recurringly in the background"
-    version:str = "1.0.0"
-    category:str = "Custom"
-    node_type: str = "trigger"
 
 
     async def validate_input(self, inp: NodeInput) -> NodeOutput:

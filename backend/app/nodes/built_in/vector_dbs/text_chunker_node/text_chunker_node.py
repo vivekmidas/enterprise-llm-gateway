@@ -6,40 +6,7 @@ from app.utils.text_splitter import chunk_text
 from app.utils.type_utils import safe_int
 
 class TextChunkerNode(BaseNode):
-    name: str = "text_chunker_node"
-    label: str = "Text Chunker"
-    description: str = "Splits long text or document content into smaller overlapping chunks."
-    category: str = "Data Operations"
-    icon: str = "blocks"
-    color: str = "#06b6d4"
 
-    user_properties: List[Dict[str, Any]] = [
-        {
-            "key": "chunking_strategy",
-            "label": "Chunking Strategy",
-            "type": "choice",
-            "options": ["none", "character", "recursive"],
-            "default": "recursive"
-        },
-        {
-            "key": "chunk_size",
-            "label": "Chunk Size",
-            "type": "number",
-            "default": 1000
-        },
-        {
-            "key": "chunk_overlap",
-            "label": "Chunk Overlap",
-            "type": "number",
-            "default": 200
-        },
-        {
-            "key": "text",
-            "label": "Source Text",
-            "type": "textarea",
-            "placeholder": "Enter text or use Jinja expression like {{ data.text }}"
-        }
-    ]
 
     async def init(self) -> None:
         await super().init()

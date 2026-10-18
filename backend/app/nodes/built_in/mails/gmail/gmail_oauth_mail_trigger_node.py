@@ -13,9 +13,6 @@ class GmailEmailTriggerNode(EmailTriggerNode):
     """
     Gmail-specific OAuth polling trigger.
     """
-    name: str = "gmail_email_trigger"
-    label: str = "Gmail OAuth Trigger"
-    description: str = "Polls Gmail via OAuth2 API for new messages."
 
     async def init(self) -> None:
         await super().init()
