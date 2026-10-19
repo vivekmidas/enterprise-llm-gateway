@@ -3,7 +3,7 @@
     "label": "MySQL ",
     "node_type": "TOOL",
     "description": "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating.",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "category": "data",
     "group": "Data",
     "icon": "database",
@@ -13,20 +13,49 @@
     "file_name": "generic_mysql_node.py",
     "class_name": "GenericMySQLDBExecutor",
     "user_properties": [
-        {
-            "key": "allow_node_testing",
-            "type": "string",
-            "label": "allow_node_testing",
-            "value": true,
-            "default": true,
-            "description": ""
-        }
+        {"key": "allow_node_testing","type": "string",   "label": "allow_node_testing", "value": true,"default": true,"description": ""},
+        {"key": "host", "type": "string", "label": "host", "value": "", "default": "", "description": ""},
+     {
+        "key": "port", "type": "integer", "label": "port", "value": "", "default": "", "description": ""
+     },
+     {"key": "server", "type": "string", "label": "server", "value": "", "default": "", "description": "server address or qualified domain name"},
+     
+     {"key": "username", "type": "string", "label": "username", "value": "", "default": "", "description": ""},
+     {"key": "password", "type": "string", "label": "password", "value": "", "default": "", "description": ""},
+     {"key": "database", "type": "string", "label": "database", "value": "", "default": "", "description": ""}
+      ],
+    "system_properties": [ [{"key": "host", "type": "string", "label": "host", "value": "", "default": "", "description": ""}],
+     {
+        "key": "port", "type": "integer", "label": "port", "value": "", "default": "", "description": ""
+     },
+     {"key": "server", "type": "string", "label": "server", "value": "", "default": "", "description": "server address or qualified domain name"},
+     
+     {"key": "username", "type": "string", "label": "username", "value": "", "default": "", "description": ""},
+     {"key": "password", "type": "string", "label": "password", "value": "", "default": "", "description": ""},
+     {"key": "database", "type": "string", "label": "database", "value": "", "default": "", "description": ""}
     ],
-    "system_properties": [],
     "input_contract": {
-        "rules": [],
         "version": "1.0",
+         "rules": [
+             {"field_name": "query_type", "field_type": "string", "required": false},
+             {"field_name": "query", "field_type": "string", "required": false},
+             {"field_name": "table_name", "field_type": "string", "required": false},
+             {"field_name": "fields", "field_type": "object", "required": false},
+             {"field_name": "field_names", "field_type": "array", "required": false},
+             {"field_name": "field_values", "field_type": "array", "required": false},
+             {"field_name": "condition", "field_type": "string", "required": false},
+             {"field_name": "condition_params", "field_type": "array", "required": false},
+             {"field_name": "params", "field_type": "object", "required": false}
+         ],
+         "additional_fields": false
+     },
+       "output_contract":  {
+        "version": "1.0",
+        "rules": [
+            {"field_name": "data", "field_type": "array", "required": false},
+            {"field_name": "rowcount", "field_type": "integer", "required": false},
+            {"field_name": "lastrowid", "field_type": "integer", "required": false}
+        ],
         "additional_fields": true
-    },
-    "output_contract": {}
+    }
 }

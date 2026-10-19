@@ -13,6 +13,13 @@ class GenericMySQLDBExecutor(DBExecutor):
     """
 
     db_type: str = "mysql"
+    name: str = "generic_mysql_query_executor"
+    node_type: str = "NODE"
+    description: str = "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating."
+    category: str = "database"
+    group: str = "Data"
+    icon="database"
+    version: str = "1.0"
     # Define connection properties so they are exposed to the UI Builder
     #   [
     #       {

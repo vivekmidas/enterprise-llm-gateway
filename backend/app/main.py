@@ -5,7 +5,7 @@ from app.core.observability import get_logger, setup_observability, REQUEST_COUN
 from app.api.nodes.router import router as agents_router
 # from app.api.chat.router import router as chat_router
 from app.api.root.router import router as root_router
-from app.api.workflows.router import router as workflows_router
+from app.api.workflows.router import router as workflows_router, run_workflows_router
 from app.api.admin.router import router as admin_router
 from app.api.admin.oauth import router as auth_router
 from app.api.observability.router import router as obs_router
@@ -95,6 +95,7 @@ app.include_router(agents_router)
 #app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(workflows_router)
+app.include_router(run_workflows_router)
 app.include_router(obs_router)
 app.include_router(categories_router)
 app.include_router(auth_router)

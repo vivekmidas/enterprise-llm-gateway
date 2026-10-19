@@ -200,7 +200,24 @@ def validate_contract(
             and isinstance(body["data"], dict)
             and "data" not in schema.get("properties", {})
         ):
-            body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+            props = schema.get("properties", {})
+            if any(k in props for k in body["data"]) or not any(k in props for k in body if k != "data"):
+                body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+
+        if schema.get("type") == "object" and isinstance(body, dict):
+            errors = []
+            properties = schema.get("properties", {})
+            required = set(schema.get("required", []))
+
+            for field, field_schema in properties.items():
+                if field not in body or body[field] is None:
+                    if field in required:
+                        errors.append(f"$.{field} is mandatory")
+                    continue
+
+                errors.extend(_validate_value(body[field], field_schema, f"$.{field}"))
+
+            return errors
     else:
         logger.info("starting validate_output_contract", contract=contract, name=node_name)
         if isinstance(data, NodeOutput):
@@ -225,16 +242,31 @@ def validate_contract(
         resolved_body = resolve_jinja_templates_in_data(body, render_context)
         body = resolved_body
 
+        # ==============================================================================
+        # BLOCK COMMENT: OUTPUT CONTRACT WRAPPING & FIELD-BY-FIELD VALIDATION
+        # Reference: EPIC-CONTRACT-VAL-001 / STORY-OUTPUT-CONTRACT-001
+        # Description:
+        #     1. Node execution returns a result payload (array, object, string, boolean, etc.).
+        #        If the output is not a dict (e.g., SELECT query returning a list of rows),
+        #        wrap it into {"data": body} to match the output_contract structure.
+        #     2. Update NodeOutput.data with the wrapped/resolved payload.
+        #     3. Iterate through each property in the schema:
+        #        - Skip optional fields (required: false) if absent or None.
+        #        - Validate present fields against their defined schema.
+        # ==============================================================================
+        if schema.get("type") == "object" and body is not None and not isinstance(body, dict):
+            body = {"data": body}
+
         # Update output data representation
         if isinstance(data, NodeOutput):
-            if isinstance(resolved_body, (dict, list)):
-                data.data = json.dumps(resolved_body)
+            if isinstance(body, (dict, list)):
+                data.data = json.dumps(body)
             else:
-                data.data = str(resolved_body)
+                data.data = str(body)
         elif isinstance(data, dict):
             data.clear()
-            if isinstance(resolved_body, dict):
-                data.update(resolved_body)
+            if isinstance(body, dict):
+                data.update(body)
 
         if (
             schema.get("type") == "object"
@@ -252,6 +284,32 @@ def validate_contract(
             and "data" not in schema.get("properties", {})
         ):
             body = {**body["data"], **{k: v for k, v in body.items() if k != "data"}}
+
+        # Validate each defined schema property; skip optional (required: false) fields if missing or None
+        if schema.get("type") == "object" and isinstance(body, dict):
+            errors = []
+            properties = schema.get("properties", {})
+            required = set(schema.get("required", []))
+
+            for field, field_schema in properties.items():
+                # Skip optional fields when not present or None
+                if field not in body or body[field] is None:
+                    if field in required:
+                        errors.append(f"$.{field} is mandatory")
+                    continue
+
+                # If array rule has UI default items={'type': 'string'}, validate array type without failing on object items
+                check_schema = field_schema
+                if (
+                    isinstance(field_schema, dict)
+                    and field_schema.get("type") == "array"
+                    and field_schema.get("items") == {"type": "string"}
+                ):
+                    check_schema = {k: v for k, v in field_schema.items() if k != "items"}
+
+                errors.extend(_validate_value(body[field], check_schema, f"$.{field}"))
+
+            return errors
 
     return _validate_value(body, schema, "$")
 
@@ -572,7 +630,7 @@ def clean_json_schema(schema: Any) -> Any:
             cleaned[k] = clean_json_schema(v)
         elif k in {"nullable"}:
             pass
-        elif k in {"mandatory", "stateable", "state_required", "redact"}:
+        elif k in {"mandatory", "stateable", "state_required", "redact", "additionalProperties", "additional_fields"}:
             pass
         else:
             cleaned[k] = clean_json_schema(v)
@@ -755,22 +813,23 @@ def _validate_value(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
     # 3. Recurse properties if it is an object
     if schema.get("type") == "object" and isinstance(value, dict):
         # Check required
-        required = schema.get("required", [])
+        required = set(schema.get("required", []))
         for field in required:
-            if field not in value:
+            if field not in value or value[field] is None:
                 errors.append(f"{path}.{field} is mandatory")
         
         # Check properties
         properties = schema.get("properties", {})
         for field, field_schema in properties.items():
-            if field in value:
-                errors.extend(_validate_value(value[field], field_schema, f"{path}.{field}"))
+            if field not in value or value[field] is None:
+                continue
+            errors.extend(_validate_value(value[field], field_schema, f"{path}.{field}"))
         
         # Check additionalProperties
-        if schema.get("additionalProperties") is False:
-            unknown = sorted(set(value) - set(properties))
-            if unknown:
-                errors.append(f"{path} contains unsupported field(s): {', '.join(unknown)}")
+        # if schema.get("additionalProperties") is False:
+        #     unknown = sorted(set(value) - set(properties))
+        #     if unknown:
+        #         errors.append(f"{path} contains unsupported field(s): {', '.join(unknown)}")
 
     # 4. Recurse array items if it is an array
     elif schema.get("type") == "array" and isinstance(value, list):

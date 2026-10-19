@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path, Query
+from fastapi import APIRouter, HTTPException, Response, status, Depends, Request, Path, Query, Body
 from typing import Optional, List, Tuple, Any, Dict
 import json
 import time
@@ -7,6 +7,8 @@ import structlog
 from app.core.types.users import User
 from app.api.workflows.schemas import WorkflowSaveRequest, WorkflowExecutionRequest, WorkflowExecutionResponse
 from app.nodes.registry import NodesRegistry
+from app.nodes.contracts import normalize_contract
+from app.utils.json_sample_generator import generate_sample_json
 from app.workflows.store import update_node_tokens_in_db,get_workflow_node_properties,_get_workflow_node_details
 from pydantic import BaseModel, Field
 from app.workflows.store import (
@@ -24,8 +26,163 @@ from app.workflows.class_models import WorkflowDefinition
 from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+run_workflows_router = APIRouter(prefix="/run/workflows", tags=["Workflow Runs"])
 
 logger = structlog.get_logger(__name__)
+
+
+# ==============================================================================
+# BLOCK COMMENT: WORKFLOW INVOCATION SPEC & SAMPLE PAYLOAD GENERATOR
+# Reference: EPIC-WORKFLOW-ENDPOINT-001 / STORY-WF-INVOKE-SPEC
+# Description:
+#   Resolves the workflow execution URL path (/run/workflows/{customer_id}/{workflow_id}),
+#   optional webhook trigger path (/webhooks/run/{base_path}), required authentication
+#   headers, entry input_contract (resolved from trigger output_contract/input_contract
+#   or first downstream node input_contract), and generates a ready-to-test sample JSON
+#   payload from the contract.
+# ==============================================================================
+def _sample_from_normalized_schema(schema: Dict[str, Any]) -> Any:
+    if not isinstance(schema, dict) or not schema:
+        return {}
+    if "default" in schema and schema["default"] is not None:
+        return schema["default"]
+    if isinstance(schema.get("enum"), list) and schema["enum"]:
+        return schema["enum"][0]
+
+    fmt = str(schema.get("format") or "").lower()
+    if fmt == "email":
+        return "user@example.com"
+    if fmt == "phone":
+        return "+1-555-123-4567"
+    if fmt == "credit_card":
+        return "4111111111111111"
+    if fmt == "uuid":
+        return "550e8400-e29b-41d4-a716-446655440000"
+    if fmt == "date":
+        return "2026-10-19"
+    if fmt == "datetime":
+        return "2026-10-19T00:00:00Z"
+    if fmt == "url":
+        return "https://example.com"
+
+    field_type = schema.get("type", "object")
+    if isinstance(field_type, list):
+        field_type = next((t for t in field_type if t != "null"), "string")
+
+    if field_type == "object" or isinstance(schema.get("properties"), dict):
+        props = schema.get("properties") or {}
+        return {k: _sample_from_normalized_schema(v) for k, v in props.items()}
+    if field_type == "array":
+        items_schema = schema.get("items")
+        if isinstance(items_schema, dict):
+            return [_sample_from_normalized_schema(items_schema)]
+        return ["<item>"]
+    if field_type in ("integer", "number"):
+        return schema.get("minimum", 0)
+    if field_type == "boolean":
+        return True
+    if field_type == "file":
+        return "<file_path_or_base64>"
+    return "<string>"
+
+
+def _build_workflow_invocation_spec(workflow: WorkflowDefinition, fallback_customer_id: Optional[Any] = None) -> Dict[str, Any]:
+    resolved_cid = workflow.customer_id if workflow.customer_id is not None else (fallback_customer_id if fallback_customer_id is not None else "default")
+    url_path = f"/run/workflows/{resolved_cid}/{workflow.id}"
+    webhook_path: Optional[str] = None
+    custom_auth_header_hint: Optional[str] = None
+
+    nodes = workflow.nodes_structure or []
+    edges = workflow.edges or []
+    target_node_ids = {str(e.get("target")) for e in edges if isinstance(e, dict) and e.get("target")}
+
+    # Locate trigger / entry node
+    entry_node_dict: Optional[Dict[str, Any]] = None
+    for n in nodes:
+        nd = n if isinstance(n, dict) else n.model_dump()
+        data = nd.get("data") or {}
+        props = data.get("properties") or nd.get("properties") or {}
+        node_type = str(data.get("node_type") or props.get("node_type") or nd.get("type") or "").upper()
+        cat = str(data.get("category") or data.get("group") or "").upper()
+        name = str(data.get("name") or nd.get("name") or "").lower()
+        if node_type == "TRIGGER" or cat in ("TRIGGER", "START") or "webhook" in name or "trigger" in name:
+            entry_node_dict = nd
+            break
+
+    if not entry_node_dict and nodes:
+        for n in nodes:
+            nd = n if isinstance(n, dict) else n.model_dump()
+            if str(nd.get("id")) not in target_node_ids:
+                entry_node_dict = nd
+                break
+        if not entry_node_dict:
+            first = nodes[0]
+            entry_node_dict = first if isinstance(first, dict) else first.model_dump()
+
+    raw_contract: Dict[str, Any] = {}
+    if entry_node_dict:
+        e_data = entry_node_dict.get("data") or {}
+        e_props = e_data.get("properties") or entry_node_dict.get("properties") or {}
+        base_path = str(e_props.get("base_path") or "").strip("/")
+        if base_path:
+            webhook_path = f"/webhooks/run/{base_path}"
+        if e_props.get("auth_token"):
+            custom_auth_header_hint = "Bearer <WEBHOOK_NODE_AUTH_TOKEN>"
+
+        in_c = e_data.get("input_contract") or entry_node_dict.get("input_contract") or {}
+        out_c = e_data.get("output_contract") or entry_node_dict.get("output_contract") or {}
+        # Trigger nodes define incoming request payload structure on output_contract (or input_contract)
+        if isinstance(in_c, dict) and in_c and (in_c.get("rules") or in_c.get("properties") or any(k not in ("type", "required", "additionalProperties") for k in in_c)):
+            raw_contract = in_c
+        elif isinstance(out_c, dict) and out_c and (out_c.get("rules") or out_c.get("properties") or any(k not in ("type", "required", "additionalProperties") for k in out_c)):
+            raw_contract = out_c
+
+        # Fallback to first connected downstream node's input_contract
+        if not raw_contract:
+            entry_id = str(entry_node_dict.get("id"))
+            first_edge = next((e for e in edges if isinstance(e, dict) and str(e.get("source")) == entry_id), None)
+            if first_edge:
+                next_id = str(first_edge.get("target"))
+                for n in nodes:
+                    nd = n if isinstance(n, dict) else n.model_dump()
+                    if str(nd.get("id")) == next_id:
+                        n_data = nd.get("data") or {}
+                        cand = n_data.get("input_contract") or nd.get("input_contract") or {}
+                        if isinstance(cand, dict) and cand:
+                            raw_contract = cand
+                        break
+
+    normalized_schema = normalize_contract(raw_contract) if raw_contract else {}
+    sample_payload: Dict[str, Any] = {}
+    if isinstance(raw_contract, dict) and isinstance(raw_contract.get("rules"), list) and raw_contract["rules"]:
+        try:
+            sample_payload = generate_sample_json(raw_contract)
+        except Exception:
+            sample_payload = _sample_from_normalized_schema(normalized_schema)
+    elif normalized_schema:
+        sample_payload = _sample_from_normalized_schema(normalized_schema)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer <JWT_TOKEN_OR_GW_LIVE_KEY>",
+        "X-API-Key": "gw_live_<YOUR_API_KEY>",
+    }
+
+    return {
+        "method": "POST",
+        "url_path": url_path,
+        "webhook_path": webhook_path,
+        "customer_id": resolved_cid,
+        "workflow_id": workflow.id,
+        "workflow_name": workflow.name,
+        "is_enabled": workflow.is_enabled,
+        "headers": headers,
+        "webhook_auth_hint": custom_auth_header_hint,
+        "input_contract": raw_contract or normalized_schema,
+        "normalized_contract": normalized_schema,
+        "sample_payload": sample_payload if isinstance(sample_payload, dict) else {"data": sample_payload},
+    }
+
 
 def _mask_sensitive_properties(properties: dict) -> dict:
     # Do not mask sensitive properties on read to prevent auth issues on save
@@ -208,6 +365,106 @@ async def execute_workflow_by_slug(
         request=request,
         current_user=current_user,
     )
+
+
+# ==============================================================================
+# BLOCK COMMENT: TENANT-SCOPED DIRECT WORKFLOW EXECUTION ENDPOINT
+# Reference: EPIC-WORKFLOW-ENDPOINT-001 / STORY-WF-INVOKE-URL
+# Description:
+#   Executes workflow via POST /run/workflows/{customer_id}/{workflow_id}.
+#   1. Enforces tenant isolation (customer_id must match authenticated tenant
+#      unless caller is system_admin).
+#   2. Resolves workflow scoped to customer_id.
+#   3. Dual payload mode: accepts either raw JSON matching the workflow's entry
+#      contract directly OR a WorkflowExecutionRequest envelope.
+# ==============================================================================
+@run_workflows_router.post(
+    "/{customer_id}/{workflow_id}",
+    response_model=WorkflowExecutionResponse,
+    summary="Execute tenant-scoped workflow with raw JSON payload or envelope [EPIC-WORKFLOW-ENDPOINT-001]"
+)
+async def execute_tenant_workflow_direct(
+    customer_id: str = Path(..., description="Customer/Tenant ID"),
+    workflow_id: str = Path(..., description="Workflow ID, name, or slug"),
+    mode: Optional[str] = Query(None, description="Execution mode override: 'sync' or 'async'"),
+    payload: Optional[Any] = Body(default=None),
+    current_user: User = Depends(get_current_user),
+):
+    # 1. Validate tenant boundary against path customer_id
+    if (
+        current_user.role != "system_admin"
+        and current_user.customer_id is not None
+        and customer_id != "default"
+        and str(customer_id) != str(current_user.customer_id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: path customer_id does not match authenticated tenant",
+        )
+
+    target_cid: Optional[str] = (
+        str(customer_id)
+        if customer_id and customer_id != "default"
+        else (str(current_user.customer_id) if current_user.customer_id is not None else None)
+    )
+
+    # 2. Resolve workflow scoped to tenant
+    workflow = await get_workflow_by_identifier(workflow_id, customer_id=target_cid)
+
+    if (
+        current_user.role != "system_admin"
+        and workflow.customer_id is not None
+        and str(workflow.customer_id) != str(current_user.customer_id)
+    ):
+        raise HTTPException(status_code=403, detail="Access denied: workflow belongs to another tenant")
+
+    # 3. Enforce API key workflow restrictions if configured
+    if current_user.allowed_workflow_ids is not None:
+        if workflow.id not in current_user.allowed_workflow_ids and getattr(workflow, "name", None) not in current_user.allowed_workflow_ids:
+            raise HTTPException(status_code=403, detail=f"API Key is not authorized to execute workflow '{workflow.id}'")
+
+    # 4. Check enabled status
+    if not workflow.is_enabled:
+        raise HTTPException(status_code=400, detail=f"Workflow '{workflow.id}' is disabled")
+
+    # 5. Dual Payload Unwrapping: support both WorkflowExecutionRequest envelope and raw contract JSON
+    envelope_keys = {"input_data", "execution_mode", "trace_id", "metadata"}
+    if isinstance(payload, dict) and "input_data" in payload and set(payload.keys()).issubset(envelope_keys):
+        exec_req = WorkflowExecutionRequest(
+            input_data=payload.get("input_data", ""),
+            execution_mode=mode or str(payload.get("execution_mode") or "sync"),
+            trace_id=payload.get("trace_id"),
+            metadata=payload.get("metadata") or {},
+        )
+    else:
+        exec_req = WorkflowExecutionRequest(
+            input_data=payload if payload is not None else {},
+            execution_mode=mode or "sync",
+        )
+
+    return await execute_workflow_by_id(
+        workflow_id=workflow.id,
+        request=exec_req,
+        current_user=current_user,
+    )
+
+
+# ==============================================================================
+# BLOCK COMMENT: WORKFLOW INVOCATION SPECIFICATION ENDPOINT
+# Reference: EPIC-WORKFLOW-ENDPOINT-001 / STORY-WF-INVOKE-SPEC
+# Description:
+#   Returns the test URL path, webhook alias path, required headers, resolved
+#   entry input_contract, and sample payload for the workflow builder UI.
+# ==============================================================================
+@router.get("/{workflow_id}/invocation-spec", response_model=dict)
+async def get_workflow_invocation_spec(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    workflow = await get_workflow(workflow_id)
+    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this workflow")
+    return _build_workflow_invocation_spec(workflow, fallback_customer_id=current_user.customer_id)
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDefinition)
@@ -452,8 +709,19 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
 
     try:
         saved_workflow = await save_workflow(workflow, customer_id=current_user.customer_id)
+        hydrated_wf = workflow
+        try:
+            hydrated_wf = await get_workflow(request.id)
+        except Exception:
+            pass
+        invocation_spec = _build_workflow_invocation_spec(hydrated_wf, fallback_customer_id=current_user.customer_id)
         logger.info("create_workflow_success", workflow_id=request.id)
-        return {"id": saved_workflow.get("id"), "version": saved_workflow.get("version")}
+        return {
+            "id": saved_workflow.get("id"),
+            "version": saved_workflow.get("version"),
+            "customer_id": hydrated_wf.customer_id if hydrated_wf.customer_id is not None else current_user.customer_id,
+            "invocation_spec": invocation_spec,
+        }
     except HTTPException:
         raise
     except Exception as e:
