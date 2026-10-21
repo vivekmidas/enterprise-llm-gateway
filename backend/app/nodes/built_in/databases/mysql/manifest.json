@@ -4,7 +4,7 @@
     "node_type": "TOOL",
     "description": "Executes SQL queries on MySQL databases. Supports parameterized queries and Jinja templating.",
     "version": "1.0.3",
-    "category": "data",
+    "category": "database",
     "group": "Data",
     "icon": "database",
     "color": "#5E0CEC",
