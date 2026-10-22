@@ -96,13 +96,13 @@ def normalize_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     if raw.get("type") == "object" and isinstance(raw.get("properties"), dict):
         normalized = dict(raw)
         normalized["properties"] = {
-            key: _normalize_field_rule(value) for key, value in raw.get("properties", {}).items()
+            str(key).strip(): _normalize_field_rule(value) for key, value in raw.get("properties", {}).items()
         }
         normalized["required"] = _required_fields(normalized)
         return normalized
 
     properties = {
-        key: _normalize_field_rule(value)
+        str(key).strip(): _normalize_field_rule(value)
         for key, value in raw.items()
         if key not in {"type", "required", "mandatory", "additionalProperties"}
     }
@@ -326,6 +326,14 @@ def validate_input_contract(
 def _normalize_field_rule(rule: Any) -> Dict[str, Any]:
     if isinstance(rule, str):
         return {"type": _normalize_type(rule)}
+    if isinstance(rule, list):
+        return {"type": "array"}
+    if isinstance(rule, bool):
+        return {"type": "boolean"}
+    if isinstance(rule, int):
+        return {"type": "integer"}
+    if isinstance(rule, float):
+        return {"type": "number"}
     if not isinstance(rule, dict):
         return {"type": "json"}
 
@@ -863,12 +871,14 @@ def _normalize_type(value: Any) -> Any:
             else:
                 normalized_list.append(norm)
         return list(dict.fromkeys(normalized_list))
-    normalized = str(value or "json").lower()
+    normalized = str(value or "json").strip().lower()
     resolved = TYPE_ALIASES.get(normalized, normalized)
     if resolved == "file":
         return ["string", "object"]
     if resolved == "json":
         return ["string", "number", "integer", "boolean", "array", "object", "null"]
+    if resolved not in {"string", "number", "integer", "boolean", "array", "object", "null"}:
+        return "string"
     return resolved
 
 

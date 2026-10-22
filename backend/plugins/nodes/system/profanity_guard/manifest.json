@@ -2,8 +2,8 @@
     "name": "profanity_guard",
     "label": "Profanity Guard",
     "node_type": "NODE",
-    "description": "Profanity Guard guards against usage of profanity",
-    "version": "1.1.0",
+    "description": "Profanity Guard detects, highlights, redacts, rates, or rejects profane words and phonetic/obfuscated variants across text and JSON inputs.",
+    "version": "1.2.0",
     "category": "fence",
     "group": "Custom",
     "icon": "shield",
@@ -12,8 +12,91 @@
     "sub_label": null,
     "file_name": "profanity_guard_agent.py",
     "class_name": "ProfanityGuardAgent",
-    "user_properties": [],
-    "system_properties": [],
-    "input_contract": {},
-    "output_contract": {}
+    "user_properties": [
+        {
+            "key": "action",
+            "type": "choice",
+            "label": "Filter Action",
+            "default": "highlight",
+            "options": [
+                "highlight",
+                "redact",
+                "reject",
+                "flag_only"
+            ],
+            "description": "Action on profanity match: 'highlight' wraps matches, 'redact' masks matches, 'reject' fails execution, 'flag_only' only rates in metadata."
+        },
+        {
+            "key": "user_profanity_words",
+            "type": "textarea",
+            "label": "Tenant / User Profane Words",
+            "default": "",
+            "description": "Tenant-defined comma-separated profane words to extend the system list."
+        },
+        {
+            "key": "user_profanity_patterns",
+            "type": "textarea",
+            "label": "Tenant / User Profanity Patterns",
+            "default": "",
+            "description": "Tenant-defined regex patterns (comma or newline-separated) for custom or phonetic profanity."
+        },
+        {
+            "key": "highlight_marker",
+            "type": "text",
+            "label": "Highlight Format",
+            "default": "**[{word}]**",
+            "description": "Template used to highlight matched words when action is 'highlight'. Use {word} as placeholder."
+        },
+        {
+            "key": "redact_replacement",
+            "type": "text",
+            "label": "Redaction Replacement",
+            "default": "[PROFANITY_REDACTED]",
+            "description": "Replacement string used when action is 'redact'."
+        }
+    ],
+    "system_properties": [
+        {
+            "key": "strong_words",
+            "type": "textarea",
+            "label": "System Strong Profane Words",
+            "default": "fuck, motherfucker, shit, asshole, bitch, cunt, bastard, dick, pussy, cock, whore, slut, sex, porn, cuck, SIS",
+            "description": "System-level strong profane words (comma-separated). Edit here without code changes."
+        },
+        {
+            "key": "mild_words",
+            "type": "textarea",
+            "label": "System Mild Profane Words",
+            "default": "piss, damn, hell, stupid, idiot, crap, ass, moron, dumb, jerk",
+            "description": "System-level mild profane words (comma-separated). Edit here without code changes."
+        },
+        {
+            "key": "profanity_patterns",
+            "type": "textarea",
+            "label": "System Phonetic & Obfuscation Patterns",
+            "default": "\\b(f+[\\W_]*[u\\*@v]+[\\W_]*c+[\\W_]*k+(?:er|ing|ed|s)?|p+[\\W_]*h+[\\W_]*u+[\\W_]*c?k+(?:er|ing|ed|s)?|s+[\\W_]*h+[\\W_]*[i1!\\*]+[\\W_]*t+(?:ty|s|ting)?|b+[\\W_]*[i1!\\*]+[\\W_]*t+[\\W_]*c+[\\W_]*h+(?:es|ing)?|a+[\\W_]*[s\\$5]+[\\W_]*[s\\$5]+(?:h+[\\W_]*[o0\\*]+[\\W_]*l+[\\W_]*e+)?|s+[\\W_]*[e3\\*]+[\\W_]*x+(?:y|ual)?)\\b",
+            "description": "System-level regex patterns for phonetic and symbol-obfuscated profanity."
+        }
+    ],
+    "input_contract": {
+        "data": {},
+        "auth_token": "sample",
+        "source_system": "sample"},
+    "output_contract": {
+  "data": {},
+  "auth_token": "token",
+"status":"",
+"error_message":"",
+"error_code":"",
+"violations": [""],
+"metadata":{
+                "profanity_detected": "",
+                "overall_rating": "",
+                "identified_words": [""],
+                "offended_words": [""],
+                "action_taken": ""
+            },
+  "source_system": "localhost"
 }
+}
+
