@@ -121,7 +121,6 @@ class DBExecutor(BaseNode, abc.ABC):
         Unified execution flow for database executor nodes.
         Handles connection management, query resolution, execution, logging, and error handling.
         """
-        start_time = time.time()
         trace_id = inp.trace_id
 
         self.logger.info("db_node_execution_started", trace_id=trace_id, node_name=self.name, db_type=self.db_type)
@@ -192,20 +191,15 @@ class DBExecutor(BaseNode, abc.ABC):
                     self.logger.info("db_query_executed_successfully", trace_id=trace_id, query_type=query_type)
                 else:
                     self.logger.info("db_query_not_formed", trace_id=trace_id)
-                    duration = round((time.time() - start_time) * 1000, 2)
                     return NodeOutput(
                         trace_id=trace_id,
                         data=json.dumps({"error": "SQL query could not be generated"}),
                         status="failure",
                         error_message="SQL query could not be generated",
                         error_code=500,
-                        latency_ms=duration,
-                        start_time=start_time,
-                        end_time=time.time()
                     )
 
             # 5. Format success response
-            duration = round((time.time() - start_time) * 1000, 2)
             return NodeOutput(
                 trace_id=trace_id,
                 data=json.dumps(result, default=str),
@@ -215,13 +209,9 @@ class DBExecutor(BaseNode, abc.ABC):
                     "db_type": self.db_type,
                     "row_count": len(result) if isinstance(result, list) else (result.get("rowcount", 0) if isinstance(result, dict) else 0)
                 },
-                latency_ms=duration,
-                start_time=start_time,
-                end_time=time.time()
             )
 
         except Exception as e:
-            duration = round((time.time() - start_time) * 1000, 2)
             self.logger.error("db_node_execution_failed", trace_id=trace_id, error=str(e), exc_info=True)
             return NodeOutput(
                 trace_id=trace_id,
@@ -229,9 +219,6 @@ class DBExecutor(BaseNode, abc.ABC):
                 status="failure",
                 error_message=f"{self.db_type.upper()} execution failed: {e}",
                 error_code=500,
-                latency_ms=duration,
-                start_time=start_time,
-                end_time=time.time()
             )
         finally:
             if conn:

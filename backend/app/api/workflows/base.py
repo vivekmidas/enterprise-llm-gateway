@@ -3,6 +3,7 @@ import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from  app.core.types.common import NodeInput, NodeOutput
+from app.utils.time_utils import build_timing_metadata
 
 class BaseAgent(abc.ABC):
     """
@@ -42,28 +43,20 @@ class BaseAgent(abc.ABC):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """
         Standard execution wrapper with observability, timing, and error handling.
+        DESIGN CHANGE (node timing -> metadata): timing (epoch + ISO-8601 + latency_ms)
+        is stamped into output.metadata instead of NodeOutput fields.
         """
-        start_ts = time.time()
+        start_ts, perf_start = time.time(), time.perf_counter()
         try:
             # Perform the actual work
             output = await self.run(inp)
-            end_ts = time.time()
-
-            # Enrich output with tracking data
-            output.start_time = start_ts
-            output.end_time = end_ts
-            output.latency_ms = round((end_ts - start_ts) * 1000, 2)
-            output.status = "failure" if output.error or output.violations else "success"
-            return output
-
+            output.status = "failure" if output.error_message or output.violations else "success"
         except Exception as e:
-            end_ts = time.time()
-            return NodeOutput(
+            output = NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,
                 status="failure",
-                error=str(e),
-                start_time=start_ts,
-                end_time=end_ts,
-                latency_ms=round((end_ts - start_ts) * 1000, 2)
+                error_message=str(e),
             )
+        output.metadata = {**(output.metadata or {}), **build_timing_metadata(start_ts, perf_start=perf_start)}
+        return output

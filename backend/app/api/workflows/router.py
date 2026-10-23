@@ -3,6 +3,7 @@ from typing import Optional, List, Tuple, Any, Dict
 import json
 import time
 import asyncio
+import uuid
 import structlog
 from app.core.types.users import User
 from app.api.workflows.schemas import WorkflowSaveRequest, WorkflowExecutionRequest, WorkflowExecutionResponse
@@ -22,6 +23,7 @@ from sqlalchemy import select
 from app.workflows.service import save_workflow, delete_workflow, get_workflow, get_workflow_by_identifier, get_workflow_user_customer_id
 from app.workflows.executor import execute_dynamic_agent
 from app.core.cache import trace_store
+from app.utils.request_utils import extract_request_info
 from app.workflows.class_models import WorkflowDefinition
 from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission
 
@@ -248,6 +250,7 @@ async def execute_workflow_by_id(
     workflow_id: str = Path(..., description="Workflow ID, name, or slug"),
     request: Optional[WorkflowExecutionRequest] = None,
     current_user: User = Depends(get_current_user),
+    http_request: Request = None,
 ):
     if request is None:
         request = WorkflowExecutionRequest()
@@ -283,7 +286,8 @@ async def execute_workflow_by_id(
     else:
         input_payload_str = str(request.input_data or "")
 
-    trace_id = request.trace_id or f"exec-{workflow.id}-{int(time.time() * 1000)}"
+    # DESIGN CHANGE: trace_id defaults to a plain uuid4 (collision-free) unless caller supplies one.
+    trace_id = request.trace_id or str(uuid.uuid4())
 
     context = {
         "user_data": {
@@ -295,6 +299,25 @@ async def execute_workflow_by_id(
         "metadata": request.metadata or {},
         "caller_domain": (request.metadata or {}).get("caller_domain", "external"),
     }
+    # ==========================================================================
+    # DESIGN CHANGE (inbound request capture, all endpoints): sanitized request
+    # snapshot (socket + forwarded IPs, HTTP, client, payload hash, auth scheme
+    # w/o secrets) stored at workflow level in context["request"].
+    # ==========================================================================
+    if http_request is not None:
+        context["request"] = extract_request_info(
+            http_request,
+            body=await http_request.body(),  # cached by Starlette after body parsing
+            source="api",  # endpoint distinguished by "path"
+            trace_id=trace_id,
+            extra={
+                "workflow_id": workflow.id,
+                "execution_mode": request.execution_mode,
+                "user_id": str(current_user.id),
+                "tenant_id": current_user.customer_id,
+                "role": current_user.role,
+            },
+        )
 
     workflow_dict = workflow.model_dump()
 
@@ -358,12 +381,14 @@ async def execute_workflow_by_slug(
     workflow_slug: str = Path(..., description="Workflow slug or identifier"),
     request: Optional[WorkflowExecutionRequest] = None,
     current_user: User = Depends(get_current_user),
+    http_request: Request = None,
 ):
     """Convenience alias route for decoupled domain plants invoking workflows by slug."""
     return await execute_workflow_by_id(
         workflow_id=workflow_slug.strip("/"),
         request=request,
         current_user=current_user,
+        http_request=http_request,
     )
 
 
@@ -389,6 +414,7 @@ async def execute_tenant_workflow_direct(
     mode: Optional[str] = Query(None, description="Execution mode override: 'sync' or 'async'"),
     payload: Optional[Any] = Body(default=None),
     current_user: User = Depends(get_current_user),
+    http_request: Request = None,
 ):
     # 1. Validate tenant boundary against path customer_id
     if (
@@ -446,6 +472,7 @@ async def execute_tenant_workflow_direct(
         workflow_id=workflow.id,
         request=exec_req,
         current_user=current_user,
+        http_request=http_request,
     )
 
 

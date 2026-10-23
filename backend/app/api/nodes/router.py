@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, cast, or_, select, delete
 import structlog
 import json
+import uuid
 from datetime import datetime
 
 from app.core.database import get_db
@@ -12,6 +13,7 @@ from app.workflows.store import propagate_node_defaults_to_workflows
 from app.api.auth.dependencies import get_current_user, require_system_admin, dynamic_api_guard
 from app.core.types.users import User
 from app.utils.json_sample_generator import generate_sample_json
+from app.utils.request_utils import extract_request_info
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/nodes", tags=["nodes"])
@@ -959,7 +961,8 @@ async def test_node_directly(
     payload: dict,
     node_name: Optional[str] = None,
     current_user: User = Depends(dynamic_api_guard),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    http_request: Request = None,
 ):
     """
     Executes a specific node directly for testing/playground purposes.
@@ -1037,13 +1040,31 @@ async def test_node_directly(
     context["customer_id"] = current_user.customer_id
     context["tenant_id"] = current_user.customer_id
 
+    # DESIGN CHANGE (inbound request capture, all endpoints): server-side request
+    # snapshot overrides any client-supplied context["request"] (anti-spoofing).
+    trace_id = str(uuid.uuid4())
+    if http_request is not None:
+        context["request"] = extract_request_info(
+            http_request,
+            body=await http_request.body(),
+            source="node_test",
+            trace_id=trace_id,
+            extra={
+                "node_name": target_node_name,
+                "user_id": current_user.id,
+                "tenant_id": current_user.customer_id,
+                "role": current_user.role,
+            },
+        )
+
     # If node has test method on BaseNode, run isolated test
     if hasattr(node, "test") and callable(node.test) and isinstance(data_val, dict):
         try:
             test_result = await node.test(
                 test_input=data_val,
                 override_properties=config_override,
-                context=context
+                context=context,
+                trace_id=trace_id,
             )
             return test_result
         except Exception as e:
@@ -1060,7 +1081,7 @@ async def test_node_directly(
     resolved_config = node.get_resolved_properties(instance_overrides=config_override) if hasattr(node, "get_resolved_properties") else config_override
 
     node_input = NodeInput(
-        trace_id=f"test-direct-{target_node_name}-{int(time.time())}",
+        trace_id=trace_id,
         data=data_str,
         config=resolved_config,
         context=context
@@ -1082,7 +1103,8 @@ async def test_node_directly(
             "error_code": node_output.error_code,
             "violations": node_output.violations,
             "metadata": node_output.metadata,
-            "latency_ms": node_output.latency_ms
+            # DESIGN CHANGE (node timing -> metadata): latency read from node metadata
+            "latency_ms": (node_output.metadata or {}).get("latency_ms", 0.0)
         }
     except Exception as e:
         logger.exception("direct_node_execution_failed", node_name=target_node_name)

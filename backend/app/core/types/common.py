@@ -21,7 +21,7 @@ class NodeOutput(BaseModel):
     error_message: Optional[str] = None
     error_code: int = 200  # Default to 2000 for successful node execution, can be overridden by specific nodes
     violations: List[str] = Field(default_factory=list)
+    # DESIGN CHANGE (node timing -> metadata): start_time/end_time/latency_ms are no
+    # longer top-level fields. BaseNode.run stamps them (epoch + ISO-8601) into
+    # metadata via app.utils.time_utils.build_timing_metadata.
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    latency_ms: float = 0.0
-    start_time: float = 0.0
-    end_time: float = 0.0

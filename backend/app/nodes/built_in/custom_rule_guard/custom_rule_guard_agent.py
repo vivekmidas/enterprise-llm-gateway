@@ -20,7 +20,6 @@ class CustomRuleGuardAgent(BaseNode):
         await super().init()
         
     async def execute(self, inp: NodeInput) -> NodeOutput:
-        start = time.time()
         config = inp.config or {}
         violations = []
         
@@ -42,9 +41,6 @@ class CustomRuleGuardAgent(BaseNode):
         return NodeOutput(
             trace_id=inp.trace_id,
             data=out_data,
-            start_time=start,
-            end_time=time.time(),
             violations=violations,
-            latency_ms=round((time.time() - start) * 1000, 2),
             status="flagged" if violations else "success"
         )

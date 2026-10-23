@@ -421,6 +421,12 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
             if getattr(state, "trace_id", None):
                 span.set_attribute("trace_id", str(state.trace_id))
             
+            # DESIGN CHANGE (node timing -> metadata): wrapper-level start mark so the
+            # exception path below (DB/config resolution failures before run()) also
+            # records start/end/latency instead of latency_ms=None.
+            import time
+            from app.utils.time_utils import build_timing_metadata
+            wrapper_start_ts, wrapper_perf_start = time.time(), time.perf_counter()
             try:
                 #logger.info("node_execution_started", node_id=node_id, agent=agent_name, trace_id=state.trace_id)
                 
@@ -548,11 +554,12 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 # - context reducer (merge_context) deep-merges "nodes", so only this node's
                 #   entry is returned.
                 # Execution keys placed last so they stay authoritative over node-generated keys.
+                # DESIGN CHANGE (node timing -> metadata): start_time/start_time_iso/end_time/
+                # end_time_iso/latency_ms come from result.metadata (stamped by BaseNode.run).
                 node_metadata = {
                     **(result.metadata or {}),
                     "agent_name": agent_name,
                     "status": result.status,
-                    "latency_ms": result.latency_ms,
                     "error": result.error_message,
                 }
 
@@ -610,8 +617,8 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                                 "metadata": {
                                     "agent_name": agent_name,
                                     "status": "exception",
-                                    "latency_ms": None,
                                     "error": str(e),
+                                    **build_timing_metadata(wrapper_start_ts, perf_start=wrapper_perf_start),
                                 },
                             }
                         }

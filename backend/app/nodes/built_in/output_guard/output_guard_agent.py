@@ -18,7 +18,6 @@ class OutputGuardAgent(BaseNode):
         await super().init()
         
     async def execute(self, inp: NodeInput) -> NodeOutput:
-        start = time.time()
         violations = []
 
         data_val = self.get_input_data(inp)
@@ -37,9 +36,6 @@ class OutputGuardAgent(BaseNode):
             trace_id=inp.trace_id,
             data=out_data,
             violations=violations,
-            start_time=start,
-            end_time=time.time(),
             metadata={"final_check": "passed" if not violations else "failed"},
-            latency_ms=round((time.time() - start) * 1000, 2),
             status="flagged" if violations else "success"
         )

@@ -21,6 +21,14 @@ from app.nodes.properties import property_entries_to_dict
 from app.core.types.common import NodeInput,NodeOutput
 from app.nodes.contracts import validate_contract
 from app.utils.file_utils import load_file_bytes, extract_document_text
+from app.utils.time_utils import build_timing_metadata
+
+# User-facing messages for file-field resolution errors (used by BaseNode.run step 2).
+# Any other OSError falls back to "File I/O error: {exc}".
+_FILE_ERROR_MESSAGES = {
+    FileNotFoundError: "File not found: {exc}. Verify the path in the file field points to a server-accessible file.",
+    PermissionError: "Permission denied: {exc}. The server process cannot read this file.",
+}
 
 class JinjaFallbackDict(dict):
     def __init__(self, fallback_value, *args, **kwargs):
@@ -656,7 +664,8 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
         self,
         test_input: Any,
         override_properties: Optional[Dict[str, Any]] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes single node in isolation with transient properties without graph state.
@@ -672,45 +681,35 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
         else:
             data_str = ""
 
-        trace_id = f"test-{self.name}-{int(time.time())}"
+        # DESIGN CHANGE: trace_id is a plain uuid4 unless supplied by the caller
+        import uuid
+        trace_id = trace_id or str(uuid.uuid4())
         node_input = NodeInput(
             trace_id=trace_id,
             data=data_str,
             config=resolved_props,
             context=context or {}
         )
-        start_time = time.perf_counter()
+        # DESIGN CHANGE (node timing -> metadata): timing is stamped by run() into
+        # output.metadata; top-level latency_ms kept in the response for the admin UI.
+        output: NodeOutput = await self.run(node_input)  # run() never raises
 
-        try:
-            output: NodeOutput = await self.run(node_input)
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            
-            output_data = output.data
-            if isinstance(output.data, str):
-                try:
-                    output_data = json.loads(output.data)
-                except Exception:
-                    pass
+        output_data = output.data
+        if isinstance(output.data, str):
+            try:
+                output_data = json.loads(output.data)
+            except Exception:
+                pass
 
-            return {
-                "status": output.status,
-                "data": output_data,
-                "error_message": output.error_message,
-                "error_code": output.error_code,
-                "violations": output.violations,
-                "metadata": output.metadata,
-                "latency_ms": latency_ms
-            }
-        except Exception as e:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            self.logger.error("isolated_node_test_failed", error=str(e))
-            return {
-                "status": "error",
-                "error_message": str(e),
-                "error_code": 500,
-                "data": None,
-                "latency_ms": latency_ms
-            }
+        return {
+            "status": output.status,
+            "data": output_data,
+            "error_message": output.error_message,
+            "error_code": output.error_code,
+            "violations": output.violations,
+            "metadata": output.metadata,
+            "latency_ms": output.metadata.get("latency_ms", 0.0),
+        }
 
 
     def _resolve_dotted_path(self, dotted_path: str, obj: Any) -> Any:
@@ -1450,185 +1449,107 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 except Exception as exc:
                     self.logger.warning("source_api_resolution_failed", prop_key=prop_key, source_url=source_url, error=str(exc))
 
+    # ==========================================================================
+    # BLOCK COMMENT: STREAMLINED NODE RUN LIFECYCLE + TIMING METADATA
+    # Description:
+    #   Linear lifecycle with a SINGLE exit point:
+    #     1. Prepare input  : merge config, parse data, render jinja (data + config)
+    #     2. Resolve files  : contract file fields (OSError -> failure output)
+    #     3. Validate input : input contract, then node-specific validate_input()
+    #     4. Execute        : node business logic
+    #     5. Validate output: output contract, then derive status
+    #     6. Stamp timing   : start/end (epoch + ISO-8601 UTC) + latency_ms merged
+    #                         into output.metadata for EVERY path (incl. early
+    #                         validation failures, which previously reported 0).
+    #   Timing no longer lives as NodeOutput fields; it lives in node metadata and
+    #   flows to context["nodes"][node_id]["metadata"] via workflows.service.
+    # ==========================================================================
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
-        The standardized execution lifecycle for every node in the system.
-        Executes:
-        1. Context Setup: Enriches context with execution tracing data.
-        2. Config Setup: Merges static properties with runtime input configs.
-        3. Execution: Runs the core business logic (execute).
-        4. Observability: Captures latency, start/end times, and status.
-        5. Error Handling: Gracefully catches exceptions and returns a failure NodeOutput.
-
-        Returns:
-            NodeOutput: The standardized result containing content, status, and metadata.
+        Standardized execution lifecycle for every node.
+        prepare input -> resolve files -> validate input -> execute -> validate output -> stamp timing.
+        Never raises: exceptions are converted to a failure NodeOutput.
         """
-        self.logger.info("node_run_started", name = self.name, trace_id=inp.trace_id)
-        start_ts = time.time()
+        start_ts, perf_start = time.time(), time.perf_counter()
+        self.logger.info("node_run_started", name=self.name, trace_id=inp.trace_id)
+        output: Optional[NodeOutput] = None
         try:
-            # Store trace_id in context for observability
-            if inp.context is None:
-                inp.context = {}
-
-            # 0. Resolve properties: (Registry Defaults enriched by init) < Workflow Config
+            # 1. Prepare input: (Registry defaults enriched by init) < workflow config
+            inp.context = inp.context or {}
             inp.config = {**self.properties, **inp.config}
-            # await self._resolve_source_properties(inp)
 
-            # 0.05 Parse input_data
-            input_data = {}
+            input_data: Any = {}
             if inp.data:
                 try:
                     input_data = json.loads(inp.data)
                 except Exception:
                     input_data = inp.data
-
             # Extract the actual input values inside "data" key if present
-            if isinstance(input_data, dict):
-                input_data_data = input_data.get("data") if ("data" in input_data and "query_type" not in input_data) else input_data
-            else:
-                input_data_data = input_data
+            if isinstance(input_data, dict) and "data" in input_data and "query_type" not in input_data:
+                input_data = input_data.get("data")
 
-            # 0.06 Get mappings directly from config
             mapping_config = inp.config.get("mapping_template") or inp.config.get("input_mappings")
-            if mapping_config:
-                if isinstance(mapping_config, str):
-                    try:
-                        mapping_config = json.loads(mapping_config)
-                    except Exception:
-                        pass
-
+            if isinstance(mapping_config, str):
+                try:
+                    mapping_config = json.loads(mapping_config)
+                except Exception:
+                    pass
             if isinstance(mapping_config, dict):
                 mapping_config = {k: v for k, v in mapping_config.items() if not k.startswith('_')}
 
-            # 0.08 Build render context and resolve templates
+            # Render jinja templates in data (mapping_config is the data source if present) and config
             try:
-                render_context = {}
-                if isinstance(inp.context, dict):
-                    render_context.update(inp.context)
-                if isinstance(input_data_data, dict):
-                    render_context.update(input_data_data)
-
-                render_context["data"] = input_data_data
-                render_context["input_data"] = input_data_data
-                if inp.context and isinstance(inp.context, dict):
-                    render_context["nodes"] = inp.context.get("nodes", {})
-                    render_context["user_data"] = inp.context.get("user_data", {})
-
+                render_context: Dict[str, Any] = dict(inp.context)
+                if isinstance(input_data, dict):
+                    render_context.update(input_data)
+                render_context["data"] = input_data
+                render_context["input_data"] = input_data
+                render_context["nodes"] = inp.context.get("nodes", {})
+                render_context["user_data"] = inp.context.get("user_data", {})
                 self.logger.debug("running_node:resolve_jinja_template", render_context=render_context, trace_id=inp.trace_id)
-                
-                # Resolve mapping_config if present (uses mapping strictly as data source), otherwise resolve templates in input_data_data directly
-                if mapping_config:
-                    resolved_data = self._resolve_jinja_templates(mapping_config, render_context)
-                else:
-                    resolved_data = self._resolve_jinja_templates(input_data_data, render_context)
 
-                # Save resolved data back to inp.data
+                resolved_data = self._resolve_jinja_templates(mapping_config or input_data, render_context)
                 if isinstance(resolved_data, (dict, list)):
                     inp.data = json.dumps(resolved_data)
-                elif resolved_data is not None:
-                    inp.data = str(resolved_data)
                 else:
-                    inp.data = ""
-
-                # find and replace all templates in properties / config
-                resolved_config = self._resolve_jinja_templates(inp.config, render_context)
-                inp.config = resolved_config
+                    inp.data = str(resolved_data) if resolved_data is not None else ""
+                inp.config = self._resolve_jinja_templates(inp.config, render_context)
             except Exception as e:
                 self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id, error=str(e))
 
-            # 0.1 Input Contract Validation
-            # 0.09 Resolve file fields declared as field_type='file' in the contract
+            # 2. Resolve file fields declared as field_type='file' in the contract
             try:
                 self._resolve_file_fields(inp)
-            except FileNotFoundError as exc:
-                self.logger.error("file_field_not_found", error=str(exc), trace_id=inp.trace_id)
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    data=inp.data,
-                    status="failure",
-                    error_message=(
-                        f"File not found: {exc}. "
-                        "Verify the path in the file field points to a server-accessible file."
-                    ),
-                )
-            except PermissionError as exc:
-                self.logger.error("file_field_permission_denied", error=str(exc), trace_id=inp.trace_id)
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    data=inp.data,
-                    status="failure",
-                    error_message=(
-                        f"Permission denied: {exc}. "
-                        "The server process cannot read this file."
-                    ),
-                )
             except OSError as exc:
-                self.logger.error("file_field_os_error", error=str(exc), trace_id=inp.trace_id)
-                return NodeOutput(
-                    trace_id=inp.trace_id,
-                    data=inp.data,
-                    status="failure",
-                    error_message=f"File I/O error: {exc}",
-                )
+                self.logger.error("file_field_error", error=str(exc), trace_id=inp.trace_id)
+                template = next((m for t, m in _FILE_ERROR_MESSAGES.items() if isinstance(exc, t)), "File I/O error: {exc}")
+                output = NodeOutput(trace_id=inp.trace_id, data=inp.data, status="failure", error_message=template.format(exc=exc))
 
-            # 0.1 Input Contract Validation
-            contract_output = await self.validate_input_contract(inp)
-            if contract_output:
-                return contract_output
+            # 3. Validate input (contract first, then node-specific checks)
+            if output is None:
+                output = await self.validate_input_contract(inp) or await self.validate_input(inp)
 
-            validation_output = await self.validate_input(inp)
-            if validation_output:
-                return validation_output
-
-            # 2. Execution logic
-            self.logger.info(f"Node execution started {self.name}",trace_id=inp.trace_id)
-            output = await self.execute(inp)
-
-            end_ts = time.time()
-            self.logger.info(f"Node execution completed {self.name}",trace_id=inp.trace_id)
-            # Enrich output with tracking data
-            output.start_time = start_ts
-            output.end_time = end_ts
-            output.latency_ms = round((end_ts - start_ts) * 1000, 2)
-
-            # # 3. Apply Output Envelope if execution was successful
-            # if not output.error_message and not output.violations:
-            #     output.output_data = self.apply_output_envelope(output.output_data, inp)
-
-            # Output Contract Validation
-            if not output.error_message and not output.violations:
-                await self.validate_output_contract(inp, output)
-
-            output.status = "failure" if output.error_message or output.violations else "success"
-
-            self.logger.info(
-                "node_run_completed",
-                name=self.name,
-                status=output.status, function_name=__name__,
-                latency_ms=output.latency_ms,
-                output=output.status, trace_id=inp.trace_id
-            )
-            return output
-
+            # 4. Execute + 5. Validate output
+            if output is None:
+                self.logger.info(f"Node execution started {self.name}", trace_id=inp.trace_id)
+                output = await self.execute(inp)
+                if not output.error_message and not output.violations:
+                    await self.validate_output_contract(inp, output)
+                output.status = "failure" if output.error_message or output.violations else "success"
         except Exception as e:
-            end_ts = time.time()
-            self.logger.error(
-                "node_run_exception",
-                name=self.name,
-                error=str(e),
-                trace_id=inp.trace_id,
-                input=inp.model_dump()
-            )
-            return NodeOutput(
-                trace_id=inp.trace_id,
-                data=inp.data,
-                error_code=500,
-                status="failure",
-                error_message=str(e),
-                start_time=start_ts,
-                end_time=end_ts,
-                latency_ms=round((end_ts - start_ts) * 1000, 2)
-            )
+            self.logger.error("node_run_exception", name=self.name, error=str(e), trace_id=inp.trace_id, input=inp.model_dump())
+            output = NodeOutput(trace_id=inp.trace_id, data=inp.data, error_code=500, status="failure", error_message=str(e))
+
+        # 6. Stamp timing metadata (authoritative: overrides any node-provided timing keys)
+        output.metadata = {**(output.metadata or {}), **build_timing_metadata(start_ts, perf_start=perf_start)}
+        self.logger.info(
+            "node_run_completed",
+            name=self.name,
+            status=output.status,
+            latency_ms=output.metadata["latency_ms"],
+            trace_id=inp.trace_id,
+        )
+        return output
 
 class TriggerNode(BaseNode, abc.ABC):
     """

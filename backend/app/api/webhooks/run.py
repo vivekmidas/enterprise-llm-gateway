@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 import structlog
 from typing import Any, Dict
 from fastapi import APIRouter, Request, HTTPException, status, Path, Depends
@@ -98,7 +99,8 @@ async def execute_webhook_workflow(
     # 3. Execute workflow
     logger.info("starting_webhook_workflow_execution", path=normalized_path, workflow_id=workflow_def.get("id"))
     try:
-        trace_id = f"{agent_name}-{int(time.time())}"
+        # DESIGN CHANGE: trace_id is a plain uuid4 (old "{agent_name}-{epoch_sec}" collided within the same second)
+        trace_id = str(uuid.uuid4())
         
         # Ensure registry has the workflow config mapping
         if node_instance:
@@ -110,7 +112,29 @@ async def execute_webhook_workflow(
             "role": current_user.role if current_user else request.state.user.get("role"),
             "status": request.state.user.get("status")
         }
-        context = {"user_data": user_data}
+        # ======================================================================
+        # DESIGN CHANGE (webhook request capture): sanitized inbound request
+        # snapshot (both socket + forwarded IPs, HTTP, client, payload hash, auth
+        # scheme w/o secrets, routing) stored at WORKFLOW level in
+        # context["request"]; readable by all nodes and persisted with the trace.
+        # ======================================================================
+        from app.utils.request_utils import extract_request_info
+        request_info = extract_request_info(
+            request,
+            body=await request.body(),  # cached by Starlette after json()/body()
+            source="webhook",
+            trace_id=trace_id,
+            extra={
+                "webhook_path": normalized_path,
+                "workflow_id": workflow_id,
+                "agent_node_id": agent_node_id,
+                "trigger_agent_name": agent_name,
+                "user_id": user_data.get("user_id"),
+                "tenant_id": user_data.get("customer_id"),
+                "role": user_data.get("role"),
+            },
+        )
+        context = {"user_data": user_data, "request": request_info}
 
         # THIS IS THE ENTRY POINT FOR THE WORKFLOW EXECUTION PROCESS
         logger.info("starting_workflow execution", workflow_id=workflow_id,tenant_id=tenant,user_id=user_id,raw_payload=raw_payload, trace_id=trace_id, context=context)

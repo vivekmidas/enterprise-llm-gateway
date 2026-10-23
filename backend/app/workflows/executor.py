@@ -12,6 +12,7 @@ from app.nodes.base import NodeInput, NodeOutput
 from app.nodes.registry import NodesRegistry
 from app.core.llm_router import LLMRouter
 from app.core.cache import trace_store
+from app.utils.time_utils import build_timing_metadata, to_iso_utc
 
 router = LLMRouter()
 logger = structlog.get_logger(__name__)
@@ -113,6 +114,7 @@ class WorkflowExecutor:
             "customer_id": self.customer_id,
             "user_id": self.user_id,
             "start_time": start_time,
+            "start_time_iso": to_iso_utc(start_time),  # DESIGN CHANGE: epoch + ISO-8601 timing
             "latency_ms": 0.0,
             "timestamp": start_time,
             "violations": [],
@@ -265,6 +267,8 @@ class WorkflowExecutor:
             "customer_id": self.customer_id,
             "user_id": self.user_id,
             "timestamp": start_time,
+            "start_time": start_time,
+            "start_time_iso": to_iso_utc(start_time),  # DESIGN CHANGE: epoch + ISO-8601 timing
             "latency_ms": 0.0,
             # node_history removed: per-node status/latency/metadata live in context["nodes"][node_id]["metadata"]
             "context": context or {},
@@ -287,7 +291,8 @@ class WorkflowExecutor:
                 "workflow_name": self.agent_config.get("name") if self.agent_config else None,
                 "customer_id": self.customer_id,
                 "user_id": self.user_id,
-                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                # DESIGN CHANGE: start/end (epoch + ISO-8601) + latency_ms
+                **build_timing_metadata(start_time),
                 "timestamp": time.time()
             })
             await trace_store.save_trace(trace_id, result_dict)
@@ -304,7 +309,8 @@ class WorkflowExecutor:
                 "workflow_name": self.agent_config.get("name") if self.agent_config else None,
                 "customer_id": self.customer_id,
                 "user_id": self.user_id,
-                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                # DESIGN CHANGE: start/end (epoch + ISO-8601) + latency_ms
+                **build_timing_metadata(start_time),
                 "timestamp": time.time()
             })
             await trace_store.save_trace(trace_id, result_dict)
@@ -333,8 +339,9 @@ class WorkflowExecutor:
         result_dict["workflow_name"] = self.agent_config.get("name") if self.agent_config else None
         result_dict["customer_id"] = self.customer_id
         result_dict["user_id"] = self.user_id
-        result_dict["latency_ms"] = round((time.time() - start_time) * 1000, 2)
-        result_dict["timestamp"] = time.time()
+        # DESIGN CHANGE: start/end (epoch + ISO-8601) + latency_ms
+        result_dict.update(build_timing_metadata(start_time))
+        result_dict["timestamp"] = result_dict["end_time"]
         
         # Set status as completed if it didn't fail
         if result_dict.get("status") not in ["failure", "stopped"]:

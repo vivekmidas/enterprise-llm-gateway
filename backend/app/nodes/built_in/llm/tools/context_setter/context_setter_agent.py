@@ -29,7 +29,6 @@ class ContextSetterAgent(BaseNode):
        
     async def execute (self, inp: NodeInput) -> NodeOutput:
         self.logger.info(f"Execution Started for  {self.name}", trace_id=inp.trace_id)
-        start = time.time()
         
         # Simulate CRM lookup (replace with real API/DB call)
         user_context = {
@@ -51,9 +50,6 @@ class ContextSetterAgent(BaseNode):
   
         return NodeOutput(
             trace_id=inp.trace_id,
-            start_time=start,
-            end_time=time.time(),
             data=enriched_content,
             metadata={"context_fetched": True, "source": "crm"},
-            # latency_ms=round((time.time() - start) * 1000, 2)
         )

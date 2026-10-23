@@ -1,6 +1,6 @@
 import time
 import json
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, Query, Depends, Request
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -123,6 +123,7 @@ async def stop_trace(
 @router.post("/traces/{trace_id}/restart")
 async def restart_trace(
     trace_id: str,
+    http_request: Request,
     current_user: User = Depends(get_current_user)
 ):
     """Restart a workflow execution using the original inputs."""
@@ -160,7 +161,8 @@ async def restart_trace(
         raise HTTPException(status_code=404, detail=f"Target workflow not found: {str(e)}")
         
     # 4. Generate new trace_id for restarted execution
-    new_trace_id = f"tr_{uuid.uuid4().hex[:16]}"
+    # DESIGN CHANGE: trace_id is a plain uuid4 (consistent across all entry points)
+    new_trace_id = str(uuid.uuid4())
     
     # Add restart lineage metadata and user context
     if "metadata" not in context:
@@ -173,7 +175,23 @@ async def restart_trace(
         "role": current_user.role if current_user else None
     }
     context["user_data"] = user_data
-    
+
+    # DESIGN CHANGE (inbound request capture, all endpoints): the restart call's
+    # own request snapshot replaces the original one (original stays in its trace).
+    from app.utils.request_utils import extract_request_info
+    context["request"] = extract_request_info(
+        http_request,
+        source="trace_restart",
+        trace_id=new_trace_id,
+        extra={
+            "workflow_id": workflow_id,
+            "restarted_from_trace_id": trace_id,
+            "user_id": user_data["user_id"],
+            "tenant_id": user_data["customer_id"],
+            "role": user_data["role"],
+        },
+    )
+
     # 5. Execute dynamic agent in background
     import asyncio
     asyncio.create_task(
