@@ -189,10 +189,23 @@ async def get_compiled_workflow(workflow_id: str, version: Optional[str] = None,
     return wf_data["compiled_graph"]
 
 
-def evaluate_condition_expression(expression: str, state: Any) -> bool:
+def _get_node_metadata(state: Any, node_id: Optional[str]) -> Dict[str, Any]:
+    """Returns context["nodes"][node_id]["metadata"] (node-scoped metadata) or {}."""
+    if not node_id or not isinstance(getattr(state, "context", None), dict):
+        return {}
+    node_entry = (state.context.get("nodes") or {}).get(node_id) or {}
+    meta = node_entry.get("metadata") if isinstance(node_entry, dict) else None
+    return meta if isinstance(meta, dict) else {}
+
+
+def evaluate_condition_expression(expression: str, state: Any, source_node_id: Optional[str] = None) -> bool:
     """
     Evaluates a condition expression (e.g. "profit > 10" or "output.score < 0.5")
     against the state data/context/metadata.
+
+    DESIGN CHANGE (node-scoped metadata refactor): node-generated metadata is no longer
+    in workflow-level state.metadata, so the source node's
+    context["nodes"][source_node_id]["metadata"] keys are exposed as variables too.
     """
     logger.debug("evaluating_condition_expression", expression=expression)
     variables = {}
@@ -223,6 +236,8 @@ def evaluate_condition_expression(expression: str, state: Any) -> bool:
         variables.update(state.context)
     if isinstance(state.metadata, dict):
         variables.update(state.metadata)
+    # Source node's own metadata (e.g. sentiment, score, condition_result)
+    variables.update(_get_node_metadata(state, source_node_id))
 
     # 5. Evaluate the expression safely
     try:
@@ -282,9 +297,12 @@ def validate_no_cycles(nodes: List[Dict], edges: List[Dict]):
                 raise ValueError(f"Infinite loop detected involving node: {node_id}")
 
 
-def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
+def create_conditional_router(mapping: Dict[str, Dict[str, Any]], source_node_id: Optional[str] = None):
     """
     Factory function to generate the conditional router.
+
+    DESIGN CHANGE (node-scoped metadata refactor): source_node_id lets the router read
+    the source node's metadata from context["nodes"][source_node_id]["metadata"].
     """
     async def router(state: Any) -> Any:
         logger.info("routing_evaluation_started", violations=state.violations, metadata=state.metadata, trace_id=state.trace_id)
@@ -315,15 +333,16 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]]):
         for cond_name, info in mapping.items():
             if cond_name not in special_keys:
                 expr_to_eval = info.get("expression") or cond_name
-                if evaluate_condition_expression(expr_to_eval, state):
+                if evaluate_condition_expression(expr_to_eval, state, source_node_id):
                     logger.info("expression_condition_matched", condition=cond_name, expression=expr_to_eval, targets=info["targets"], trace_id=state.trace_id)
                     matched_expression_targets.extend(info["targets"])
 
         # 2. Check standard success conditions / unconditional edges
         success_targets = []
         
-        # If a condition_result is explicitly defined in metadata (e.g. from a custom logic node)
-        condition_result = state.metadata.get("condition_result")
+        # If a condition_result is explicitly defined by the source node (e.g. custom logic node).
+        # Node-scoped metadata first, workflow-level metadata as fallback.
+        condition_result = _get_node_metadata(state, source_node_id).get("condition_result") or state.metadata.get("condition_result")
         if condition_result and condition_result in mapping:
             success_targets.extend(mapping[condition_result]["targets"])
         
@@ -471,27 +490,25 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 if dynamic_output_contract is not None:
                     output_schema = dynamic_output_contract
 
-                # Ensure context is added to input_data for the next nodes in the workflow
+                # Normalize node input envelope. Shared context (user_data, caller_domain, ...)
+                # is NOT injected here; nodes read it via NodeInput.context. Keeps telemetry
+                # limited to node-specific data.
                 node_data = state.masked_content or state.content
-                ctx = state.context or {}
                 try:
                     if node_data:
                         parsed_data = json.loads(node_data)
                         if isinstance(parsed_data, dict):
                             actual_val = parsed_data.get("data") if "data" in parsed_data else parsed_data
                             if isinstance(actual_val, dict):
-                                actual_val["context"] = ctx
-                                if "user_data" in ctx:
-                                    actual_val["user_data"] = ctx["user_data"]
                                 node_data = json.dumps(actual_val)
                             else:
-                                node_data = json.dumps({"data": actual_val, "context": ctx, "user_data": ctx.get("user_data")})
+                                node_data = json.dumps({"data": actual_val})
                         else:
-                            node_data = json.dumps({"data": parsed_data, "context": ctx, "user_data": ctx.get("user_data")})
+                            node_data = json.dumps({"data": parsed_data})
                     else:
-                        node_data = json.dumps({"data": None, "context": ctx, "user_data": ctx.get("user_data")})
+                        node_data = json.dumps({"data": None})
                 except Exception:
-                    node_data = json.dumps({"data": node_data, "context": ctx, "user_data": ctx.get("user_data")})
+                    node_data = json.dumps({"data": node_data})
 
                 agent_input = NodeInput(
                     trace_id=state.trace_id,
@@ -515,15 +532,28 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     description=f"Executed node {agent_name} successfully" if result.status == "success" else f"Node {agent_name} execution failed"
                 )
                 
-                # Node Timings and Observability
-                node_trace = {
-                    "node_id": node_id,
+                def try_parse_json(val):
+                    if not val: return None
+                    try: return json.loads(val)
+                    except: return val
+
+                node_input_data = try_parse_json(agent_input.data)
+                node_output_data = try_parse_json(result.data)
+
+                # DESIGN CHANGE (node-scoped metadata refactor):
+                # - Removed metadata["node_history"] (duplicated input/output already in context.nodes).
+                # - Node execution details + node-generated metadata (result.metadata) are now
+                #   stored under context["nodes"][node_id]["metadata"] instead of being spread
+                #   into workflow-level state.metadata.
+                # - context reducer (merge_context) deep-merges "nodes", so only this node's
+                #   entry is returned.
+                # Execution keys placed last so they stay authoritative over node-generated keys.
+                node_metadata = {
+                    **(result.metadata or {}),
                     "agent_name": agent_name,
                     "status": result.status,
                     "latency_ms": result.latency_ms,
                     "error": result.error_message,
-                    "output_data": result.data,
-                    "input_data": agent_input.data,
                 }
 
                 # Return ONLY the fields that changed.
@@ -532,29 +562,19 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     "masked_content": result.data,
                 }
 
-                def try_parse_json(val):
-                    if not val: return None
-                    try: return json.loads(val)
-                    except: return val
-
                 updates["context"] = {
                     "nodes": {
-                        **(state.context.get("nodes", {}) if state.context else {}),
                         node_id: {
                             "data": {
-                                "input_data": try_parse_json(agent_input.data),
-                                "output_data": try_parse_json(result.data)
-                            }
+                                "input_data": node_input_data,
+                                "output_data": node_output_data
+                            },
+                            "metadata": node_metadata,
                         }
                     }
                 }
 
-                # Return only what changed. Metadata and violations are merged by LangGraph reducers.
-                updates["metadata"] = {
-                    "node_history": {node_id: node_trace},
-                    **(result.metadata or {})
-                }
-
+                # Violations are merged by LangGraph reducers.
                 updates["violations"] = list(result.violations or [])
                 if result.status == "failure":
                     updates["violations"].append(f"node_failure:{node_id}")
@@ -576,15 +596,25 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 )
                 logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
                 
-                node_trace = {"node_id": node_id, "agent_name": agent_name, "status": "exception", "error": str(e)}
-                
+                # DESIGN CHANGE (node-scoped metadata refactor): exception details stored
+                # in context["nodes"][node_id]["metadata"] instead of metadata["node_history"].
                 return {
                     "status": "failure",
                     "error_message": str(e),
                     "error_code": 500,
                     "violations": [f"node_exception:{node_id}"],
-                    "metadata": {
-                        "node_history": {node_id: node_trace}
+                    "context": {
+                        "nodes": {
+                            node_id: {
+                                "data": {"input_data": None, "output_data": None},
+                                "metadata": {
+                                    "agent_name": agent_name,
+                                    "status": "exception",
+                                    "latency_ms": None,
+                                    "error": str(e),
+                                },
+                            }
+                        }
                     },
                     "agents_executed": [agent_name]
                 }
@@ -696,7 +726,7 @@ def build_workflow_graph(agent_config: Dict[str, Any]) -> Any:
         
         graph.add_conditional_edges(
             source,
-            create_conditional_router(mapping),
+            create_conditional_router(mapping, source_node_id=source),
             path_map
         )
 

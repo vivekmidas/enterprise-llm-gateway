@@ -79,6 +79,10 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
                 except Exception:
                     continue
             if isinstance(entry, dict):
+                # EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001:
+                # lift legacy comma-separated choice options into `options` before overrides
+                from app.nodes.properties import normalize_choice_entry
+                entry = normalize_choice_entry(entry)
                 key = entry.get("key")
                 if key:
                     if key in overrides_dict:

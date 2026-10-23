@@ -498,9 +498,12 @@ async def _hydrate_workflow_definition(
                     return []
                 
                 res_list = []
+                # EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001:
+                # normalize choice options before overwriting value with resolved value
+                from app.nodes.properties import normalize_choice_entry
                 for item in val:
                     if isinstance(item, dict):
-                        entry = dict(item)
+                        entry = normalize_choice_entry(dict(item))
                         key = entry.get("key")
                         if key and key in resolved_vals:
                             entry["value"] = resolved_vals[key]

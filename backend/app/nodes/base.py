@@ -1656,7 +1656,7 @@ class TriggerNode(BaseNode, abc.ABC):
     async def execute(self, inp: NodeInput) -> NodeOutput:
         """Default trigger execution just passes the input payload through."""
         self.logger.info(
-                        "Trigger node execution  started",
+                        "Trigger node execution started",
                         name=self.name,
                         trace_id=inp.trace_id,
                     )

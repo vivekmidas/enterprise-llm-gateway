@@ -112,6 +112,7 @@ class WorkflowExecutor:
             "workflow_name": self.agent_config.get("name") if self.agent_config else None,
             "customer_id": self.customer_id,
             "user_id": self.user_id,
+            "start_time": start_time,
             "latency_ms": 0.0,
             "timestamp": start_time,
             "violations": [],
@@ -232,18 +233,8 @@ class WorkflowExecutor:
         if "input_data" not in ctx:
             ctx["input_data"] = input_content
 
-        # Inject context and user_data into input_content
-        try:
-            parsed_input = json.loads(input_content)
-            if isinstance(parsed_input, dict):
-                parsed_input["context"] = ctx
-                if user_data:
-                    parsed_input["user_data"] = user_data
-                input_content = json.dumps(parsed_input)
-            else:
-                input_content = json.dumps({"data": input_content, "context": ctx, "user_data": user_data})
-        except Exception:
-            input_content = json.dumps({"data": input_content, "context": ctx, "user_data": user_data})
+        # Shared context lives only in state.context (NodeInput.context); it is not
+        # injected into input_content to avoid duplicating it per node in telemetry.
 
         state = AgentState(
             trace_id=trace_id,
@@ -275,7 +266,7 @@ class WorkflowExecutor:
             "user_id": self.user_id,
             "timestamp": start_time,
             "latency_ms": 0.0,
-            "node_history": {},
+            # node_history removed: per-node status/latency/metadata live in context["nodes"][node_id]["metadata"]
             "context": context or {},
             "agents_executed": []
         }

@@ -604,12 +604,58 @@ async def get_node_properties(
                 resolved_user = _mask_sensitive_properties(resolved_user)
                 resolved_system = _mask_sensitive_properties(resolved_system)
 
+            # ==================================================================
+            # BLOCK COMMENT: PROPERTY SCHEMA IN NODE PROPERTIES RESPONSE
+            # Reference: EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001
+            # Description:
+            #     Returns typed schema (type/label/options/multiple/description)
+            #     with resolved values so Workflow Builder renders `choice`
+            #     (dropdown / checkbox list) and `textarea` fields correctly.
+            #     Each entry carries `category` ("user" | "system").
+            # ==================================================================
+            from app.nodes.properties import normalize_choice_entry
+
+            def _schema_entries(raw: Any, category: str) -> list:
+                if not raw:
+                    return []
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except Exception:
+                        return []
+                if not isinstance(raw, list):
+                    return []
+                out = []
+                for item in raw:
+                    if isinstance(item, str):
+                        try:
+                            item = json.loads(item)
+                        except Exception:
+                            continue
+                    if not isinstance(item, dict) or not item.get("key"):
+                        continue
+                    entry = normalize_choice_entry(item)
+                    if entry["key"] == "allow_node_testing":
+                        continue
+                    if entry["key"] in resolved_properties:
+                        entry["value"] = resolved_properties[entry["key"]]
+                    entry["category"] = category
+                    out.append(entry)
+                return out
+
+            property_schema = []
+            if db_node:
+                property_schema.extend(_schema_entries(db_node.user_properties, "user"))
+                property_schema.extend(_schema_entries(db_node.system_properties, "system"))
+
             logger.info("get_workflow_properties_response_success", workflow_id=workflow_id)
             return {
                 "user_properties": resolved_user,
                 "system_properties": resolved_system,
                 "system_level_properties": resolved_system,
                 "properties": resolved_properties,
+                "property_schema": property_schema,
+                "propertySchema": property_schema,
                 "input_contract": input_contract,
                 "output_contract": output_contract
             }
