@@ -113,7 +113,7 @@ class BaseLLMNode(BaseNode, abc.ABC):
         await super().validate_input(inp)
         return None
 
-    def _resolve_customer_id(self, inp: NodeInput) -> Optional[int]:
+    def _resolve_customer_id(self, inp: NodeInput) -> Optional[str]:
         """Resolve customer ID scope from execution context."""
         context = inp.context or {}
         user_data = context.get("user_data") or {}
@@ -123,15 +123,43 @@ class BaseLLMNode(BaseNode, abc.ABC):
             or context.get("tenant_id")
             or self.customer_id
         )
-        return int(customer_id) if customer_id is not None else None
+        return customer_id if customer_id is not None else None
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
         start_time = time.perf_counter()
         
-        # 1. Load tenant config from CompanyDB settings
+        # 1. Resolve Tenant LLM Profile and Settings
         customer_id = self._resolve_customer_id(inp)
+        config = inp.config or {}
+        profile_config = {}
         tenant_settings = {}
-        if customer_id is not None:
+
+        # Profile identifier (profile_name, profile_id, or llm_profile_id)
+        profile_identifier = (
+            config.get("profile_name")
+            or config.get("profile_id")
+            or config.get("llm_profile_id")
+            or self.properties.get("profile_name")
+            or self.properties.get("profile_id")
+            or self.properties.get("llm_profile_id")
+        )
+
+        if customer_id is not None or profile_identifier:
+            try:
+                from app.core.profile_resolver import ProfileResolver
+                async with AsyncSessionLocal() as session:
+                    resolver = ProfileResolver(db=session)
+                    resolved = await resolver.resolve_execution_context(
+                        profile_id=str(profile_identifier) if profile_identifier else None,
+                        customer_id=str(customer_id) if customer_id else "1",
+                        model_type="generation"
+                    )
+                    if resolved:
+                        profile_config = resolved
+            except Exception as e:
+                self.logger.warning("profile_resolution_failed", error=str(e))
+
+        if customer_id is not None and not profile_config:
             try:
                 async with AsyncSessionLocal() as session:
                     cust_stmt = select(CustomerDB).where(CustomerDB.id == customer_id)
@@ -143,23 +171,25 @@ class BaseLLMNode(BaseNode, abc.ABC):
                 self.logger.warning("failed_to_load_tenant_settings_db", error=str(e))
 
         # 2. Resolve settings with priorities:
-        # Priority: Workflow Overrides (inp.config) -> Company settings (CustomerDB.settings) -> Node Defaults (self.properties/system_properties)
-        config = inp.config or {}
-        
+        # Priority: Workflow Overrides (inp.config) -> Resolved Profile -> Company settings (CustomerDB.settings) -> Node Defaults (self.properties/system_properties)
         base_url = (
             config.get("base_url") 
+            or profile_config.get("base_url")
             or tenant_settings.get("llm_base_url") 
             or self.properties.get("base_url") 
             or ""
         )
         api_key = (
             config.get("api_key") 
+            or profile_config.get("api_key")
             or tenant_settings.get("llm_api_key") 
             or self.properties.get("api_key") 
             or ""
         )
         model = (
             config.get("model") 
+            or config.get("model_name")
+            or profile_config.get("model_name")
             or tenant_settings.get("llm_model") 
             or self.properties.get("model") 
             or self.properties.get("default_model") 
@@ -171,6 +201,8 @@ class BaseLLMNode(BaseNode, abc.ABC):
             try:
                 val = config.get(key)
                 if val is None or str(val).strip() == "":
+                    val = profile_config.get(key)
+                if val is None or str(val).strip() == "":
                     val = tenant_settings.get(f"llm_{key}")
                 if val is None or str(val).strip() == "":
                     val = self.properties.get(key)
@@ -181,6 +213,8 @@ class BaseLLMNode(BaseNode, abc.ABC):
         def get_int(key: str, default: int) -> int:
             try:
                 val = config.get(key)
+                if val is None or str(val).strip() == "":
+                    val = profile_config.get(key)
                 if val is None or str(val).strip() == "":
                     val = tenant_settings.get(f"llm_{key}")
                 if val is None or str(val).strip() == "":
@@ -197,14 +231,21 @@ class BaseLLMNode(BaseNode, abc.ABC):
 
         # 3. Resolve user prompt and messages from input payload
         input_payload = self.get_input_data(inp) or {}
+        retrieved_context = None
         if isinstance(input_payload, str):
             user_prompt = input_payload
             system_prompt_override = None
             history = []
         else:
-            user_prompt = input_payload.get("prompt") or ""
+            user_prompt = input_payload.get("prompt") or input_payload.get("query") or input_payload.get("input") or ""
             system_prompt_override = input_payload.get("system_prompt_override")
             history = input_payload.get("history") or []
+            retrieved_context = input_payload.get("context")
+
+        # Resolve prompt template if user_prompt is configured in properties/config
+        user_prompt_template = config.get("user_prompt") or self.properties.get("user_prompt")
+        if user_prompt_template and user_prompt_template.strip():
+            user_prompt = self._resolve_variables(user_prompt_template, {"input_data": user_prompt, "data": input_payload})
 
         # System Prompt priority: Input override -> Node properties
         system_prompt = system_prompt_override or config.get("system_prompt") or self.properties.get("system_prompt") or ""
@@ -213,6 +254,8 @@ class BaseLLMNode(BaseNode, abc.ABC):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        if retrieved_context:
+            messages.append({"role": "system", "content": f"Context:\n{retrieved_context}"})
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_prompt})
@@ -284,6 +327,7 @@ class BaseLLMNode(BaseNode, abc.ABC):
 
             out_data = self.set_output_data(inp, {
                 "text": answer,
+                "answer": answer,
                 "usage": {
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,

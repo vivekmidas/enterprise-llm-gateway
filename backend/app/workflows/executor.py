@@ -234,6 +234,11 @@ class WorkflowExecutor:
             ctx["user_data"] = user_data
         if "input_data" not in ctx:
             ctx["input_data"] = input_content
+        # DESIGN CHANGE (shared state refactor): context["state"] is the single shared
+        # variable store for this run (persisted with the trace). Always start empty;
+        # legacy context["nodes"] (e.g. from restarted traces) is dropped.
+        ctx["state"] = {}
+        ctx.pop("nodes", None)
 
         # Shared context lives only in state.context (NodeInput.context); it is not
         # injected into input_content to avoid duplicating it per node in telemetry.
@@ -270,7 +275,7 @@ class WorkflowExecutor:
             "start_time": start_time,
             "start_time_iso": to_iso_utc(start_time),  # DESIGN CHANGE: epoch + ISO-8601 timing
             "latency_ms": 0.0,
-            # node_history removed: per-node status/latency/metadata live in context["nodes"][node_id]["metadata"]
+            # Per-node records (data + metadata) live in agents_executed; shared variables in context["state"]
             "context": context or {},
             "agents_executed": []
         }

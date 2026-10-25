@@ -30,6 +30,39 @@ _FILE_ERROR_MESSAGES = {
     PermissionError: "Permission denied: {exc}. The server process cannot read this file.",
 }
 
+class StateVariableMissingError(KeyError):
+    """Raised when a Jinja template references a missing variable from state."""
+    def __init__(self, key: str):
+        self.key = key
+        super().__init__(f"State variable 'state.{key}' does not exist")
+
+
+class StateDict(dict):
+    """
+    Wrapper around context.state that raises StateVariableMissingError on missing keys
+    during Jinja2 template resolution or dotted path resolution.
+    """
+    def __init__(self, *args, _path='', **kwargs):
+        super().__init__(*args, **kwargs)
+        self._path = _path
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        full_path = f"{self._path}.{name}" if self._path else name
+        if name not in self:
+            raise StateVariableMissingError(full_path)
+        val = self[name]
+        return StateDict(val, _path=full_path) if isinstance(val, dict) else val
+
+    def __getitem__(self, name):
+        full_path = f"{self._path}.{name}" if self._path else str(name)
+        if name not in self:
+            raise StateVariableMissingError(full_path)
+        val = super().__getitem__(name)
+        return StateDict(val, _path=full_path) if isinstance(val, dict) else val
+
+
 class JinjaFallbackDict(dict):
     def __init__(self, fallback_value, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -833,8 +866,11 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
             if isinstance(rendered, Undefined):
                 return None
             return rendered
+        except StateVariableMissingError:
+            raise
         except Exception as e:
-            self.logger.warning("jinja_expression_render_failed", trace_id=inp.trace_id, expr=expr, error=str(e))
+            trace_id = context.get("trace_id") if isinstance(context, dict) else None
+            self.logger.warning("jinja_expression_render_failed", trace_id=trace_id, expr=expr, error=str(e))
             return None
 
     def _normalize_lookup_expression(self, expr: str) -> str:
@@ -1076,7 +1112,7 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
             schema,
             output,
             self.name,
-            context_nodes=inp.context.get("nodes", {})
+            context_state=inp.context.get("state", {})
         )
 
         if errors:
@@ -1093,15 +1129,16 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
     # File-field resolution
     # -------------------------------------------------------------------------
 
-    def _iter_contract_rules(self, inp: NodeInput):
+    def _iter_contract_rules(self, inp: NodeInput, schema: Optional[Dict[str, Any]] = None):
         """
-        Yield each rule dict from the effective input contract.
+        Yield each rule dict from the effective input contract (or the given schema).
 
         Supports both formats:
           • Array-of-rules  (contract has a 'rules' list)
           • Dict keyed by field name (legacy / inline contract)
         """
-        schema = inp.input_schema if getattr(inp, "input_schema", None) else self.input_contract
+        if schema is None:
+            schema = inp.input_schema if getattr(inp, "input_schema", None) else self.input_contract
         if not schema:
             return
 
@@ -1240,6 +1277,118 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 inp.data = json.dumps(data_obj)
             else:
                 inp.data = json.dumps(payload)
+
+    # -------------------------------------------------------------------------
+    # BLOCK COMMENT: SHARED STATE (context.state) <-> CONTRACT `stateable` FIELDS
+    # Description:
+    #   context.state is the single, position-independent store of shared
+    #   variables for a workflow run (also persisted in the trace).
+    #   - Output contract rules with `stateable: true` are PUBLISHED after a
+    #     successful execute: value read from output data, stored under the field
+    #     path (leading "data." envelope stripped; dots -> nested dicts).
+    #     Last writer always wins (merge done by WorkflowState.merge_context).
+    #   - Input contract rules with `stateable`/`state_required` are FILLED from
+    #     context.state when absent in the input payload. `state_required` fields
+    #     missing in both payload and state -> contract violation.
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _state_key(field_name: str) -> str:
+        """Normalizes a contract field path to its state key ("data.a.b" -> "a.b")."""
+        key = str(field_name or "").strip()
+        if key.startswith("$."):
+            key = key[2:]
+        if key.startswith("data.") and key != "data.":
+            key = key[5:]
+        return key
+
+    @staticmethod
+    def _get_path(obj: Any, path: str) -> tuple:
+        """Returns (found, value) for a dotted path inside nested dicts."""
+        current = obj
+        for part in [p for p in path.split(".") if p]:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return False, None
+        return True, current
+
+    @staticmethod
+    def _set_path(obj: Dict[str, Any], path: str, value: Any) -> None:
+        """Sets value at a dotted path, creating nested dicts as needed."""
+        parts = [p for p in path.split(".") if p]
+        current = obj
+        for part in parts[:-1]:
+            if not isinstance(current.get(part), dict):
+                current[part] = {}
+            current = current[part]
+        if parts:
+            current[parts[-1]] = value
+
+    def _collect_state_from_output(self, inp: NodeInput, output: NodeOutput) -> Dict[str, Any]:
+        """Builds the nested dict of stateable output fields to publish into context.state."""
+        schema = inp.output_schema if getattr(inp, "output_schema", None) is not None else self.output_contract
+        rules = [r for r in self._iter_contract_rules(inp, schema=schema) if r.get("stateable") or r.get("state_required")]
+        if not rules:
+            return {}
+        try:
+            body = json.loads(output.data) if isinstance(output.data, str) and output.data else output.data
+        except Exception:
+            body = output.data
+        published: Dict[str, Any] = {}
+        for rule in rules:
+            raw_name = str(rule.get("field_name") or rule.get("name") or "").strip()
+            key = self._state_key(raw_name)
+            if not key:
+                continue
+            found, value = self._get_path(body, raw_name.lstrip("$."))
+            if not found and isinstance(body, dict) and isinstance(body.get("data"), dict):
+                found, value = self._get_path(body["data"], key)
+            if not found:
+                found, value = self._get_path(body, key)
+            if found:
+                self._set_path(published, key, value)
+        return published
+
+    def _apply_state_to_input(self, inp: NodeInput) -> Optional[NodeOutput]:
+        """Fills missing stateable input fields from context.state; fails on missing state_required."""
+        rules = [r for r in self._iter_contract_rules(inp) if r.get("stateable") or r.get("state_required")]
+        if not rules:
+            return None
+        shared_state = (inp.context or {}).get("state") or {}
+        try:
+            data_obj = json.loads(inp.data) if inp.data else {}
+        except Exception:
+            data_obj = {}
+        if not isinstance(data_obj, dict):
+            data_obj = {"data": data_obj}
+        has_envelope = isinstance(data_obj.get("data"), dict)
+        payload = data_obj["data"] if has_envelope else data_obj
+
+        missing: List[str] = []
+        changed = False
+        for rule in rules:
+            key = self._state_key(rule.get("field_name") or rule.get("name") or "")
+            if not key or self._get_path(payload, key)[0]:
+                continue
+            found, value = self._get_path(shared_state, key)
+            if found:
+                self._set_path(payload, key, value)
+                changed = True
+            elif rule.get("state_required"):
+                missing.append(key)
+
+        if changed:
+            inp.data = json.dumps(data_obj)
+        if missing:
+            return NodeOutput(
+                trace_id=inp.trace_id,
+                data=inp.data,
+                status="failure",
+                error_code=400,
+                error_message="; ".join(f"$.{m} is required from state but not found" for m in missing),
+                violations=["contract_violation"],
+            )
+        return None
 
     def get_input_data(self, inp: NodeInput) -> Any:
         """
@@ -1462,7 +1611,9 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
     #                         into output.metadata for EVERY path (incl. early
     #                         validation failures, which previously reported 0).
     #   Timing no longer lives as NodeOutput fields; it lives in node metadata and
-    #   flows to context["nodes"][node_id]["metadata"] via workflows.service.
+    #   flows to agents_executed[i]["metadata"] via workflows.service.
+    #   Step 3 also fills `stateable` input fields from context.state; step 5 also
+    #   publishes `stateable` output fields (metadata["state_published"]).
     # ==========================================================================
     async def run(self, inp: NodeInput) -> NodeOutput:
         """
@@ -1504,7 +1655,10 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                     render_context.update(input_data)
                 render_context["data"] = input_data
                 render_context["input_data"] = input_data
-                render_context["nodes"] = inp.context.get("nodes", {})
+                # DESIGN CHANGE (shared state refactor): `nodes` namespace removed;
+                # shared variables are read from `state` ({{ state.<field> }}).
+                raw_state = inp.context.get("state") or {}
+                render_context["state"] = StateDict(raw_state) if isinstance(raw_state, dict) else raw_state
                 render_context["user_data"] = inp.context.get("user_data", {})
                 self.logger.debug("running_node:resolve_jinja_template", render_context=render_context, trace_id=inp.trace_id)
 
@@ -1514,6 +1668,16 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 else:
                     inp.data = str(resolved_data) if resolved_data is not None else ""
                 inp.config = self._resolve_jinja_templates(inp.config, render_context)
+            except StateVariableMissingError as sve:
+                self.logger.error("missing_state_variable", trace_id=inp.trace_id, error=str(sve))
+                output = NodeOutput(
+                    trace_id=inp.trace_id,
+                    data=inp.data,
+                    status="failure",
+                    error_code=400,
+                    error_message=f"Missing state variable: {str(sve)}",
+                    violations=["missing_state_variable"],
+                )
             except Exception as e:
                 self.logger.error("failed_to_resolve_mapping_templates", trace_id=inp.trace_id, error=str(e))
 
@@ -1525,7 +1689,10 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 template = next((m for t, m in _FILE_ERROR_MESSAGES.items() if isinstance(exc, t)), "File I/O error: {exc}")
                 output = NodeOutput(trace_id=inp.trace_id, data=inp.data, status="failure", error_message=template.format(exc=exc))
 
-            # 3. Validate input (contract first, then node-specific checks)
+            # 3. Fill stateable input fields from context.state, then validate input
+            #    (contract first, then node-specific checks)
+            if output is None:
+                output = self._apply_state_to_input(inp)
             if output is None:
                 output = await self.validate_input_contract(inp) or await self.validate_input(inp)
 
@@ -1536,6 +1703,11 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 if not output.error_message and not output.violations:
                     await self.validate_output_contract(inp, output)
                 output.status = "failure" if output.error_message or output.violations else "success"
+                # Publish stateable output fields (consumed by workflows.service -> context.state)
+                if output.status == "success":
+                    published = self._collect_state_from_output(inp, output)
+                    if published:
+                        output.metadata = {**(output.metadata or {}), "state_published": published}
         except Exception as e:
             self.logger.error("node_run_exception", name=self.name, error=str(e), trace_id=inp.trace_id, input=inp.model_dump())
             output = NodeOutput(trace_id=inp.trace_id, data=inp.data, error_code=500, status="failure", error_message=str(e))

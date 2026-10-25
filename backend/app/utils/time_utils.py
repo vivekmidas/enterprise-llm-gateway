@@ -5,7 +5,7 @@
 #   Single source for node/workflow timing metadata. Emits both epoch timestamps
 #   (client can format in customer locale) and ISO-8601 UTC strings.
 #   Keys stay flat (start_time, end_time, latency_ms, ...) because the frontend
-#   RunVisualizerModal reads context.nodes[id].metadata.latency_ms directly.
+#   RunVisualizerModal reads agents_executed[i].metadata.latency_ms directly.
 # ==============================================================================
 import time
 from datetime import datetime, timezone

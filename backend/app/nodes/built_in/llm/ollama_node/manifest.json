@@ -1,10 +1,10 @@
 {
     "name": "ollama_node",
-    "label": "Ollama Node",
+    "label": "Ollama Chat",
     "node_type": "NODE",
-    "description": "Executes LLM operations (chat, search, embedding, reranking) on an Ollama server with optional Knowledge Base retrieval.",
-    "version": "1.2.0",
-    "category": "brain",
+    "description": "Executes chat completions on local or remote Ollama server using tenant-configured LLM profile.",
+    "version": "1.0.0",
+    "category": "voice",
     "group": "LLM",
     "icon": "bot",
     "color": "#FF8C00",
@@ -14,20 +14,11 @@
     "class_name": "OllamaNode",
     "user_properties": [
         {
-            "key": "llm_profile_id",
+            "key": "profile_name",
             "type": "source",
             "label": "LLM Profile",
             "source": "/api/llm-profiles",
-            "description": "Select LLM Profile for endpoint URL, model, and authentication settings."
-        },
-        {
-            "key": "knowledge_base_ids",
-            "type": "source",
-            "label": "Knowledge Bases",
-            "source": "/api/knowledge/bases",
-            "options": [],
-            "multiple": true,
-            "description": "Select Knowledge Bases to query for context retrieval."
+            "description": "Select tenant-configured LLM profile for Ollama host URL, model, and authentication settings."
         },
         {
             "key": "system_prompt",
@@ -41,7 +32,14 @@
             "type": "textarea",
             "label": "User Prompt Template",
             "default": "",
-            "description": "Optional prompt template override. Can use {{ input_data }} placeholders."
+            "description": "Optional prompt template. Supports variables like {{ input_data }}."
+        },
+        {
+            "key": "model",
+            "type": "string",
+            "label": "Model (Override)",
+            "default": "",
+            "description": "Optional model override if different from profile (e.g. llama3.2, mistral, qwen2.5)."
         },
         {
             "key": "temperature",
@@ -56,23 +54,30 @@
             "label": "Max Tokens",
             "default": 1024,
             "description": "Maximum completion tokens to generate."
-        },
-        {
-            "key": "top_k",
-            "type": "number",
-            "label": "Top K Chunks",
-            "default": 5,
-            "description": "Number of relevant text chunks to retrieve from Knowledge Bases."
-        },
-        {
-            "key": "score_threshold",
-            "type": "number",
-            "label": "Score Threshold",
-            "default": 0.0,
-            "description": "Minimum similarity score threshold (0.0 to 1.0)."
         }
     ],
     "system_properties": [
+        {
+            "key": "base_url",
+            "type": "string",
+            "label": "Fallback Base URL",
+            "default": "http://127.0.0.1:11434",
+            "description": "Default base URL for the Ollama server when no profile is configured."
+        },
+        {
+            "key": "default_model",
+            "type": "string",
+            "label": "Default Model",
+            "default": "llama3.2",
+            "description": "Fallback model name when not specified in profile or node."
+        },
+        {
+            "key": "api_key",
+            "type": "password",
+            "label": "API Key",
+            "default": "ollama",
+            "description": "Authorization token or password if Ollama is reverse-proxied."
+        },
         {
             "key": "timeout_seconds",
             "type": "number",
@@ -91,76 +96,56 @@
     "input_contract": {
         "type": "object",
         "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "The main user instruction or query."
+            },
             "query": {
                 "type": "string",
                 "description": "Alias for prompt input."
             },
-            "prompt": {
+            "context": {
                 "type": "string",
-                "description": "User prompt, query, or text input for chat, search, embedding, or reranking."
+                "description": "Optional context string from upstream knowledge retrieval."
+            },
+            "system_prompt_override": {
+                "type": "string",
+                "description": "Optional system prompt override."
             },
             "history": {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": [
-                        "role",
-                        "content"
-                    ],
                     "properties": {
                         "role": {
-                            "enum": [
-                                "system",
-                                "user",
-                                "assistant"
-                            ],
-                            "type": "string"
+                            "type": "string",
+                            "enum": ["system", "user", "assistant"]
                         },
                         "content": {
                             "type": "string"
                         }
-                    }
+                    },
+                    "required": ["role", "content"]
                 },
-                "description": "Optional conversation history list for chat mode."
-            },
-            "documents": {
-                "type": "array",
-                "description": "Candidate document strings or dict objects for reranking mode."
-            },
-            "knowledge_base_ids": {
-                "type": "array",
-                "items": {
-                    "type": "integer"
-                },
-                "description": "Optional Knowledge Base IDs to query for RAG retrieval."
-            },
-            "system_prompt_override": {
-                "type": "string",
-                "description": "Optional system prompt override for chat and search modes."
+                "description": "Optional conversation history list."
             }
-        }
+        },
+        "required": ["prompt"]
     },
     "output_contract": {
         "type": "object",
-        "required": [
-            "text"
-        ],
         "properties": {
             "text": {
                 "type": "string",
-                "description": "Clean primary string response generated by LLM, embedding json, or reranked results."
+                "description": "Cleaned response string returned by the LLM."
             },
-            "query": {
+            "answer": {
                 "type": "string",
-                "description": "Original query or prompt string."
+                "description": "Alias for text string."
             },
             "usage": {
                 "type": "object",
                 "properties": {
-                    "total_tokens": {
-                        "type": "integer",
-                        "default": 0
-                    },
                     "prompt_tokens": {
                         "type": "integer",
                         "default": 0
@@ -168,37 +153,14 @@
                     "completion_tokens": {
                         "type": "integer",
                         "default": 0
+                    },
+                    "total_tokens": {
+                        "type": "integer",
+                        "default": 0
                     }
                 }
-            },
-            "answer": {
-                "type": "string",
-                "description": "Alias for text string to support downstream nodes expecting answer."
-            },
-            "chunks": {
-                "type": "array",
-                "description": "List of retrieved KB text chunks."
-            },
-            "result": {
-                "type": "object",
-                "description": "Downstream mapping container object."
-            },
-            "context": {
-                "type": "string",
-                "description": "Retrieved context string if KB search was executed."
-            },
-            "results": {
-                "type": "array",
-                "description": "List of ranked document objects (populated for reranking mode)."
-            },
-            "citations": {
-                "type": "array",
-                "description": "List of citation metadata objects."
-            },
-            "embedding": {
-                "type": "array",
-                "description": "Float array containing embedding vector (populated for embedding mode)."
             }
-        }
+        },
+        "required": ["text"]
     }
 }

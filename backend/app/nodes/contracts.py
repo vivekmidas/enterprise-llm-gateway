@@ -144,7 +144,8 @@ def validate_contract(
     contract: Dict[str, Any],
     data: Any,  # NodeInput, NodeOutput, dict, or str
     node_name: str = "node",
-    context_nodes: Optional[Dict[str, Any]] = None,
+    context_nodes: Optional[Dict[str, Any]] = None,  # DEPRECATED: context["nodes"] removed; kept for signature compat
+    context_state: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     from app.core.types.common import NodeInput, NodeOutput
 
@@ -233,10 +234,13 @@ def validate_contract(
                 pass
 
         # Build render context from the actual output body.
+        from app.nodes.base import StateDict
+        raw_state = context_state or {}
         render_context = {
             "data": body,
             **(body if isinstance(body, dict) else {}),
-            "nodes": context_nodes or {},
+            # DESIGN CHANGE (shared state refactor): shared variables via {{ state.<field> }}
+            "state": StateDict(raw_state) if isinstance(raw_state, dict) else raw_state,
         }
 
         resolved_body = resolve_jinja_templates_in_data(body, render_context)
@@ -987,6 +991,8 @@ def _resolve_single_expression(expr: str, context: Dict[str, Any]) -> Any:
         if isinstance(rendered, Undefined):
             return None
         return rendered
+    except KeyError:
+        raise
     except Exception:
         return None
 

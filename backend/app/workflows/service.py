@@ -190,12 +190,18 @@ async def get_compiled_workflow(workflow_id: str, version: Optional[str] = None,
 
 
 def _get_node_metadata(state: Any, node_id: Optional[str]) -> Dict[str, Any]:
-    """Returns context["nodes"][node_id]["metadata"] (node-scoped metadata) or {}."""
-    if not node_id or not isinstance(getattr(state, "context", None), dict):
+    """
+    Returns the metadata of the LATEST execution record of node_id or {}.
+    DESIGN CHANGE (shared state refactor): reads state.agents_executed (list of
+    records) instead of the removed context["nodes"][node_id].
+    """
+    if not node_id:
         return {}
-    node_entry = (state.context.get("nodes") or {}).get(node_id) or {}
-    meta = node_entry.get("metadata") if isinstance(node_entry, dict) else None
-    return meta if isinstance(meta, dict) else {}
+    for record in reversed(getattr(state, "agents_executed", None) or []):
+        if isinstance(record, dict) and record.get("node_id") == node_id:
+            meta = record.get("metadata")
+            return meta if isinstance(meta, dict) else {}
+    return {}
 
 
 def evaluate_condition_expression(expression: str, state: Any, source_node_id: Optional[str] = None) -> bool:
@@ -204,8 +210,8 @@ def evaluate_condition_expression(expression: str, state: Any, source_node_id: O
     against the state data/context/metadata.
 
     DESIGN CHANGE (node-scoped metadata refactor): node-generated metadata is no longer
-    in workflow-level state.metadata, so the source node's
-    context["nodes"][source_node_id]["metadata"] keys are exposed as variables too.
+    in workflow-level state.metadata, so the source node's latest
+    agents_executed record metadata keys are exposed as variables too.
     """
     logger.debug("evaluating_condition_expression", expression=expression)
     variables = {}
@@ -302,7 +308,7 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]], source_node_id
     Factory function to generate the conditional router.
 
     DESIGN CHANGE (node-scoped metadata refactor): source_node_id lets the router read
-    the source node's metadata from context["nodes"][source_node_id]["metadata"].
+    the source node's metadata from its latest agents_executed record.
     """
     async def router(state: Any) -> Any:
         logger.info("routing_evaluation_started", violations=state.violations, metadata=state.metadata, trace_id=state.trace_id)
@@ -546,13 +552,12 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 node_input_data = try_parse_json(agent_input.data)
                 node_output_data = try_parse_json(result.data)
 
-                # DESIGN CHANGE (node-scoped metadata refactor):
-                # - Removed metadata["node_history"] (duplicated input/output already in context.nodes).
-                # - Node execution details + node-generated metadata (result.metadata) are now
-                #   stored under context["nodes"][node_id]["metadata"] instead of being spread
-                #   into workflow-level state.metadata.
-                # - context reducer (merge_context) deep-merges "nodes", so only this node's
-                #   entry is returned.
+                # DESIGN CHANGE (shared state refactor):
+                # - Per-node execution record (input/output data + metadata) is appended to
+                #   agents_executed (ordered list; operator.add reducer) instead of
+                #   context["nodes"][node_id].
+                # - Stateable output fields (result.metadata["state_published"]) are merged
+                #   into context["state"] (deep merge, last writer always wins).
                 # Execution keys placed last so they stay authoritative over node-generated keys.
                 # DESIGN CHANGE (node timing -> metadata): start_time/start_time_iso/end_time/
                 # end_time_iso/latency_ms come from result.metadata (stamped by BaseNode.run).
@@ -569,17 +574,9 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     "masked_content": result.data,
                 }
 
-                updates["context"] = {
-                    "nodes": {
-                        node_id: {
-                            "data": {
-                                "input_data": node_input_data,
-                                "output_data": node_output_data
-                            },
-                            "metadata": node_metadata,
-                        }
-                    }
-                }
+                published_state = node_metadata.get("state_published")
+                if isinstance(published_state, dict) and published_state:
+                    updates["context"] = {"state": published_state}
 
                 # Violations are merged by LangGraph reducers.
                 updates["violations"] = list(result.violations or [])
@@ -587,8 +584,16 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                     updates["violations"].append(f"node_failure:{node_id}")
                     logger.error("agent_execution_failed", agent=agent_name, error_message=result.error_message, node_id=node_id, violations=result.violations, trace_id=state.trace_id)
                
-                # Update actual executed agents list
-                updates["agents_executed"] = [agent_name]
+                # Append this node's execution record
+                updates["agents_executed"] = [{
+                    "node_id": node_id,
+                    "agent_name": agent_name,
+                    "data": {
+                        "input_data": node_input_data,
+                        "output_data": node_output_data,
+                    },
+                    "metadata": node_metadata,
+                }]
 
                 return updates
 
@@ -603,27 +608,24 @@ def create_node_execution_wrapper(agent: Any, node_config: Dict[str, Any], node_
                 )
                 logger.error("agent_execution_failed", agent=agent_name, node_id=node_id, error=str(e), trace_id=state.trace_id)
                 
-                # DESIGN CHANGE (node-scoped metadata refactor): exception details stored
-                # in context["nodes"][node_id]["metadata"] instead of metadata["node_history"].
+                # DESIGN CHANGE (shared state refactor): exception record appended to
+                # agents_executed (replaces context["nodes"][node_id]).
                 return {
                     "status": "failure",
                     "error_message": str(e),
                     "error_code": 500,
                     "violations": [f"node_exception:{node_id}"],
-                    "context": {
-                        "nodes": {
-                            node_id: {
-                                "data": {"input_data": None, "output_data": None},
-                                "metadata": {
-                                    "agent_name": agent_name,
-                                    "status": "exception",
-                                    "error": str(e),
-                                    **build_timing_metadata(wrapper_start_ts, perf_start=wrapper_perf_start),
-                                },
-                            }
-                        }
-                    },
-                    "agents_executed": [agent_name]
+                    "agents_executed": [{
+                        "node_id": node_id,
+                        "agent_name": agent_name,
+                        "data": {"input_data": None, "output_data": None},
+                        "metadata": {
+                            "agent_name": agent_name,
+                            "status": "exception",
+                            "error": str(e),
+                            **build_timing_metadata(wrapper_start_ts, perf_start=wrapper_perf_start),
+                        },
+                    }],
                 }
     return agent_node
 

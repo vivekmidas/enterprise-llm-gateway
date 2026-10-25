@@ -1,76 +1,55 @@
 """
-Ollama Independent Node implementation.
-Extends GenericLLMAgent to execute multi-capability LLM operations (chat, search, embedding, reranking)
-against a local or remote Ollama server.
-Supports LLM Profile resolution, tenant-scoped Knowledge Base retrieval (RetrievalService),
-system-configurable input & output contracts, and downstream node contract mapping.
+Ollama Provider Node implementation.
+Extends BaseLLMNode to execute chat completions against a local or remote Ollama server.
+Supports standard OpenAI-compatible completions endpoints, model querying, and token tracking.
 """
 
-import json
-import time
-import httpx
 from typing import Any, Dict, List, Optional
-from sqlalchemy import select
-
-from app.nodes.built_in.llm.generic_llm_agent import GenericLLMAgent
-from app.core.types.common import NodeInput, NodeOutput
-from app.knowledge.context_builder import estimate_tokens
+from app.nodes.built_in.llm.base_llm_node import BaseLLMNode
 
 
-class OllamaNode(GenericLLMAgent):
+class OllamaNode(BaseLLMNode):
     """
-    Independent Ollama Node.
-    Reads provider preset/profile configuration, executes RAG retrieval via Knowledge Base,
-    and supports system-defined input and output contract validation.
+    Ollama LLM Node.
+    Executes chat completions against an Ollama server instance.
     """
-
-
-    # Default Input Contract
-
-    # Default Output Contract: Includes 'text', 'answer', 'context', 'chunks', 'citations', 'usage', and 'result' for downstream node input mapping
-
-    # Standard System Properties configured by System Admins
-
-    # Common User-Editable Properties in Workflow Builder
-
-    async def init(self) -> None:
-        """Initializes OllamaNode."""
-        await super().init()
-        self.logger.info("ollama_node_initialized", node_name=self.name, properties=self.properties)
+    name: str = "ollama_node"
+    label: str = "Ollama Chat"
+    description: str = "Executes chat completions on local or remote Ollama server."
+    version: str = "1.0.0"
+    category: str = "LLM"
+    group: str = "LLM"
+    icon: str = "bot"
+    color: str = "#FF8C00"
+    badge: str = "Ollama"
+    sub_label: str = "Local Engine"
 
     def build_auth_headers(self, api_key: str) -> Dict[str, str]:
         """Constructs Authorization headers if API key is provided and non-default."""
         headers = {}
-        if api_key and api_key.strip() and api_key != "ollama" and api_key != "":
+        if api_key and api_key.strip() and api_key not in ("ollama", "EMPTY"):
             headers["Authorization"] = f"Bearer {api_key.strip()}"
         return headers
 
     def get_completions_endpoint(self, base_url: str, model: str = "", api_key: str = "") -> str:
         """Constructs chat completions endpoint URL for Ollama."""
-        url = base_url.rstrip("/")
+        url = (base_url or "http://127.0.0.1:11434").rstrip("/")
         if "chat/completions" in url or "api/chat" in url:
             return url
         return f"{url}/v1/chat/completions"
 
     def get_models_endpoint(self, base_url: str) -> Optional[str]:
         """Returns the endpoint URL for fetching available models in Ollama."""
-        url = base_url.rstrip("/")
+        url = (base_url or "http://127.0.0.1:11434").rstrip("/")
         if "chat/completions" in url:
             url = url.replace("/chat/completions", "")
         return f"{url}/v1/models"
 
-    def get_embedding_endpoint(self, base_url: str) -> str:
-        """Constructs embedding endpoint URL for Ollama."""
-        url = base_url.rstrip("/")
-        if "embeddings" in url:
-            return url
-        return f"{url}/api/embeddings"
-
     def build_payload(
-        self, 
-        messages: List[Dict[str, str]], 
-        model: str, 
-        temperature: float, 
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
         max_tokens: int,
         top_p: float
     ) -> Dict[str, Any]:
@@ -85,510 +64,17 @@ class OllamaNode(GenericLLMAgent):
         }
 
     def parse_response(self, response_json: Dict[str, Any]) -> str:
-        """Parses clean text output from Ollama chat or completion API response."""
+        """Parses clean text output from Ollama chat or completions API response."""
         if "message" in response_json:
             message = response_json.get("message", {})
             content = message.get("content")
             if content is not None:
                 return str(content)
-        elif "choices" in response_json and response_json["choices"]:
-            choice = response_json["choices"][0]
-            content = choice.get("message", {}).get("content")
+        choices = response_json.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content")
             if content is not None:
                 return str(content)
-        elif "response" in response_json:
+        if "response" in response_json:
             return str(response_json["response"])
-        raise ValueError("Ollama response does not contain message or choices content.")
-
-    @staticmethod
-    def _normalise_int_list(value: Any) -> List[int]:
-        """Convert supported ID formats into a validated integer list."""
-        if value is None or value == "":
-            return []
-        if isinstance(value, int):
-            return [value]
-        if isinstance(value, str):
-            items = [item.strip() for item in value.split(",") if item.strip()]
-            return [int(item) for item in items if item.isdigit()]
-        if isinstance(value, (list, tuple, set)):
-            res = []
-            for item in value:
-                try:
-                    res.append(int(item))
-                except (ValueError, TypeError):
-                    pass
-            return res
-        return []
-
-    async def execute(self, inp: NodeInput) -> NodeOutput:
-        """
-        Executes Ollama model request based on configured model_type, LLM Profile,
-        and optional Knowledge Base search retrieval.
-        Tracks all requests and formats downstream-compatible output data.
-        """
-        start_time = time.perf_counter()
-
-        # 1. Validate Input Contract
-        contract_failure = await self.validate_input_contract(inp)
-        if contract_failure:
-            return contract_failure
-
-        # 2. Priority Resolution of Config & Parameters
-        config = inp.config or {}
-
-        llm_profile_id = config.get("llm_profile_id") or self.properties.get("llm_profile_id")
-        customer_id = None
-        user_id = None
-        if inp.context and isinstance(inp.context, dict):
-            user_data = inp.context.get("user_data") or {}
-            customer_id = user_data.get("customer_id") or inp.context.get("customer_id")
-            user_id = user_data.get("id") or user_data.get("user_id")
-
-        profile_config = {}
-        if llm_profile_id or customer_id:
-            try:
-                import sys
-                if "pytest" not in sys.modules:
-                    from app.core.database import AsyncSessionLocal
-                    from app.core.profile_resolver import ProfileResolver
-                    async with AsyncSessionLocal() as db_session:
-                        resolver = ProfileResolver(db=db_session)
-                        # ==============================================================================
-                        # BLOCK COMMENT: STRING-SAFE PROFILE RESOLUTION
-                        # Pass string/UUID profile_id and customer_id safely without int() ValueError crashes.
-                        # ==============================================================================
-                        resolved = await resolver.resolve_execution_context(
-                            profile_id=str(llm_profile_id) if llm_profile_id else None,
-                            customer_id=str(customer_id) if customer_id else "1",
-                            model_type=str(config.get("model_type") or "generation")
-                        )
-                        if resolved:
-                            profile_config = resolved
-            except Exception as exc:
-                self.logger.warning("ollama_profile_resolution_failed", error=str(exc))
-
-        base_url = (
-            config.get("base_url") 
-            or profile_config.get("base_url")
-            or self.properties.get("base_url") 
-            or "http://127.0.0.1:11434"
-        )
-        api_key = (
-            config.get("api_key") 
-            or profile_config.get("api_key")
-            or self.properties.get("api_key") 
-            or "ollama"
-        )
-        model_type = str(
-            config.get("model_type") 
-            or profile_config.get("model_type")
-            or self.properties.get("model_type") 
-            or "chat"
-        ).lower()
-        model_name = (
-            config.get("model") 
-            or config.get("model_name") 
-            or profile_config.get("model_name")
-            or self.properties.get("model") 
-            or self.properties.get("default_model") 
-            or "llama3.2"
-        )
-
-        def get_float(key: str, default_val: float) -> float:
-            try:
-                val = config.get(key)
-                if val is None or str(val).strip() == "":
-                    val = profile_config.get(key)
-                if val is None or str(val).strip() == "":
-                    val = self.properties.get(key)
-                return float(val) if val is not None else default_val
-            except (ValueError, TypeError):
-                return default_val
-
-        def get_int(key: str, default_val: int) -> int:
-            try:
-                val = config.get(key)
-                if val is None or str(val).strip() == "":
-                    val = profile_config.get(key)
-                if val is None or str(val).strip() == "":
-                    val = self.properties.get(key)
-                return int(val) if val is not None else default_val
-            except (ValueError, TypeError):
-                return default_val
-
-        temperature = get_float("temperature", float(profile_config.get("temperature", 0.7)))
-        max_tokens = get_int("max_tokens", int(profile_config.get("max_tokens", 1024)))
-        top_p = get_float("top_p", 1.0)
-        top_k = get_int("top_k", 5)
-        score_threshold = get_float("score_threshold", 0.0)
-        timeout_seconds = get_int("timeout_seconds", 60)
-        max_retries = get_int("max_retries", 3)
-
-        # 3. Resolve Input Payload and Query
-        input_payload = self.get_input_data(inp) or {}
-        if isinstance(input_payload, str):
-            user_query = input_payload
-            system_prompt_override = None
-            history = []
-            documents = []
-            raw_kb_ids = None
-            passed_context = ""
-            passed_chunks = []
-            passed_citations = []
-        elif isinstance(input_payload, dict):
-            user_query = (
-                input_payload.get("prompt") 
-                or input_payload.get("query") 
-                or input_payload.get("input") 
-                or ""
-            )
-            system_prompt_override = input_payload.get("system_prompt_override")
-            history = input_payload.get("history") or []
-            documents = input_payload.get("documents") or []
-            raw_kb_ids = input_payload.get("knowledge_base_ids")
-            passed_context = input_payload.get("context") or ""
-            passed_chunks = input_payload.get("chunks") or ([] if not input_payload.get("chunk") else [input_payload.get("chunk")])
-            passed_citations = input_payload.get("citations") or []
-        else:
-            user_query = str(input_payload)
-            system_prompt_override = None
-            history = []
-            documents = []
-            raw_kb_ids = None
-            passed_context = ""
-            passed_chunks = []
-            passed_citations = []
-
-        # Resolve prompt template if user_prompt is configured
-        user_prompt_template = config.get("user_prompt") or self.properties.get("user_prompt")
-        if user_prompt_template and user_prompt_template.strip():
-            user_prompt = self._resolve_variables(user_prompt_template, {"input_data": user_query, "data": input_payload})
-        else:
-            user_prompt = user_query
-
-        # Resolve system prompt
-        system_prompt = system_prompt_override or config.get("system_prompt") or self.properties.get("system_prompt") or "You are a helpful assistant."
-
-        # Knowledge base IDs resolution: input_payload -> config -> user_properties
-        kb_ids = self._normalise_int_list(
-            raw_kb_ids if raw_kb_ids is not None
-            else config.get("knowledge_base_ids", self.properties.get("knowledge_base_ids"))
-        )
-
-        retrieved_context = passed_context
-        retrieved_chunks = passed_chunks
-        retrieved_citations = passed_citations
-
-        # 4. Generic KB Retrieval (if knowledge_base_ids are supplied)
-        if kb_ids and customer_id:
-            try:
-                from app.core.database import AsyncSessionLocal
-                from app.nodes.built_in.kb.retrieval_service import RetrievalService
-                from app.knowledge.retrieval_models import RetrievalRequest
-
-                approach = str(config.get("approach", "hybrid"))
-                enable_reranking = bool(config.get("enable_reranking", False))
-
-                req = RetrievalRequest(
-                    customer_id=int(customer_id),
-                    user_id= user_id if user_id else None,
-                    query=user_query,
-                    knowledge_base_ids=kb_ids,
-                    top_k=top_k,
-                    min_score=score_threshold,
-                    approach=approach,
-                    enable_reranking=enable_reranking,
-                    max_context_tokens=6000
-                )
-
-                async with AsyncSessionLocal() as db_sess:
-                    service = RetrievalService(db=db_sess)
-                    ret_res = await service.retrieve(req)
-                    if ret_res and ret_res.response and ret_res.response.context:
-                        retrieved_context = ret_res.response.context.context or ""
-                        raw_chunks = ret_res.response.context.chunks or []
-                        retrieved_chunks = [c.model_dump() if hasattr(c, "model_dump") else dict(c) for c in raw_chunks]
-                        
-                        # Build citations
-                        retrieved_citations = []
-                        for idx, c in enumerate(raw_chunks, start=1):
-                            doc_id = getattr(c, "document_id", None) or (c.get("document_id") if isinstance(c, dict) else None)
-                            meta = getattr(c, "metadata", {}) or (c.get("metadata") if isinstance(c, dict) else {})
-                            retrieved_citations.append({
-                                "index": idx,
-                                "document_id": doc_id,
-                                "document_name": meta.get("document_name") or f"Doc {doc_id}",
-                                "score": getattr(c, "score", None) or (c.get("score") if isinstance(c, dict) else 0.0),
-                                "metadata": meta
-                            })
-            except Exception as exc:
-                self.logger.warning("ollama_kb_retrieval_failed", trace_id=inp.trace_id, error=str(exc))
-
-        # Build combined context from chunks if retrieved_context is empty
-        if not retrieved_context and retrieved_chunks:
-            chunk_texts = []
-            for c in retrieved_chunks:
-                cnt = c.get("content") if isinstance(c, dict) else getattr(c, "content", None)
-                if cnt:
-                    chunk_texts.append(str(cnt).strip())
-            if chunk_texts:
-                retrieved_context = "\n\n---\n\n".join(chunk_texts)
-
-        # 5. Multi-capability Execution (Embedding, Reranking, Chat/Search)
-        raw_out = {}
-        endpoint = ""
-
-        # --- MODE A: EMBEDDING ---
-        if model_type == "embedding":
-            endpoint = self.get_embedding_endpoint(base_url)
-            embed_text = user_prompt or user_query or ""
-            payload = {"model": model_name, "prompt": embed_text}
-
-            headers = self.build_auth_headers(api_key)
-            headers["Content-Type"] = "application/json"
-
-            response_json = None
-            last_error = None
-            for attempt in range(1, max_retries + 1):
-                try:
-                    async with httpx.AsyncClient(timeout=float(timeout_seconds)) as client:
-                        response = await client.post(endpoint, headers=headers, json=payload)
-                        response.raise_for_status()
-                        response_json = response.json()
-                        break
-                except Exception as exc:
-                    last_error = exc
-                    self.logger.warning("ollama_embedding_attempt_failed", trace_id=inp.trace_id, attempt=attempt, error=str(exc))
-                    if attempt < max_retries:
-                        await time.sleep(0.5 * attempt)
-
-            if response_json is None:
-                err_msg = f"Ollama embedding request failed after {max_retries} attempts: {str(last_error)}"
-                return NodeOutput(trace_id=inp.trace_id, data=inp.data, status="failure", error_message=err_msg)
-
-            embedding_vec = response_json.get("embedding") or []
-            prompt_tokens = estimate_tokens(embed_text)
-            usage_dict = {"prompt_tokens": prompt_tokens, "completion_tokens": 0, "total_tokens": prompt_tokens}
-
-            answer = json.dumps(embedding_vec)
-            raw_out = {
-                "text": answer,
-                "answer": answer,
-                "query": user_query,
-                "embedding": embedding_vec,
-                "usage": usage_dict,
-                "result": {
-                    "text": answer,
-                    "embedding": embedding_vec,
-                    "usage": usage_dict
-                }
-            }
-
-        # --- MODE B: RERANKING ---
-        elif model_type == "reranking":
-            endpoint = self.get_completions_endpoint(base_url, model_name, api_key)
-            doc_list = documents if isinstance(documents, list) else []
-            doc_str = "\n".join([f"[{idx+1}] {doc if isinstance(doc, str) else json.dumps(doc)}" for idx, doc in enumerate(doc_list)])
-            
-            rerank_prompt = f"Query: {user_prompt}\n\nDocuments:\n{doc_str}\n\nTask: Rank documents by relevance. Return JSON list format: [{{'index': 1, 'score': 0.95}}]"
-            messages = [
-                {"role": "system", "content": "You are a document relevance reranker."},
-                {"role": "user", "content": rerank_prompt}
-            ]
-            payload = self.build_payload(messages, model_name, 0.0, max_tokens, top_p)
-            headers = self.build_auth_headers(api_key)
-            headers["Content-Type"] = "application/json"
-
-            response_json = None
-            last_error = None
-            for attempt in range(1, max_retries + 1):
-                try:
-                    async with httpx.AsyncClient(timeout=float(timeout_seconds)) as client:
-                        response = await client.post(endpoint, headers=headers, json=payload)
-                        response.raise_for_status()
-                        response_json = response.json()
-                        break
-                except Exception as exc:
-                    last_error = exc
-                    self.logger.warning("ollama_reranking_attempt_failed", trace_id=inp.trace_id, attempt=attempt, error=str(exc))
-                    if attempt < max_retries:
-                        await time.sleep(0.5 * attempt)
-
-            if response_json is None:
-                err_msg = f"Ollama reranking request failed after {max_retries} attempts: {str(last_error)}"
-                return NodeOutput(trace_id=inp.trace_id, data=inp.data, status="failure", error_message=err_msg)
-
-            answer = self.parse_response(response_json)
-            rerank_results = [{"index": idx, "document": doc, "relevance_score": 1.0 / (idx + 1)} for idx, doc in enumerate(doc_list)]
-            prompt_tokens = estimate_tokens(rerank_prompt)
-            completion_tokens = estimate_tokens(answer)
-            usage_dict = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens}
-
-            raw_out = {
-                "text": answer,
-                "answer": answer,
-                "query": user_query,
-                "results": rerank_results,
-                "usage": usage_dict,
-                "result": {
-                    "text": answer,
-                    "results": rerank_results,
-                    "usage": usage_dict
-                }
-            }
-
-        # --- MODE C: CHAT / SEARCH ---
-        else:
-            endpoint = self.get_completions_endpoint(base_url, model_name, api_key)
-            answer = ""
-            usage_dict = {}
-
-            # Attempt ResponseGenerationService integration if available
-            used_resp_gen = False
-            try:
-                from app.nodes.built_in.kb.response_generation_service import ResponseGenerationService
-                from app.knowledge.retrieval_models import ResponseGenerationRequest, RetrievalContext, RetrievedChunk
-
-                # Build valid RetrievalContext wrapper required by ResponseGenerationRequest
-                chunk_objs = []
-                for c in retrieved_chunks:
-                    if isinstance(c, dict):
-                        chunk_objs.append(RetrievedChunk(
-                            chunk_id=c.get("chunk_id", 0),
-                            document_id=c.get("document_id", 0),
-                            knowledge_base_id=c.get("knowledge_base_id", 0),
-                            score=c.get("score", 0.0),
-                            chunk_index=c.get("chunk_index", 0),
-                            content=c.get("content", "")
-                        ))
-                    elif hasattr(c, "content"):
-                        chunk_objs.append(c)
-
-                context_obj = RetrievalContext(
-                    chunks=chunk_objs,
-                    context=retrieved_context or "",
-                    total_chunks=len(chunk_objs),
-                    total_tokens=estimate_tokens(retrieved_context or "")
-                )
-
-                gen_req = ResponseGenerationRequest(
-                    query=user_prompt or user_query,
-                    context=context_obj,
-                    system_prompt=system_prompt,
-                    temperature=temperature,
-                    max_generation_tokens=max_tokens,
-                    customer_id=int(customer_id) if customer_id else None,
-                    llm_config={
-                        "provider": "ollama",
-                        "model": model_name,
-                        "base_url": base_url,
-                        "api_key": api_key,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature
-                    }
-                )
-
-                gen_service = ResponseGenerationService()
-                gen_res = await gen_service.generate_response(gen_req)
-                if gen_res and gen_res.answer:
-                    answer = gen_res.answer
-                    used_tokens = getattr(gen_res, "used_tokens", 0) or estimate_tokens(answer)
-                    usage_dict = {
-                        "prompt_tokens": estimate_tokens(user_prompt),
-                        "completion_tokens": estimate_tokens(answer),
-                        "total_tokens": used_tokens
-                    }
-                    used_resp_gen = True
-            except Exception as exc:
-                self.logger.debug("ollama_response_gen_service_bypassed", error=str(exc))
-
-            # Direct Ollama HTTP completions execution if ResponseGenerationService was not used
-            if not used_resp_gen:
-                messages = []
-                if system_prompt:
-                    messages.append({"role": "system", "content": system_prompt})
-                if retrieved_context:
-                    messages.append({"role": "system", "content": f"Retrieved Context:\n{retrieved_context}"})
-                for msg in history:
-                    if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                        messages.append({"role": msg["role"], "content": msg["content"]})
-                messages.append({"role": "user", "content": user_prompt})
-
-                payload = self.build_payload(messages, model_name, temperature, max_tokens, top_p)
-                headers = self.build_auth_headers(api_key)
-                headers["Content-Type"] = "application/json"
-
-                response_json = None
-                last_error = None
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        async with httpx.AsyncClient(timeout=float(timeout_seconds)) as client:
-                            response = await client.post(endpoint, headers=headers, json=payload)
-                            response.raise_for_status()
-                            response_json = response.json()
-                            break
-                    except Exception as exc:
-                        last_error = exc
-                        self.logger.warning("ollama_chat_attempt_failed", trace_id=inp.trace_id, attempt=attempt, error=str(exc))
-                        if attempt < max_retries:
-                            await time.sleep(0.5 * attempt)
-
-                if response_json is None:
-                    err_msg = f"Ollama chat request failed after {max_retries} attempts: {str(last_error)}"
-                    return NodeOutput(trace_id=inp.trace_id, data=inp.data, status="failure", error_message=err_msg)
-
-                answer = self.parse_response(response_json)
-                prompt_tokens = estimate_tokens(json.dumps(messages))
-                completion_tokens = estimate_tokens(answer)
-                usage_data = response_json.get("usage", {})
-                if usage_data:
-                    prompt_tokens = usage_data.get("prompt_tokens") or prompt_tokens
-                    completion_tokens = usage_data.get("completion_tokens") or completion_tokens
-
-                usage_dict = {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens
-                }
-
-            raw_out = {
-                "text": answer,
-                "answer": answer,
-                "query": user_query,
-                "context": retrieved_context,
-                "chunks": retrieved_chunks,
-                "citations": retrieved_citations,
-                "usage": usage_dict,
-                "result": {
-                    "text": answer,
-                    "answer": answer,
-                    "query": user_query,
-                    "context": retrieved_context,
-                    "usage": usage_dict,
-                    "status": "success"
-                }
-            }
-
-        # 6. Package output envelope string and return NodeOutput
-        out_data_str = self.set_output_data(inp, raw_out)
-
-        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-        output_obj = NodeOutput(
-            trace_id=inp.trace_id,
-            data=out_data_str,
-            metadata={
-                "endpoint": endpoint,
-                "model_type": model_type,
-                "model": model_name,
-                "elapsed_ms": elapsed_ms,
-                "usage": raw_out.get("usage", {})
-            },
-            status="success"
-        )
-
-        # 7. Validate Output Contract
-        contract_output_failure = await self.validate_output_contract(inp, output_obj)
-        if contract_output_failure:
-            return contract_output_failure
-
-        return output_obj
+        raise ValueError("Ollama response does not contain message, choices, or response content.")

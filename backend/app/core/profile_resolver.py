@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Union
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -206,17 +206,23 @@ class ProfileResolver:
 
         str_cid = str(customer_id) if customer_id is not None else None
 
-        # Try explicit profile
+        # Try explicit profile by ID or name
         if profile_id:
             str_pid = str(profile_id)
-            stmt = select(LLMProfileDB).where(LLMProfileDB.id == str_pid)
+            stmt = select(LLMProfileDB).where(
+                or_(LLMProfileDB.id == str_pid, LLMProfileDB.name == str_pid)
+            )
             if str_cid:
                 stmt = stmt.where(LLMProfileDB.customer_id == str_cid)
             result = await self.db.execute(stmt)
             profile = result.scalar_one_or_none()
             if not profile and str_cid:
                 # Fallback to lookup without customer filter if shared or system-level profile
-                res_fallback = await self.db.execute(select(LLMProfileDB).where(LLMProfileDB.id == str_pid))
+                res_fallback = await self.db.execute(
+                    select(LLMProfileDB).where(
+                        or_(LLMProfileDB.id == str_pid, LLMProfileDB.name == str_pid)
+                    )
+                )
                 profile = res_fallback.scalar_one_or_none()
             if profile and profile.settings:
                 logger.debug("profile_resolved_by_id", extra={"profile_id": str_pid})
