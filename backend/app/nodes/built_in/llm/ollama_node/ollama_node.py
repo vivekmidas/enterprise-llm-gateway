@@ -13,16 +13,6 @@ class OllamaNode(BaseLLMNode):
     Ollama LLM Node.
     Executes chat completions against an Ollama server instance.
     """
-    name: str = "ollama_node"
-    label: str = "Ollama Chat"
-    description: str = "Executes chat completions on local or remote Ollama server."
-    version: str = "1.0.0"
-    category: str = "LLM"
-    group: str = "LLM"
-    icon: str = "bot"
-    color: str = "#FF8C00"
-    badge: str = "Ollama"
-    sub_label: str = "Local Engine"
 
     def build_auth_headers(self, api_key: str) -> Dict[str, str]:
         """Constructs Authorization headers if API key is provided and non-default."""

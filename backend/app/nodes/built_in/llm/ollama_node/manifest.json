@@ -3,7 +3,7 @@
     "label": "Ollama Chat",
     "node_type": "NODE",
     "description": "Executes chat completions on local or remote Ollama server using tenant-configured LLM profile.",
-    "version": "1.0.0",
+    "version": "2.0.4",
     "category": "voice",
     "group": "LLM",
     "icon": "bot",
@@ -33,13 +33,6 @@
             "label": "User Prompt Template",
             "default": "",
             "description": "Optional prompt template. Supports variables like {{ input_data }}."
-        },
-        {
-            "key": "model",
-            "type": "string",
-            "label": "Model (Override)",
-            "default": "",
-            "description": "Optional model override if different from profile (e.g. llama3.2, mistral, qwen2.5)."
         },
         {
             "key": "temperature",
@@ -135,7 +128,7 @@
     "output_contract": {
         "type": "object",
         "properties": {
-            "text": {
+            "query": {
                 "type": "string",
                 "description": "Cleaned response string returned by the LLM."
             },

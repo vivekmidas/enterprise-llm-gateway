@@ -136,11 +136,7 @@ class BaseLLMNode(BaseNode, abc.ABC):
 
         # Profile identifier (profile_name, profile_id, or llm_profile_id)
         profile_identifier = (
-            config.get("profile_name")
-            or config.get("profile_id")
-            or config.get("llm_profile_id")
-            or self.properties.get("profile_name")
-            or self.properties.get("profile_id")
+            config.get("llm_profile_id")
             or self.properties.get("llm_profile_id")
         )
 
@@ -326,7 +322,7 @@ class BaseLLMNode(BaseNode, abc.ABC):
             self.logger.info("llm_execution_success", trace_id=inp.trace_id, elapsed_ms=elapsed_ms, total_tokens=total_tokens)
 
             out_data = self.set_output_data(inp, {
-                "text": answer,
+                "query": user_prompt,
                 "answer": answer,
                 "usage": {
                     "prompt_tokens": prompt_tokens,
