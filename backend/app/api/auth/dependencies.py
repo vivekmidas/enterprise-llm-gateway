@@ -493,12 +493,20 @@ async def get_current_admin(
 
 def has_permission_scope(user_permissions: List[str], required_permission: str) -> bool:
     """
-    Checks whether a user's permissions list satisfies a required permission.
-    Supports:
-    - full wildcard *:*:*
-    - exact permission match (e.g. admin:knowledge:create)
-    - action wildcards / manage (e.g. admin:knowledge:manage or admin:knowledge:*)
-    - submodule wildcards (e.g. admin:*:*)
+    ===========================================================================
+    BLOCK COMMENT: 1-TO-1 & LEGACY ALIAS-AWARE PERMISSION SCOPE CHECKER
+    Reference: EPIC-RBAC-1TO1-001 / STORY-CANONICAL-ROUTE-PERMS-001
+    Description:
+        Checks whether a user's permissions list satisfies a required permission.
+        Supports:
+        - Full wildcard *:*:*
+        - Exact permission match (e.g. admin:roles:view, admin:knowledge:create)
+        - Bidirectional 1-to-1 and legacy aliases (e.g. admin:workflows:view <->
+          workflows:builder:view <-> workflows:view; admin:roles:view <->
+          admin:role_management:view; admin:users:view <-> admin:user_management:read)
+        - Action wildcards / manage (e.g. admin:roles:manage or admin:roles:*)
+        - Submodule wildcards (e.g. admin:*:*)
+    ===========================================================================
     """
     if not user_permissions or not isinstance(user_permissions, list):
         return False
@@ -506,29 +514,23 @@ def has_permission_scope(user_permissions: List[str], required_permission: str) 
     if "*:*:*" in user_permissions:
         return True
 
-    if required_permission in user_permissions:
-        return True
+    from app.core.types.users import expand_permission_aliases
+    import fnmatch
 
-    parts = required_permission.split(":")
-    module = parts[0] if len(parts) > 0 else ""
-    submodule = parts[1] if len(parts) > 1 else ""
+    acceptable = expand_permission_aliases(required_permission)
+    req_lower = required_permission.strip().lower()
 
-    # Check Module wildcard xx:*:* or xx:* or xx:manage
-    if (
-        f"{module}:*:*" in user_permissions
-        or f"{module}:*" in user_permissions
-        or f"{module}:manage" in user_permissions
-        or f"{module}:all:manage" in user_permissions
-    ):
-        return True
-
-    # Check Submodule wildcard xx:yy:* or xx:yy:manage
-    if submodule:
-        if (
-            f"{module}:{submodule}:*" in user_permissions
-            or f"{module}:{submodule}:manage" in user_permissions
-        ):
+    for up in user_permissions:
+        if not up:
+            continue
+        up_clean = up.strip().lower()
+        if up_clean in acceptable:
             return True
+        if fnmatch.fnmatch(req_lower, up_clean):
+            return True
+        for cand in acceptable:
+            if fnmatch.fnmatch(cand, up_clean):
+                return True
 
     return False
 
@@ -541,12 +543,23 @@ _CACHED_ROUTE_RULES: List[Dict[str, Any]] = []
 
 def _glob_to_regex(glob: str) -> re.Pattern:
     """Converts glob pattern (e.g. /api/knowledge/bases/**) into compiled regex."""
-    escaped = re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]+")
-    return re.compile(f"^{escaped}$")
+    norm = glob.strip()
+    if len(norm) > 1 and norm.endswith("/"):
+        norm = norm.rstrip("/")
+    escaped = re.escape(norm).replace(r"\*\*", ".*").replace(r"\*", "[^/]+")
+    return re.compile(f"^{escaped}/?$")
 
 
 async def reload_route_permissions_cache(db: AsyncSession):
-    """Reloads route permissions from RoutePermissionDB into memory cache."""
+    """
+    ===========================================================================
+    BLOCK COMMENT: MULTI-PATH ROUTE PERMISSION CACHE LOADER
+    Reference: EPIC-RBAC-1TO1-001 / STORY-CANONICAL-ROUTE-PERMS-001
+    Description:
+        Reloads route permissions from RoutePermissionDB into memory cache.
+        Supports comma-separated multi-path patterns per rule.
+    ===========================================================================
+    """
     global _CACHED_ROUTE_RULES
     from app.models.db_models import RoutePermissionDB
     stmt = select(RoutePermissionDB)
@@ -555,14 +568,18 @@ async def reload_route_permissions_cache(db: AsyncSession):
 
     new_cache = []
     for r in rules:
-        new_cache.append({
-            "id": r.id,
-            "pattern": r.pattern,
-            "http_method": (r.http_method or "*").upper(),
-            "permission_id": r.permission_id,
-            "regex": _glob_to_regex(r.pattern),
-            "customer_id": r.customer_id
-        })
+        if not r.pattern:
+            continue
+        sub_patterns = [p.strip() for p in r.pattern.split(",") if p.strip()]
+        for pat in sub_patterns:
+            new_cache.append({
+                "id": r.id,
+                "pattern": pat,
+                "http_method": (r.http_method or "*").upper(),
+                "permission_id": r.permission_id,
+                "regex": _glob_to_regex(pat),
+                "customer_id": r.customer_id
+            })
 
     # Sort order:
     # 1. Exact HTTP method before wildcard '*'
@@ -578,6 +595,36 @@ async def reload_route_permissions_cache(db: AsyncSession):
     _CACHED_ROUTE_RULES = new_cache
 
 
+def _candidate_paths_for_matching(path: str) -> List[str]:
+    """
+    Generates normalized path variants so /roles, /api/roles, and /api/admin/roles
+    (or /workflows and /api/workflows) match seamlessly against RoutePermissionDB.
+    """
+    clean = (path or "/").strip()
+    if len(clean) > 1 and clean.endswith("/"):
+        clean = clean.rstrip("/")
+
+    variants = [clean]
+    if clean.startswith("/api/admin/"):
+        without_api = "/admin/" + clean[len("/api/admin/"):]
+        without_api_admin = "/" + clean[len("/api/admin/"):]
+        variants.extend([without_api, without_api_admin, "/api" + without_api_admin])
+    elif clean.startswith("/api/"):
+        without_api = "/" + clean[len("/api/"):]
+        variants.extend([without_api, "/admin" + without_api, "/api/admin" + without_api])
+    elif clean.startswith("/admin/"):
+        without_admin = "/" + clean[len("/admin/"):]
+        variants.extend(["/api" + clean, "/api" + without_admin, without_admin])
+    else:
+        variants.extend(["/api" + clean, "/admin" + clean, "/api/admin" + clean])
+
+    seen = []
+    for v in variants:
+        if v not in seen:
+            seen.append(v)
+    return seen
+
+
 def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optional[str] = None) -> Optional[str]:
     """Finds required permission ID matching (method, path) against cached route rules. Supports (method, path) or (path, method)."""
     if arg1.startswith("/"):
@@ -586,14 +633,27 @@ def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optio
         http_method, path = arg1, arg2
 
     norm_method = (http_method or "GET").upper()
+    path_variants = _candidate_paths_for_matching(path)
+
+    # First pass: exact path match on primary path
     for rule in _CACHED_ROUTE_RULES:
-        # Check customer scoping if tenant specific
         if rule.get("customer_id") and customer_id and str(rule["customer_id"]) != str(customer_id):
             continue
         rule_meth = rule.get("http_method", "*")
         if rule_meth == "*" or rule_meth == norm_method:
-            if rule["regex"].match(path):
+            if rule["regex"].match(path_variants[0]):
                 return rule["permission_id"]
+
+    # Second pass: normalized /api <-> /admin <-> / path equivalents (only for explicit HTTP verb API rules)
+    for variant in path_variants[1:]:
+        for rule in _CACHED_ROUTE_RULES:
+            if rule.get("customer_id") and customer_id and str(rule["customer_id"]) != str(customer_id):
+                continue
+            rule_meth = rule.get("http_method", "*")
+            if rule_meth != "*" and rule_meth == norm_method:
+                if rule["regex"].match(variant):
+                    return rule["permission_id"]
+
     return None
 
 
@@ -636,14 +696,20 @@ async def dynamic_api_guard(
 def require_permission(required_permission: str):
     """FastAPI dependency to enforce required permission key (HTTP 403 on denial)."""
     async def dependency(
+        request: Request = None,
         current_user: User = Depends(get_current_user)
     ) -> User:
-        if not has_permission_scope(current_user.permissions, required_permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access Denied: Missing required permission '{required_permission}'"
-            )
-        return current_user
+        if (
+            current_user.role == "system_admin"
+            or current_user.role_type == "system_admin"
+            or current_user.has_permission(required_permission, request.method if request else None)
+            or has_permission_scope(current_user.permissions, required_permission)
+        ):
+            return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access Denied: Missing required permission '{required_permission}'"
+        )
     return dependency
 
 
@@ -871,8 +937,9 @@ def require_admin_or_system_admin(request: Request):
         or "*:*:*" in permissions
         or "admin:*:*" in permissions
         or "tenant:admin:*" in permissions
-        or "admin:user_management:*" in permissions
-        or "admin:user_management:read" in permissions
+        or has_permission_scope(permissions, "admin:users:view")
+        or has_permission_scope(permissions, "admin:roles:view")
+        or has_permission_scope(permissions, "admin:permissions:view")
     ):
         return user_state
 

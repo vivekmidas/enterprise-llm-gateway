@@ -156,14 +156,17 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 audience=settings.AUDIENCE,
                 issuer=settings.ISSUER
             )
-            if request.url.path.startswith("/admin"):
+            if request.url.path.startswith("/admin") or request.url.path.startswith("/api/admin"):
                 user_role = (payload.get("role") or "").lower()
                 user_perms = payload.get("permissions", [])
                 is_admin_user = (
-                    user_role in ["admin", "system_admin", "tenant_admin"]
+                    user_role in ["admin", "system_admin", "tenant_admin", "workflow_designer", "legal_analyst", "para_legal"]
                     or "*:*:*" in user_perms
                     or "admin:*:*" in user_perms
-                    or any(p.startswith("admin:") for p in user_perms)
+                    or any(
+                        p.startswith(("admin:", "workflows:", "workflow:", "nodes:", "node:", "kb:", "knowledge:"))
+                        for p in user_perms
+                    )
                 )
                 if not is_admin_user:
                     return cors_json_response(

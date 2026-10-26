@@ -393,8 +393,20 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
 
             for candidate in candidates:
                 if candidate.is_file():
-                    with open(candidate, "r", encoding="utf-8") as f:
-                        manifest = json.load(f)
+                    raw_text = ""
+                    try:
+                        with open(candidate, "r", encoding="utf-8") as f:
+                            raw_text = f.read()
+                        manifest = json.loads(raw_text)
+                    except Exception:
+                        try:
+                            import re
+                            cleaned = re.sub(r"^\s*//.*$", "", raw_text, flags=re.MULTILINE)
+                            manifest = json.loads(cleaned)
+                        except Exception as e:
+                            structlog.get_logger("BaseNode").warning("manifest_parse_failed", path=str(candidate), error=str(e))
+                            continue
+
                     if isinstance(manifest, dict):
                         m_name = manifest.get("name")
                         m_cls = manifest.get("class_name")
@@ -402,6 +414,7 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                         if (
                             m_cls == cls_obj.__name__
                             or m_file == cls_path.name
+                            or (m_name and (m_name == candidate.parent.name or m_name == cls_path.stem))
                             or (cls_name_val and cls_name_val != "base_node" and (candidate.parent.name == cls_name_val or m_name == cls_name_val))
                         ):
                             return manifest
@@ -454,36 +467,51 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
         merged_out_contract: Dict[str, Any] = {}
 
         for cls_obj in mro_classes:
-            # 1. Class-level attribute defaults on cls_obj
-            if cls_obj is not BaseNode:
-                for sk in scalar_keys:
-                    if sk not in explicit_keys and sk in cls_obj.__dict__:
-                        val = self._extract_class_field_default(cls_obj, sk)
-                        if val is not None:
-                            setattr(self, sk, val)
-
-            cls_user = self._extract_class_field_default(cls_obj, "user_properties")
-            if cls_user:
-                merged_user_props = self.merge_property_definitions(merged_user_props, cls_user)
-
-            cls_sys = self._extract_class_field_default(cls_obj, "system_properties")
-            if cls_sys:
-                merged_sys_props = self.merge_property_definitions(merged_sys_props, cls_sys)
-
-            cls_in = self._extract_class_field_default(cls_obj, "input_contract")
-            if cls_in:
-                merged_in_contract = self.merge_contract_definitions(merged_in_contract, cls_in)
-
-            cls_out = self._extract_class_field_default(cls_obj, "output_contract")
-            if cls_out:
-                merged_out_contract = self.merge_contract_definitions(merged_out_contract, cls_out)
-
-            # 2. Co-located manifest.json for cls_obj
             cls_manifest = self._load_class_manifest(cls_obj, fallback_name=self.name if cls_obj is self.__class__ else None)
-            if cls_manifest:
+            has_manifest = cls_manifest is not None
+
+            # 1. Class-level attribute defaults on cls_obj (ONLY if no manifest for this class)
+            if not has_manifest:
+                if cls_obj is not BaseNode:
+                    for sk in scalar_keys:
+                        if sk not in explicit_keys and sk in cls_obj.__dict__:
+                            val = self._extract_class_field_default(cls_obj, sk)
+                            if val is not None:
+                                setattr(self, sk, val)
+
+                cls_user = self._extract_class_field_default(cls_obj, "user_properties")
+                if cls_user:
+                    merged_user_props = self.merge_property_definitions(merged_user_props, cls_user)
+
+                cls_sys = self._extract_class_field_default(cls_obj, "system_properties")
+                if cls_sys:
+                    merged_sys_props = self.merge_property_definitions(merged_sys_props, cls_sys)
+
+                cls_in = self._extract_class_field_default(cls_obj, "input_contract")
+                if cls_in:
+                    merged_in_contract = self.merge_contract_definitions(merged_in_contract, cls_in)
+
+                cls_out = self._extract_class_field_default(cls_obj, "output_contract")
+                if cls_out:
+                    merged_out_contract = self.merge_contract_definitions(merged_out_contract, cls_out)
+            else:
+                # 2. Manifest is Source of Truth (SOT) for this class:
+                # Any class redefinitions on cls_obj are ignored in favor of manifest.json.
                 for sk in scalar_keys:
-                    if sk in cls_manifest and cls_manifest[sk] is not None and sk not in explicit_keys:
+                    if sk in explicit_keys:
+                        continue
+                    if sk in cls_manifest and cls_manifest[sk] is not None:
                         setattr(self, sk, cls_manifest[sk])
+                    elif sk in cls_obj.__dict__:
+                        # Revert class override to parent default if manifest omitted it
+                        parent_default = None
+                        for parent_cls in reversed(mro_classes[:mro_classes.index(cls_obj)]):
+                            parent_default = self._extract_class_field_default(parent_cls, sk)
+                            if parent_default is not None:
+                                break
+                        if parent_default is not None:
+                            setattr(self, sk, parent_default)
+
                 if "user_properties" in cls_manifest:
                     merged_user_props = self.merge_property_definitions(merged_user_props, cls_manifest["user_properties"])
                 if "system_properties" in cls_manifest:

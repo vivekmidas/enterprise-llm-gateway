@@ -25,7 +25,7 @@ from app.workflows.executor import execute_dynamic_agent
 from app.core.cache import trace_store
 from app.utils.request_utils import extract_request_info
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission
+from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission, dynamic_api_guard
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 run_workflows_router = APIRouter(prefix="/run/workflows", tags=["Workflow Runs"])
@@ -190,11 +190,18 @@ def _mask_sensitive_properties(properties: dict) -> dict:
     # Do not mask sensitive properties on read to prevent auth issues on save
     return properties
 
-# BLOCK COMMENT: TENANT-SCOPED WORKFLOWS LIST ENDPOINT
-@router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflow:view"))])
+# ==============================================================================
+# BLOCK COMMENT: TENANT-SCOPED WORKFLOWS LIST ENDPOINT (DYNAMIC API GUARD)
+# Reference: EPIC-RBAC-1TO1-001 / STORY-CANONICAL-ROUTE-PERMS-001
+# Description:
+#   Uses dynamic_api_guard + alias-aware require_permission("workflows:builder:view")
+#   so roles with workflows:builder:view, admin:workflows:view, or workflows:view
+#   are authorized for GET /workflows and GET /api/workflows.
+# ==============================================================================
+@router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflows:builder:view"))])
 async def get_workflows(
     customer_id: Optional[int] = Query(None, description="Filter workflows by customer_id"),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     logger.info("get_workflows_request", tenant_id=current_user.customer_id, query_customer_id=customer_id)
     user_role = (current_user.role or "").lower()
@@ -486,7 +493,7 @@ async def execute_tenant_workflow_direct(
 @router.get("/{workflow_id}/invocation-spec", response_model=dict)
 async def get_workflow_invocation_spec(
     workflow_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
 ):
     workflow = await get_workflow(workflow_id)
     if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
@@ -498,7 +505,7 @@ async def get_workflow_invocation_spec(
 async def get_workflow_by_id(
     workflow_id: str,
     version: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     logger.info("get_workflow_request", workflow_id=workflow_id, version=version, tenant_id=current_user.customer_id)
     try:
@@ -696,7 +703,7 @@ async def update_node_properties(
     workflow_id: str,
     agent_node_id: str,
     properties: dict,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     logger.info("update_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
     
@@ -750,7 +757,7 @@ async def update_node_properties(
     )
 
 @router.patch("/{workflow_id}/toggle", response_model=dict)
-async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(get_current_user)):
+async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(dynamic_api_guard)):
     logger.info("toggle_workflow_status_request", workflow_id=workflow_id)
     workflow = await get_workflow(workflow_id)
     if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
@@ -764,7 +771,7 @@ async def toggle_workflow_status(workflow_id: str, current_user: User = Depends(
 
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_workflow(request: WorkflowSaveRequest, current_user: User = Depends(get_current_user)):
+async def create_workflow(request: WorkflowSaveRequest, current_user: User = Depends(dynamic_api_guard)):
     # Override user_id and customer_id with the authenticated user info
     request.user_id = current_user.id
     request.customer_id = current_user.customer_id
@@ -803,7 +810,7 @@ async def create_workflow(request: WorkflowSaveRequest, current_user: User = Dep
 
 
 @router.delete("/{workflow_id}")
-async def remove_workflow(workflow_id: str, request: Request, current_user: User = Depends(get_current_user)):
+async def remove_workflow(workflow_id: str, request: Request, current_user: User = Depends(dynamic_api_guard)):
     await require_resource_access("workflow", workflow_id, current_user=current_user)
     version = 1
     logger.info("remove_workflow_request", workflow_id=workflow_id, version=version, tenantr_id=current_user.customer_id)

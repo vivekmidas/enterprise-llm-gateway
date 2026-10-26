@@ -88,6 +88,13 @@ DEFAULT_USERS = [
 ]
 
 MODULES_REGISTRY = [
+    # =========================================================================
+    # BLOCK COMMENT: 1-TO-1 CANONICAL MODULE, UI ROUTE & API ENDPOINT SOT
+    # Reference: EPIC-RBAC-1TO1-001 / STORY-CANONICAL-ROUTE-PERMS-001
+    # Description:
+    #   Every module defines its UI route_patterns (/admin/<section>) and
+    #   complete Backend API paths + HTTP methods per capability action.
+    # =========================================================================
     # -------------------------------------------------------------------------
     # 1. ADMIN SYSTEM INFRASTRUCTURE (System Admin Only)
     # -------------------------------------------------------------------------
@@ -101,8 +108,8 @@ MODULES_REGISTRY = [
         "icon": "Database",
         "display_order": 90,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View SQL Backups", "description": "View system SQL data backup files"},
-            {"action": "manage", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups"},
+            {"action": "view", "is_route_guard": True, "label": "View SQL Backups", "description": "View system SQL data backup files", "api_path": "/api/admin/backup, /api/admin/backup/**, /admin/backup/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage SQL Backups", "description": "Export and manage SQL data backups", "api_path": "/api/admin/backup, /api/admin/backup/**, /admin/backup/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -115,8 +122,8 @@ MODULES_REGISTRY = [
         "icon": "Globe",
         "display_order": 91,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Domains", "description": "View registered system domains"},
-            {"action": "manage", "label": "Manage Domains", "description": "Create and configure system domains"},
+            {"action": "view", "is_route_guard": True, "label": "View Domains", "description": "View registered system domains", "api_path": "/domains, /domains/**, /api/domains/**, /api/admin/domains/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Domains", "description": "Create and configure system domains", "api_path": "/domains, /domains/**, /api/domains/**, /api/admin/domains/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -129,8 +136,8 @@ MODULES_REGISTRY = [
         "icon": "Building",
         "display_order": 92,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Customers", "description": "View system-wide customer tenants"},
-            {"action": "manage", "label": "Manage Customers", "description": "Create, edit, suspend, and delete customer tenants"},
+            {"action": "view", "is_route_guard": True, "label": "View Customers", "description": "View system-wide customer tenants", "api_path": "/admin/customers, /admin/customers/**, /api/admin/customers, /api/admin/customers/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Customers", "description": "Create, edit, suspend, and delete customer tenants", "api_path": "/admin/customers, /admin/customers/**, /api/admin/customers, /api/admin/customers/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -143,8 +150,8 @@ MODULES_REGISTRY = [
         "icon": "Lock",
         "display_order": 93,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Routes", "description": "View system permissions and route bindings"},
-            {"action": "manage", "label": "Manage Routes", "description": "Manage system permissions and route bindings"},
+            {"action": "view", "is_route_guard": True, "label": "View Routes", "description": "View system permissions and route bindings", "api_path": "/roles/modules, /roles/permissions, /roles/route-permissions, /api/roles/modules, /api/roles/permissions, /api/roles/route-permissions", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Routes", "description": "Manage system permissions and route bindings", "api_path": "/roles/modules/**, /roles/permissions/**, /roles/route-permissions/**, /api/roles/modules/**, /api/roles/permissions/**, /api/roles/route-permissions/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     # -------------------------------------------------------------------------
@@ -160,7 +167,7 @@ MODULES_REGISTRY = [
         "icon": "LayoutDashboard",
         "display_order": 1,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Admin Dashboard", "description": "Access admin dashboard and system overview"},
+            {"action": "view", "is_route_guard": True, "label": "View Admin Dashboard", "description": "Access admin dashboard and system overview", "api_path": "/admin, /api/admin", "http_methods": ["GET"]},
         ],
     },
     {
@@ -173,11 +180,11 @@ MODULES_REGISTRY = [
         "icon": "Users",
         "display_order": 2,
         "actions": [
-            {"action": "read", "is_route_guard": True, "label": "View Users", "description": "View tenant users list"},
-            {"action": "create", "label": "Create / Invite Users", "description": "Invite new users to tenant"},
-            {"action": "edit", "label": "Edit Users", "description": "Edit user roles and profiles"},
-            {"action": "delete", "label": "Deactivate Users", "description": "Deactivate or remove users"},
-            {"action": "manage", "label": "Full User Management", "description": "Full administrative control over tenant users"},
+            {"action": "read", "is_route_guard": True, "label": "View Users", "description": "View tenant users list", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create / Invite Users", "description": "Invite new users to tenant", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Users", "description": "Edit user roles and profiles", "api_path": "/admin/users/*, /admin/users/**, /api/admin/users/*, /api/admin/users/**", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Deactivate Users", "description": "Deactivate or remove users", "api_path": "/admin/users/*, /api/admin/users/*", "http_methods": ["DELETE"]},
+            {"action": "manage", "label": "Full User Management", "description": "Full administrative control over tenant users", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -190,11 +197,11 @@ MODULES_REGISTRY = [
         "icon": "Shield",
         "display_order": 3,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Roles", "description": "View custom roles and capability matrices"},
-            {"action": "create", "label": "Create Role", "description": "Create custom tenant roles"},
-            {"action": "edit", "label": "Edit Role", "description": "Modify role permissions matrix"},
-            {"action": "delete", "label": "Delete Role", "description": "Delete custom roles"},
-            {"action": "manage", "label": "Full Role Management", "description": "Full administrative control over roles"},
+            {"action": "view", "is_route_guard": True, "label": "View Roles", "description": "View custom roles and capability matrices", "api_path": "/roles, /roles/**, /api/roles, /api/roles/**, /api/admin/roles, /api/admin/roles/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create Role", "description": "Create custom tenant roles", "api_path": "/roles, /api/roles, /api/admin/roles", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Role", "description": "Modify role permissions matrix", "api_path": "/roles/*, /api/roles/*, /api/admin/roles/*", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete Role", "description": "Delete custom roles", "api_path": "/roles/*, /api/roles/*, /api/admin/roles/*", "http_methods": ["DELETE"]},
+            {"action": "manage", "label": "Full Role Management", "description": "Full administrative control over roles", "api_path": "/roles, /roles/**, /api/roles, /api/roles/**, /api/admin/roles, /api/admin/roles/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -207,12 +214,12 @@ MODULES_REGISTRY = [
         "icon": "BookOpen",
         "display_order": 4,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Knowledge Bases", "description": "Access knowledge bases catalog", "api_path": "/api/knowledge/bases", "http_methods": ["GET"]},
+            {"action": "view", "is_route_guard": True, "label": "View Knowledge Bases", "description": "Access knowledge bases catalog", "api_path": "/api/knowledge/bases, /api/knowledge/bases/**, /api/v3/knowledge/**", "http_methods": ["GET"]},
             {"action": "create", "label": "Create Knowledge Base", "description": "Create new knowledge bases", "api_path": "/api/knowledge/bases", "http_methods": ["POST"]},
-            {"action": "edit", "label": "Edit Knowledge Base", "description": "Update knowledge base settings", "api_path": "/api/knowledge/bases/*", "http_methods": ["PUT"]},
-            {"action": "delete", "label": "Delete Knowledge Base", "description": "Delete knowledge bases", "api_path": "/api/knowledge/bases/*", "http_methods": ["DELETE"]},
-            {"action": "ingest", "label": "Ingest Documents", "description": "Upload and vectorize documents", "api_path": "/api/knowledge/bases/*/upload", "http_methods": ["POST"]},
-            {"action": "manage", "label": "Full Knowledge Management", "description": "Full administrative control over knowledge bases", "api_path": "/api/knowledge/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
+            {"action": "edit", "label": "Edit Knowledge Base", "description": "Update knowledge base settings", "api_path": "/api/knowledge/bases/*", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete Knowledge Base", "description": "Delete knowledge bases", "api_path": "/api/knowledge/bases/*, /api/knowledge/documents/*", "http_methods": ["DELETE"]},
+            {"action": "ingest", "label": "Ingest Documents", "description": "Upload and vectorize documents", "api_path": "/api/knowledge/bases/*/upload, /api/knowledge/documents/**, /api/v3/knowledge/ingest/**", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Full Knowledge Management", "description": "Full administrative control over knowledge bases", "api_path": "/api/knowledge/**, /api/v3/knowledge/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -225,11 +232,11 @@ MODULES_REGISTRY = [
         "icon": "Brain",
         "display_order": 5,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View LLM Profiles", "description": "View LLM provider configurations", "api_path": "/api/profiles", "http_methods": ["GET"]},
-            {"action": "create", "label": "Create LLM Profile", "description": "Create new LLM profiles", "api_path": "/api/profiles", "http_methods": ["POST"]},
-            {"action": "edit", "label": "Edit LLM Profile", "description": "Update model parameters and keys", "api_path": "/api/profiles/*", "http_methods": ["PUT", "PATCH"]},
-            {"action": "delete", "label": "Delete LLM Profile", "description": "Delete LLM profiles", "api_path": "/api/profiles/*", "http_methods": ["DELETE"]},
-            {"action": "manage", "label": "Full LLM Profiles Management", "description": "Full administrative control over LLM profiles", "api_path": "/api/profiles/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
+            {"action": "view", "is_route_guard": True, "label": "View LLM Profiles", "description": "View LLM provider configurations", "api_path": "/api/profiles, /api/profiles/**, /api/llm-profiles, /api/llm-profiles/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create LLM Profile", "description": "Create new LLM profiles", "api_path": "/api/profiles, /api/llm-profiles", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit LLM Profile", "description": "Update model parameters and keys", "api_path": "/api/profiles/*, /api/llm-profiles/*", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete LLM Profile", "description": "Delete LLM profiles", "api_path": "/api/profiles/*, /api/llm-profiles/*", "http_methods": ["DELETE"]},
+            {"action": "manage", "label": "Full LLM Profiles Management", "description": "Full administrative control over LLM profiles", "api_path": "/api/profiles/**, /api/llm-profiles/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -242,12 +249,12 @@ MODULES_REGISTRY = [
         "icon": "Workflow",
         "display_order": 6,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Workflows", "description": "View workflow definitions"},
-            {"action": "create", "label": "Create Workflow", "description": "Create workflow canvases"},
-            {"action": "edit", "label": "Edit Workflow", "description": "Modify workflow nodes and links"},
-            {"action": "delete", "label": "Delete Workflow", "description": "Delete workflow definitions"},
-            {"action": "execute", "label": "Execute Workflow", "description": "Trigger workflow execution runs"},
-            {"action": "manage", "label": "Full Workflow Management", "description": "Full control over workflow graphs"},
+            {"action": "view", "is_route_guard": True, "label": "View Workflows", "description": "View workflow definitions", "api_path": "/workflows, /workflows/*, /workflows/*/invocation-spec, /workflows/*/nodes/*/properties, /workflows/traces/*, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create Workflow", "description": "Create workflow canvases", "api_path": "/workflows, /api/workflows, /api/admin/workflows", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Workflow", "description": "Modify workflow nodes and links", "api_path": "/workflows/*/nodes/*/properties, /workflows/*/toggle, /workflows/refresh-token, /api/workflows/**, /api/admin/workflows/**", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete Workflow", "description": "Delete workflow definitions", "api_path": "/workflows/*, /api/workflows/*, /api/admin/workflows/*", "http_methods": ["DELETE"]},
+            {"action": "execute", "label": "Execute Workflow", "description": "Trigger workflow execution runs", "api_path": "/workflows/*/execute, /workflows/run/**, /run/workflows/**, /api/workflows/*/execute", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Full Workflow Management", "description": "Full control over workflow graphs", "api_path": "/workflows, /workflows/**, /run/workflows/**, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -260,9 +267,9 @@ MODULES_REGISTRY = [
         "icon": "Boxes",
         "display_order": 7,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Nodes Catalog", "description": "Browse available agent nodes"},
-            {"action": "execute", "label": "Execute Standalone Node", "description": "Run isolated node executions"},
-            {"action": "manage", "label": "Configure Node Registry", "description": "Enable and configure nodes"},
+            {"action": "view", "is_route_guard": True, "label": "View Nodes Catalog", "description": "Browse available agent nodes", "api_path": "/nodes, /nodes/**, /categories, /categories/**, /api/nodes, /api/nodes/**, /api/admin/nodes, /api/admin/nodes/**", "http_methods": ["GET"]},
+            {"action": "execute", "label": "Execute Standalone Node", "description": "Run isolated node executions", "api_path": "/nodes/*/execute, /nodes/*/test, /api/nodes/*/execute", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Configure Node Registry", "description": "Enable and configure nodes", "api_path": "/nodes, /nodes/**, /admin/customers/*/nodes/**, /api/nodes/**, /api/admin/nodes/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -275,8 +282,8 @@ MODULES_REGISTRY = [
         "icon": "Sparkles",
         "display_order": 8,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Playground", "description": "Access retrieval testing console"},
-            {"action": "query", "label": "Query Playground", "description": "Run search queries in playground"},
+            {"action": "view", "is_route_guard": True, "label": "View Playground", "description": "Access retrieval testing console", "api_path": "/api/v1/playground, /api/v1/playground/**, /api/playground/**", "http_methods": ["GET"]},
+            {"action": "query", "label": "Query Playground", "description": "Run search queries in playground", "api_path": "/api/v1/playground, /api/v1/playground/**, /api/playground/**", "http_methods": ["POST"]},
         ],
     },
     {
@@ -289,8 +296,8 @@ MODULES_REGISTRY = [
         "icon": "Layers",
         "display_order": 9,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Provider Presets", "description": "Access provider presets portal"},
-            {"action": "manage", "label": "Manage Provider Presets", "description": "Create and update provider presets"},
+            {"action": "view", "is_route_guard": True, "label": "View Provider Presets", "description": "Access provider presets portal", "api_path": "/admin/provider-presets, /admin/provider-presets/**, /api/admin/provider-presets/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Provider Presets", "description": "Create and update provider presets", "api_path": "/admin/provider-presets, /admin/provider-presets/**, /api/admin/provider-presets/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -303,8 +310,8 @@ MODULES_REGISTRY = [
         "icon": "FileText",
         "display_order": 10,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Audit Logs", "description": "Access audit logs console"},
-            {"action": "manage", "label": "Manage Audit Logs", "description": "Configure log retention and export"},
+            {"action": "view", "is_route_guard": True, "label": "View Audit Logs", "description": "Access audit logs console", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs/**, /api/admin/logs/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Audit Logs", "description": "Configure log retention and export", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs/**, /api/admin/logs/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -317,8 +324,8 @@ MODULES_REGISTRY = [
         "icon": "Key",
         "display_order": 11,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View OAuth Integrations", "description": "View connected OAuth integrations"},
-            {"action": "manage", "label": "Configure OAuth Integrations", "description": "Configure OAuth providers and credentials"},
+            {"action": "view", "is_route_guard": True, "label": "View OAuth Integrations", "description": "View connected OAuth integrations", "api_path": "/admin/oauth, /admin/oauth/**, /api/admin/oauth/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Configure OAuth Integrations", "description": "Configure OAuth providers and credentials", "api_path": "/admin/oauth, /admin/oauth/**, /api/admin/oauth/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -331,8 +338,8 @@ MODULES_REGISTRY = [
         "icon": "Activity",
         "display_order": 12,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Metrics", "description": "Access metrics analytics charts"},
-            {"action": "manage", "label": "Configure Metrics", "description": "Configure telemetry metrics collection"},
+            {"action": "view", "is_route_guard": True, "label": "View Metrics", "description": "Access metrics analytics charts", "api_path": "/observability/metrics/**, /api/observability/**, /api/admin/metrics/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Configure Metrics", "description": "Configure telemetry metrics collection", "api_path": "/observability/metrics/**, /api/observability/**, /api/admin/metrics/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -340,13 +347,13 @@ MODULES_REGISTRY = [
         "module": "admin",
         "submodule": "tenant_settings",
         "label": "Company Settings",
-        "description": "Tenant profile, branding, and custom configurations",
-        "route_patterns": ["/admin/company-settings", "/admin/company-settings/**"],
+        "description": "Tenant profile, branding, API keys, and custom configurations",
+        "route_patterns": ["/admin/company-settings", "/admin/company-settings/**", "/admin/api-keys", "/admin/api-keys/**"],
         "icon": "Settings",
         "display_order": 13,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Company Settings", "description": "View tenant configuration settings"},
-            {"action": "configure", "label": "Configure Company Settings", "description": "Update tenant settings and integrations"},
+            {"action": "view", "is_route_guard": True, "label": "View Company Settings", "description": "View tenant configuration settings", "api_path": "/api/admin/company/**, /admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys/**", "http_methods": ["GET"]},
+            {"action": "configure", "label": "Configure Company Settings", "description": "Update tenant settings, branding, and API keys", "api_path": "/api/admin/company/**, /admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     # -------------------------------------------------------------------------
@@ -362,13 +369,13 @@ MODULES_REGISTRY = [
         "icon": "Scale",
         "display_order": 20,
         "actions": [
-            {"action": "query", "is_route_guard": True, "label": "Execute Legal Research", "description": "Run search queries on legal knowledge bases"},
-            {"action": "view", "label": "View Legal Cases", "description": "View court judgments, acts, and case summaries"},
-            {"action": "upload", "label": "Upload Case Files", "description": "Upload legal briefs and documents"},
-            {"action": "edit", "label": "Edit Legal Cases", "description": "Edit case metadata and details"},
-            {"action": "delete", "label": "Delete Legal Cases", "description": "Delete legal cases"},
-            {"action": "bookmark", "label": "Bookmark Legal Cases", "description": "Save case bookmarks"},
-            {"action": "admin", "label": "Full Legal Admin", "description": "Full administrative control of legal platform"},
+            {"action": "query", "is_route_guard": True, "label": "Execute Legal Research", "description": "Run search queries on legal knowledge bases", "api_path": "/api/v1/legal/search, /api/v1/legal/query, /api/knowledge/query/**", "http_methods": ["GET", "POST"]},
+            {"action": "view", "label": "View Legal Cases", "description": "View court judgments, acts, and case summaries", "api_path": "/api/v1/legal, /api/v1/legal/**", "http_methods": ["GET"]},
+            {"action": "upload", "label": "Upload Case Files", "description": "Upload legal briefs and documents", "api_path": "/api/v1/legal/upload, /api/v1/legal/summarize, /api/v1/legal/intake", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Legal Cases", "description": "Edit case metadata and details", "api_path": "/api/v1/legal/cases, /api/v1/legal/cases/**", "http_methods": ["POST", "PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete Legal Cases", "description": "Delete legal cases", "api_path": "/api/v1/legal/cases/*", "http_methods": ["DELETE"]},
+            {"action": "bookmark", "label": "Bookmark Legal Cases", "description": "Save case bookmarks", "api_path": "/api/v1/legal/bookmarks/**", "http_methods": ["GET", "POST", "DELETE"]},
+            {"action": "admin", "label": "Full Legal Admin", "description": "Full administrative control of legal platform", "api_path": "/api/v1/legal/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -381,10 +388,10 @@ MODULES_REGISTRY = [
         "icon": "Sword",
         "display_order": 21,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Litigation Autopilot", "description": "Access litigation autopilot workspace and case intelligence"},
-            {"action": "edit", "label": "Log Updates & Case Details", "description": "Add updates, edit parties, and modify case timelines"},
-            {"action": "evidence", "label": "Ingest Evidence", "description": "Upload evidence, documents, and notes to workspace"},
-            {"action": "draft", "label": "Generate Pleadings", "description": "Generate first-draft notices and court pleadings"},
+            {"action": "view", "is_route_guard": True, "label": "View Litigation Autopilot", "description": "Access litigation autopilot workspace and case intelligence", "api_path": "/api/v1/legal/autopilot, /api/v1/legal/autopilot/**, /api/v1/legal/cases/**", "http_methods": ["GET"]},
+            {"action": "edit", "label": "Log Updates & Case Details", "description": "Add updates, edit parties, and modify case timelines", "api_path": "/api/v1/legal/autopilot/**, /api/v1/legal/cases/**", "http_methods": ["POST", "PUT", "PATCH"]},
+            {"action": "evidence", "label": "Ingest Evidence", "description": "Upload evidence, documents, and notes to workspace", "api_path": "/api/v1/legal/autopilot/*/evidence/**", "http_methods": ["POST"]},
+            {"action": "draft", "label": "Generate Pleadings", "description": "Generate first-draft notices and court pleadings", "api_path": "/api/v1/legal/autopilot/*/draft/**, /api/v1/legal/draft/**", "http_methods": ["POST"]},
         ],
     },
 ]
@@ -413,11 +420,21 @@ ROLE_PRESETS = [
         "is_system_preset": True,
         "permissions": [
             "admin:dashboard:view",
+            "admin:users:view",
+            "admin:users:create",
+            "admin:users:edit",
+            "admin:users:delete",
+            "admin:users:manage",
             "admin:user_management:read",
             "admin:user_management:create",
             "admin:user_management:edit",
             "admin:user_management:delete",
             "admin:user_management:manage",
+            "admin:roles:view",
+            "admin:roles:create",
+            "admin:roles:edit",
+            "admin:roles:delete",
+            "admin:roles:manage",
             "admin:role_management:view",
             "admin:role_management:create",
             "admin:role_management:edit",
@@ -434,12 +451,21 @@ ROLE_PRESETS = [
             "admin:profiles:edit",
             "admin:profiles:delete",
             "admin:profiles:manage",
+            "admin:workflows:view",
+            "admin:workflows:create",
+            "admin:workflows:edit",
+            "admin:workflows:delete",
+            "admin:workflows:execute",
+            "admin:workflows:manage",
             "workflows:builder:view",
             "workflows:builder:create",
             "workflows:builder:edit",
             "workflows:builder:delete",
             "workflows:builder:execute",
             "workflows:builder:manage",
+            "admin:nodes:view",
+            "admin:nodes:execute",
+            "admin:nodes:manage",
             "nodes:catalog:view",
             "nodes:catalog:execute",
             "nodes:catalog:manage",
@@ -453,6 +479,10 @@ ROLE_PRESETS = [
             "admin:oauth:manage",
             "admin:metrics:view",
             "admin:metrics:manage",
+            "admin:company_settings:view",
+            "admin:company_settings:edit",
+            "admin:api_keys:view",
+            "admin:api_keys:manage",
             "admin:tenant_settings:view",
             "admin:tenant_settings:configure",
             "legal:research:query",
@@ -483,6 +513,7 @@ ROLE_PRESETS = [
             "legal:autopilot:evidence",
             "legal:autopilot:draft",
             "admin:knowledge:view",
+            "admin:nodes:view",
             "nodes:catalog:view",
         ],
     },
@@ -503,8 +534,11 @@ ROLE_PRESETS = [
             "legal:autopilot:draft",
             "admin:knowledge:view",
             "admin:knowledge:ingest",
+            "admin:workflows:view",
+            "admin:workflows:execute",
             "workflows:builder:view",
             "workflows:builder:execute",
+            "admin:nodes:view",
             "nodes:catalog:view",
         ],
     },
@@ -518,6 +552,7 @@ ROLE_PRESETS = [
             "legal:research:view",
             "legal:autopilot:view",
             "admin:knowledge:view",
+            "admin:nodes:view",
             "nodes:catalog:view",
         ],
     },
@@ -527,12 +562,21 @@ ROLE_PRESETS = [
         "description": "Design and view workflow canvases, configure nodes, test canvas runs, and access node catalog.",
         "is_system_preset": True,
         "permissions": [
+            "admin:workflows:view",
+            "admin:workflows:create",
+            "admin:workflows:edit",
+            "admin:workflows:delete",
+            "admin:workflows:execute",
+            "admin:workflows:manage",
             "workflows:builder:view",
             "workflows:builder:create",
             "workflows:builder:edit",
             "workflows:builder:delete",
             "workflows:builder:execute",
             "workflows:builder:manage",
+            "admin:nodes:view",
+            "admin:nodes:execute",
+            "admin:nodes:manage",
             "nodes:catalog:view",
             "nodes:catalog:execute",
             "nodes:catalog:manage",
@@ -1564,7 +1608,7 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
                     existing_p.submodule = mod_data.get("submodule")
                 if not existing_p.action:
                     existing_p.action = act["action"]
-                if existing_p.api_path is None and act.get("api_path"):
+                if (existing_p.api_path is None or existing_p.api_path == "") and act.get("api_path"):
                     existing_p.api_path = act.get("api_path")
                 if not existing_p.http_methods and act.get("http_methods"):
                     existing_p.http_methods = act.get("http_methods")
@@ -1694,36 +1738,43 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
                 existing_rp.label = mod_data["label"]
                 existing_rp.description = mod_data.get("description")
 
-        # 3b. Register Action API Endpoints with HTTP methods
+        # 3b. Register Action API Endpoints with HTTP methods (supports comma-separated multi-path patterns)
         for act in mod_data.get("actions", []):
-            api_path = act.get("api_path")
+            api_path_raw = act.get("api_path")
             http_methods = act.get("http_methods") or []
-            if api_path:
+            if api_path_raw:
                 act_perm_id = f"{mod_data['module']}:{mod_data.get('submodule', 'all')}:{act['action']}"
-                for meth in http_methods:
-                    norm_meth = meth.upper()
-                    stmt = select(RoutePermissionDB).where(
-                        RoutePermissionDB.pattern == api_path,
-                        RoutePermissionDB.http_method == norm_meth,
-                        RoutePermissionDB.customer_id.is_(None),
-                    )
-                    res = await db.execute(stmt)
-                    existing_api_rp = res.scalar_one_or_none()
-                    if not existing_api_rp:
-                        db.add(RoutePermissionDB(
-                            id=generate_uuid(),
-                            customer_id=None,
-                            pattern=api_path,
-                            http_method=norm_meth,
-                            permission_id=act_perm_id,
-                            module=mod_data["module"],
-                            submodule=mod_data.get("submodule"),
-                            label=f"{mod_data['label']} - {act['label']}",
-                            description=act.get("description"),
-                        ))
-                    elif force:
-                        existing_api_rp.permission_id = act_perm_id
+                api_patterns = [p.strip() for p in api_path_raw.split(",") if p.strip()]
+                for single_api_path in api_patterns:
+                    for meth in http_methods:
+                        norm_meth = meth.upper()
+                        stmt = select(RoutePermissionDB).where(
+                            RoutePermissionDB.pattern == single_api_path,
+                            RoutePermissionDB.http_method == norm_meth,
+                            RoutePermissionDB.customer_id.is_(None),
+                        )
+                        res = await db.execute(stmt)
+                        existing_api_rp = res.scalar_one_or_none()
+                        if not existing_api_rp:
+                            db.add(RoutePermissionDB(
+                                id=generate_uuid(),
+                                customer_id=None,
+                                pattern=single_api_path,
+                                http_method=norm_meth,
+                                permission_id=act_perm_id,
+                                module=mod_data["module"],
+                                submodule=mod_data.get("submodule"),
+                                label=f"{mod_data['label']} - {act['label']}",
+                                description=act.get("description"),
+                            ))
+                        elif force:
+                            existing_api_rp.permission_id = act_perm_id
     await db.commit()
+    try:
+        from app.api.auth.dependencies import reload_route_permissions_cache
+        await reload_route_permissions_cache(db)
+    except Exception:
+        pass
     logger.info("rbac_seeded", force=force)
 
 

@@ -256,30 +256,32 @@ async def create_custom_module(
                 existing_p.description = act.description
         actions_created.append(perm_id)
 
-        # Sync RoutePermissionDB for this action's API path and HTTP methods
+        # Sync RoutePermissionDB for this action's API path(s) and HTTP methods
         if act.api_path and act.http_methods:
-            for meth in act.http_methods:
-                norm_meth = meth.upper()
-                rp_stmt = select(RoutePermissionDB).where(
-                    RoutePermissionDB.pattern == act.api_path,
-                    RoutePermissionDB.http_method == norm_meth,
-                    RoutePermissionDB.customer_id == target_cid
-                )
-                rp_res = await db.execute(rp_stmt)
-                existing_rp = rp_res.scalar_one_or_none()
-                if not existing_rp:
-                    db.add(RoutePermissionDB(
-                        id=generate_uuid(),
-                        customer_id=target_cid,
-                        pattern=act.api_path,
-                        http_method=norm_meth,
-                        permission_id=perm_id,
-                        module=existing_mod.module,
-                        submodule=existing_mod.submodule,
-                        label=f"{existing_mod.label} - {act.label}"
-                    ))
-                else:
-                    existing_rp.permission_id = perm_id
+            api_patterns = [p.strip() for p in act.api_path.split(",") if p.strip()]
+            for single_api_path in api_patterns:
+                for meth in act.http_methods:
+                    norm_meth = meth.upper()
+                    rp_stmt = select(RoutePermissionDB).where(
+                        RoutePermissionDB.pattern == single_api_path,
+                        RoutePermissionDB.http_method == norm_meth,
+                        RoutePermissionDB.customer_id == target_cid
+                    )
+                    rp_res = await db.execute(rp_stmt)
+                    existing_rp = rp_res.scalar_one_or_none()
+                    if not existing_rp:
+                        db.add(RoutePermissionDB(
+                            id=generate_uuid(),
+                            customer_id=target_cid,
+                            pattern=single_api_path,
+                            http_method=norm_meth,
+                            permission_id=perm_id,
+                            module=existing_mod.module,
+                            submodule=existing_mod.submodule,
+                            label=f"{existing_mod.label} - {act.label}"
+                        ))
+                    else:
+                        existing_rp.permission_id = perm_id
 
     # Sync UI route patterns
     if guard_perm_id or actions_created:
@@ -731,7 +733,9 @@ async def sync_default_route_permissions(
     Creates or updates default route mappings. System Admin only.
     """
     from app.db.seed_rbac import seed_rbac
-    await seed_rbac(db)
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await seed_rbac(db, force=True)
+    await reload_route_permissions_cache(db)
     result = await db.execute(select(RoutePermissionDB))
     count = len(result.scalars().all())
     return {
