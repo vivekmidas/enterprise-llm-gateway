@@ -1,0 +1,76 @@
+{
+    "name": "nlp_query_analyzer",
+    "label": "NLP Query Analyzer",
+    "node_type": "NODE",
+    "description": "Pure LLM-driven NLU node: extracts developer-defined JSON fields, intent, and context from user query using system prompt format.",
+    "version": "1.2.0",
+    "category": "NLP",
+    "group": "NLP",
+    "icon": "brain",
+    "color": "#7C3AED",
+    "badge": "NLP",
+    "sub_label": "JSON Extractor",
+    "file_name": "nlp_analyzer_node.py",
+    "class_name": "NLPQueryAnalyzerNode",
+    "user_properties": [
+        {
+            "key": "llm_profile_id",
+            "type": "source",
+            "label": "LLM Profile",
+            "source": "/api/llm-profiles",
+            "description": "Select LLM Profile. Model, base URL, and credentials are automatically derived from this profile."
+        },
+        {
+            "key": "system_prompt",
+            "type": "textarea",
+            "label": "System Prompt & Instructions",
+            "default": "You are an expert NLP Context & Intent Analyzer.\nAnalyze the user query and reply strictly in valid JSON matching this format:\n{\n  \"intent\": \"\",\n  \"sentiment\": \"\",\n  \"type\": \"\"\n}",
+            "description": "System prompt instructions. Can directly contain the target JSON format or domain guidance."
+        },
+        {
+            "key": "output_format",
+            "type": "textarea",
+            "label": "Output JSON Format (Optional)",
+            "default": "",
+            "description": "Optional explicit JSON structure (e.g. {\"complaint_id\": \"\", \"purpose\": \"\"}). If provided, combined automatically with system prompt."
+        }
+    ],
+    "system_properties": [
+        {
+            "key": "base_url",
+            "type": "string",
+            "label": "Fallback LLM Base URL",
+            "default": "http://127.0.0.1:11434",
+            "description": "Default endpoint for Ollama or local inference engine."
+        },
+        {
+            "key": "timeout_seconds",
+            "type": "number",
+            "label": "Timeout (seconds)",
+            "default": 15,
+            "description": "Maximum seconds for LLM request."
+        },
+        {
+            "key": "max_retries",
+            "type": "number",
+            "label": "Max Retries",
+            "default": 1,
+            "description": "LLM request retry count."
+        }
+    ],
+    "input_contract": {
+        "version": "1.0",
+        "rules": [
+            {"field_name": "query", "field_type": "string", "required": true, "description": "User input query to analyze."},
+            {"field_name": "history", "field_type": "array", "required": false, "description": "Prior conversation messages: [{'role': 'user'|'assistant', 'content': '...'}]."},
+            {"field_name": "system_prompt_override", "field_type": "string", "required": false, "description": "Dynamic runtime override for system prompt instructions."},
+            {"field_name": "output_format", "field_type": "object", "required": false, "description": "Dynamic JSON format template defining expected output keys."}
+        ],
+        "additional_fields": false
+    },
+    "output_contract": {
+        "version": "1.0",
+        "rules": [],
+        "additional_fields": true
+    }
+}
