@@ -1690,7 +1690,53 @@ class BaseNode(BaseModel, abc.ABC, metaclass=_BaseNodeMeta):
                 render_context["user_data"] = inp.context.get("user_data", {})
                 self.logger.debug("running_node:resolve_jinja_template", render_context=render_context, trace_id=inp.trace_id)
 
-                resolved_data = self._resolve_jinja_templates(mapping_config or input_data, render_context)
+                # ==================================================================
+                # BLOCK COMMENT: INPUT CONTRACT MAPPING & FIXED VALUE MERGE
+                # Reference: EPIC-PROPS-CONTRACT-001 / STORY-CONTRACT-003
+                # Description:
+                #     Resolves both Fixed values and Jinja {{ ... }} expressions in
+                #     `mapping_config` (`mapping_template`), merges them over
+                #     upstream `input_data` when both are dicts, coerces JSON strings
+                #     for object/array input_contract fields, and applies rule defaults.
+                # ==================================================================
+                if isinstance(mapping_config, dict) and mapping_config:
+                    resolved_mapping = self._resolve_jinja_templates(mapping_config, render_context)
+                    if isinstance(input_data, dict) and isinstance(resolved_mapping, dict):
+                        merged_input = dict(input_data)
+                        for mk, mv in resolved_mapping.items():
+                            if mv is not None and mv != "":
+                                merged_input[mk] = mv
+                            elif mk not in merged_input:
+                                merged_input[mk] = mv
+                        resolved_data = merged_input
+                    else:
+                        resolved_data = resolved_mapping
+                else:
+                    resolved_data = self._resolve_jinja_templates(mapping_config or input_data, render_context)
+
+                # Apply input_contract rule defaults and coerce JSON string literals for object/array fields
+                active_contract = inp.input_schema if isinstance(inp.input_schema, dict) and inp.input_schema else (
+                    self.input_contract if isinstance(self.input_contract, dict) else {}
+                )
+                contract_rules = active_contract.get("rules") if isinstance(active_contract, dict) else None
+                if isinstance(resolved_data, dict) and isinstance(contract_rules, list):
+                    for r in contract_rules:
+                        if not isinstance(r, dict):
+                            continue
+                        fname = r.get("field_name") or r.get("field") or r.get("key")
+                        ftype = str(r.get("field_type") or r.get("type") or "").lower()
+                        if not fname:
+                            continue
+                        if (fname not in resolved_data or resolved_data[fname] in (None, "")) and r.get("default") not in (None, ""):
+                            resolved_data[fname] = r.get("default")
+                        if fname in resolved_data and isinstance(resolved_data[fname], str) and ftype in ("object", "array", "json"):
+                            raw_str = resolved_data[fname].strip()
+                            if (raw_str.startswith("{") and raw_str.endswith("}")) or (raw_str.startswith("[") and raw_str.endswith("]")):
+                                try:
+                                    resolved_data[fname] = json.loads(raw_str)
+                                except Exception:
+                                    pass
+
                 if isinstance(resolved_data, (dict, list)):
                     inp.data = json.dumps(resolved_data)
                 else:

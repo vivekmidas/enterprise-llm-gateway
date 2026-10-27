@@ -28,7 +28,7 @@ _MODULE_SUBMODULE_EQUIVALENCE_GROUPS: List[List[Tuple[str, str]]] = [
 _KNOWN_ACTIONS = {
     "view", "read", "create", "edit", "update", "delete",
     "execute", "manage", "query", "ingest", "configure",
-    "upload", "bookmark", "admin", "evidence", "draft", "*"
+    "upload", "bookmark", "admin", "evidence", "draft", "clone", "*"
 }
 
 

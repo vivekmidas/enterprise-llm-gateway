@@ -187,8 +187,36 @@ def _build_workflow_invocation_spec(workflow: WorkflowDefinition, fallback_custo
 
 
 def _mask_sensitive_properties(properties: dict) -> dict:
-    # Do not mask sensitive properties on read to prevent auth issues on save
-    return properties
+    """
+    ===========================================================================
+    BLOCK COMMENT: MASK PROTECTED / PASSWORD PROPERTIES FOR NON-ADMIN USERS
+    Reference: EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001
+    Description:
+        Masks password/secret/token/api_key values as "••••••••" on read for
+        standard workflow users while preserving non-sensitive property values.
+    ===========================================================================
+    """
+    if not isinstance(properties, dict):
+        return properties
+    sensitive_tokens = (
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "auth_token",
+        "secret_key",
+        "private_key",
+        "client_secret",
+    )
+    masked = {}
+    for k, v in properties.items():
+        kl = str(k or "").lower()
+        if any(s in kl for s in sensitive_tokens):
+            masked[k] = "••••••••" if v not in (None, "") else ""
+        else:
+            masked[k] = v
+    return masked
 
 # ==============================================================================
 # BLOCK COMMENT: TENANT-SCOPED WORKFLOWS LIST ENDPOINT (DYNAMIC API GUARD)
@@ -569,12 +597,14 @@ async def get_node_properties(
                 if not cust_node or not cust_node.is_enabled:
                     raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
 
-            # NodeDB (Node) is SOT for contracts; do not read contracts from customer_nodes
-            # if cust_node:
-            #     if cust_node.input_contract is not None:
-            #         input_contract = cust_node.input_contract
-            #     if cust_node.output_contract is not None:
-            #         output_contract = cust_node.output_contract
+            # EPIC-PROPS-CONTRACT-001 / STORY-CONTRACT-003:
+            # Allow tenant-customized input_contract / output_contract (e.g. allowed_values, defaults)
+            # when explicitly configured on CustomerNodeDB.
+            if cust_node:
+                if cust_node.input_contract and isinstance(cust_node.input_contract, dict) and cust_node.input_contract.get("rules"):
+                    input_contract = cust_node.input_contract
+                if cust_node.output_contract and isinstance(cust_node.output_contract, dict) and (cust_node.output_contract.get("rules") or cust_node.output_contract.get("properties")):
+                    output_contract = cust_node.output_contract
 
             # Merge workflow node overrides (instance level contracts allowed for webhooks/triggers)
             from app.models.db_models import WorkflowNodePropertyDB
@@ -592,21 +622,27 @@ async def get_node_properties(
                 if prop_row.output_contract is not None:
                     output_contract = prop_row.output_contract
 
-            # System properties are sacrosanct and cannot be overridden by tenant
-            resolved_system = dict(global_system_defaults)
-            
-            # User properties resolved with correct precedence (instance > tenant > global)
+            # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
+            # System properties provide baseline defaults; if a key is also in user_properties,
+            # user_properties takes precedence (System default -> Node user_properties -> Tenant override -> Instance override)
+            # and is categorized under user_properties so it is never hidden in Runtime System.
             global_user_defaults.pop("allow_node_testing", None)
+            user_defined_keys = set(global_user_defaults.keys())
+            resolved_system = {
+                k: v for k, v in global_system_defaults.items() if k not in user_defined_keys
+            }
+            
             resolved_user = {}
             for k, v in global_user_defaults.items():
                 if k == "allow_node_testing":
                     continue
-                if k in workflow_overrides:
+                base_val = v if v not in (None, "") else global_system_defaults.get(k, v)
+                if k in workflow_overrides and workflow_overrides[k] != "••••••••":
                     resolved_user[k] = workflow_overrides[k]
                 elif k in tenant_overrides:
                     resolved_user[k] = tenant_overrides[k]
                 else:
-                    resolved_user[k] = v
+                    resolved_user[k] = base_val
 
             # Resolve allow_node_testing into system properties
             if "allow_node_testing" in workflow_overrides:
@@ -616,7 +652,7 @@ async def get_node_properties(
 
             # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
             for k, v in workflow_overrides.items():
-                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
+                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system and v != "••••••••":
                     resolved_user[k] = v
             for k, v in tenant_overrides.items():
                 if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
@@ -640,16 +676,16 @@ async def get_node_properties(
 
             # ==================================================================
             # BLOCK COMMENT: PROPERTY SCHEMA IN NODE PROPERTIES RESPONSE
-            # Reference: EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001
+            # Reference: EPIC-NODE-PROPS-UI-001 / EPIC-PROPS-CONTRACT-001
             # Description:
             #     Returns typed schema (type/label/options/multiple/description)
             #     with resolved values so Workflow Builder renders `choice`
             #     (dropdown / checkbox list) and `textarea` fields correctly.
-            #     Each entry carries `category` ("user" | "system").
+            #     Keys present in user_properties take precedence over system_properties.
             # ==================================================================
             from app.nodes.properties import normalize_choice_entry
 
-            def _schema_entries(raw: Any, category: str) -> list:
+            def _schema_entries(raw: Any, category: str, skip_keys: Optional[set] = None) -> list:
                 if not raw:
                     return []
                 if isinstance(raw, str):
@@ -659,8 +695,14 @@ async def get_node_properties(
                         return []
                 if not isinstance(raw, list):
                     return []
+                flat_raw = []
+                for r_item in raw:
+                    if isinstance(r_item, list):
+                        flat_raw.extend(r_item)
+                    else:
+                        flat_raw.append(r_item)
                 out = []
-                for item in raw:
+                for item in flat_raw:
                     if isinstance(item, str):
                         try:
                             item = json.loads(item)
@@ -668,8 +710,10 @@ async def get_node_properties(
                             continue
                     if not isinstance(item, dict) or not item.get("key"):
                         continue
-                    entry = normalize_choice_entry(item)
-                    if entry["key"] == "allow_node_testing":
+                    entry = normalize_choice_entry(dict(item))
+                    if entry["key"] in ("allow_node_testing", "__base_node__"):
+                        continue
+                    if skip_keys and entry["key"] in skip_keys:
                         continue
                     if entry["key"] in resolved_properties:
                         entry["value"] = resolved_properties[entry["key"]]
@@ -679,8 +723,10 @@ async def get_node_properties(
 
             property_schema = []
             if db_node:
-                property_schema.extend(_schema_entries(db_node.user_properties, "user"))
-                property_schema.extend(_schema_entries(db_node.system_properties, "system"))
+                user_schema = _schema_entries(db_node.user_properties, "user")
+                seen_user_keys = {e["key"] for e in user_schema}
+                property_schema.extend(user_schema)
+                property_schema.extend(_schema_entries(db_node.system_properties, "system", skip_keys=seen_user_keys))
 
             logger.info("get_workflow_properties_response_success", workflow_id=workflow_id)
             return {
@@ -740,11 +786,21 @@ async def update_node_properties(
                         raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
 
                 db_node = await _get_workflow_node_details(session, agent_name)
+                existing_props = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
+                # Strip masked password placeholders ("••••••••") so they never overwrite stored secrets
+                for mk in list(properties.keys()):
+                    if properties[mk] == "••••••••":
+                        if mk in existing_props:
+                            properties[mk] = existing_props[mk]
+                        else:
+                            properties.pop(mk, None)
+
                 if db_node and db_node.system_properties:
                     system_keys = set(property_entries_to_dict(db_node.system_properties).keys())
-                    if system_keys:
-                        existing_props = await _load_workflow_node_properties(session, workflow_id, agent_node_id)
-                        for k in system_keys:
+                    user_keys = set(property_entries_to_dict(db_node.user_properties).keys())
+                    only_system_keys = system_keys - user_keys
+                    if only_system_keys:
+                        for k in only_system_keys:
                             if k in existing_props:
                                 properties[k] = existing_props[k]
                             else:

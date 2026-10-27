@@ -278,6 +278,9 @@ class NodesRegistry:
         # 3. Discover customer-specific plugins from CustomerDB paths
         await cls._load_customer_custom_plugins()
 
+        # 4. Discover cloned / configured tenant nodes from NodeDB (EPIC-PROPS-CONTRACT-001 / STORY-PROPS-002)
+        await cls._load_cloned_nodes_from_db()
+
         # Log the "output" of the discovery process
         cls.logger.info(
             "node_auto_discover_completed", 
@@ -625,3 +628,132 @@ class NodesRegistry:
                     await cls._load_plugins_from_directory(abs_path, customer.id)
         except Exception as e:
             cls.logger.error("error_loading_customer_custom_plugins", error=str(e))
+
+    # ==========================================================================
+    # BLOCK COMMENT: TENANT CLONED NODE REGISTRATION & STARTUP HYDRATION
+    # Reference: EPIC-PROPS-CONTRACT-001 / STORY-PROPS-002
+    # Description:
+    #     Allows Tenant Admins and System Admins to clone any registered base node
+    #     into a named node configuration (e.g. "MySQL - Sales DB") backed by the
+    #     base node's Python implementation class, persisting across restarts.
+    # ==========================================================================
+    @classmethod
+    async def register_cloned_node(
+        cls,
+        cloned_name: str,
+        base_node_name: str,
+        label: str,
+        description: str = "",
+        user_properties: Any = None,
+        system_properties: Any = None,
+        input_contract: Any = None,
+        output_contract: Any = None,
+        customer_id: Optional[Any] = None,
+        category: Optional[str] = None,
+        group: Optional[str] = None,
+        icon: Optional[str] = None,
+        color: Optional[str] = None,
+        badge: Optional[str] = None,
+        node_type: Optional[str] = None,
+    ) -> Optional[BaseNode]:
+        import copy
+        base_agent = cls.get_node(base_node_name)
+        if not base_agent:
+            cls.logger.warning("clone_base_node_not_found", cloned_name=cloned_name, base_node_name=base_node_name)
+            return None
+
+        try:
+            if isinstance(base_agent, LazyPluginNode):
+                instance = LazyPluginNode(
+                    plugin_dir=base_agent._plugin_dir,
+                    script_path=base_agent._script_path,
+                    class_name=base_agent._class_name,
+                    module_name=f"{base_agent._module_name}_clone_{cloned_name}",
+                    name=cloned_name,
+                    label=label or cloned_name,
+                    description=description or base_agent.description,
+                    version=base_agent.version,
+                    category=category or base_agent.category,
+                    group=group or base_agent.group,
+                    icon=icon or base_agent.icon,
+                    color=color or base_agent.color,
+                    badge=badge or base_agent.badge,
+                    sub_label=base_node_name,
+                    node_type=(node_type or base_agent.node_type or "NODE").upper(),
+                    user_properties=copy.deepcopy(user_properties if user_properties is not None else base_agent.user_properties),
+                    system_properties=copy.deepcopy(system_properties if system_properties is not None else base_agent.system_properties),
+                    input_contract=copy.deepcopy(input_contract if input_contract is not None else base_agent.input_contract),
+                    output_contract=copy.deepcopy(output_contract if output_contract is not None else base_agent.output_contract),
+                    customer_id=customer_id,
+                )
+            else:
+                instance = base_agent.__class__()
+                instance.name = cloned_name
+                instance.label = label or cloned_name
+                instance.description = description if description is not None else base_agent.description
+                instance.version = base_agent.version
+                instance.category = category or base_agent.category
+                instance.group = group or base_agent.group
+                instance.icon = icon or base_agent.icon
+                instance.color = color or base_agent.color
+                instance.badge = badge or base_agent.badge
+                instance.sub_label = base_node_name
+                instance.node_type = (node_type or base_agent.node_type or "NODE").upper()
+                instance.customer_id = customer_id
+                if user_properties is not None:
+                    instance.user_properties = copy.deepcopy(user_properties)
+                    instance._definition_user_properties = copy.deepcopy(user_properties)
+                if system_properties is not None:
+                    instance.system_properties = copy.deepcopy(system_properties)
+                    instance._definition_system_properties = copy.deepcopy(system_properties)
+                if input_contract is not None:
+                    instance.input_contract = copy.deepcopy(input_contract)
+                    instance._definition_input_contract = copy.deepcopy(input_contract)
+                if output_contract is not None:
+                    instance.output_contract = copy.deepcopy(output_contract)
+                    instance._definition_output_contract = copy.deepcopy(output_contract)
+
+            await instance.init()
+            cls._nodes[cloned_name] = instance
+            cls.logger.info("cloned_node_registered", cloned_name=cloned_name, base_node_name=base_node_name, customer_id=customer_id)
+            return instance
+        except Exception as e:
+            cls.logger.error("failed_to_register_cloned_node", cloned_name=cloned_name, base_node_name=base_node_name, error=str(e))
+            return None
+
+    @classmethod
+    async def _load_cloned_nodes_from_db(cls):
+        from app.core.database import AsyncSessionLocal
+        from app.models.db_models import NodeDB
+        from app.nodes.properties import property_entries_to_dict
+        from sqlalchemy import select
+
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(NodeDB))
+                db_nodes = result.scalars().all()
+                for db_node in db_nodes:
+                    if not db_node.name or db_node.name in cls._nodes:
+                        continue
+                    sys_dict = property_entries_to_dict(db_node.system_properties)
+                    base_node_name = sys_dict.get("__base_node__") or db_node.sub_label
+                    if base_node_name and base_node_name in cls._nodes:
+                        await cls.register_cloned_node(
+                            cloned_name=db_node.name,
+                            base_node_name=str(base_node_name),
+                            label=db_node.label or db_node.name,
+                            description=db_node.description or "",
+                            user_properties=db_node.user_properties,
+                            system_properties=db_node.system_properties,
+                            input_contract=db_node.input_contract,
+                            output_contract=db_node.output_contract,
+                            customer_id=db_node.customer_id,
+                            category=db_node.category,
+                            group=db_node.group,
+                            icon=db_node.icon,
+                            color=db_node.color,
+                            badge=db_node.badge,
+                            node_type=db_node.node_type,
+                        )
+        except Exception as e:
+            cls.logger.error("error_loading_cloned_nodes_from_db", error=str(e))

@@ -76,7 +76,13 @@ def property_entries_to_dict(value: Any) -> dict:
 
     if isinstance(value, list):
         result = {}
-        for item in value:
+        flat_items = []
+        for raw_item in value:
+            if isinstance(raw_item, list):
+                flat_items.extend(raw_item)
+            else:
+                flat_items.append(raw_item)
+        for item in flat_items:
             entry = item
             if isinstance(item, str):
                 try:

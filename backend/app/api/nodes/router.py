@@ -60,6 +60,32 @@ async def _fetch_node(db: AsyncSession, statement):
     return d
 
 
+def _is_sensitive_property(key: str, prop_type: str = "") -> bool:
+    """
+    ===========================================================================
+    BLOCK COMMENT: PROTECTED / PASSWORD PROPERTY DETECTION
+    Reference: EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001
+    ===========================================================================
+    """
+    if str(prop_type or "").lower() in {"password", "secret"}:
+        return True
+    k = str(key or "").lower()
+    return any(
+        s in k
+        for s in [
+            "password",
+            "token",
+            "apikey",
+            "api_key",
+            "secret",
+            "auth_token",
+            "secret_key",
+            "private_key",
+            "client_secret",
+        ]
+    )
+
+
 def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive: bool = False) -> dict:
     def merge_list(properties_val, overrides_dict):
         if not properties_val:
@@ -71,9 +97,17 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
                 return []
         if not isinstance(properties_val, list):
             return properties_val
+
+        # Flatten accidental nested single-item lists (e.g. [[{"key": "host"}]])
+        flat_items = []
+        for raw_item in properties_val:
+            if isinstance(raw_item, list):
+                flat_items.extend(raw_item)
+            else:
+                flat_items.append(raw_item)
             
         merged = []
-        for item in properties_val:
+        for item in flat_items:
             entry = item
             if isinstance(item, str):
                 try:
@@ -84,41 +118,83 @@ def _merge_customer_config_into_node(node: dict, overrides: dict, mask_sensitive
                 # EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001:
                 # lift legacy comma-separated choice options into `options` before overrides
                 from app.nodes.properties import normalize_choice_entry
-                entry = normalize_choice_entry(entry)
+                entry = normalize_choice_entry(dict(entry))
                 key = entry.get("key")
+                prop_type = entry.get("type", "")
+                is_sens = _is_sensitive_property(key, prop_type)
                 if key:
                     if key in overrides_dict:
                         val = overrides_dict[key]
-                        if mask_sensitive and any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+                        if mask_sensitive and is_sens:
                             entry["default"] = "••••••••" if val else ""
                             entry["value"] = "••••••••" if val else ""
                         else:
                             entry["default"] = val
                             entry["value"] = val
-                    
-                    source_key = f"{key}_source"
-                    if source_key in overrides_dict:
-                        entry["source"] = overrides_dict[source_key]
-                elif mask_sensitive and key:
-                    if any(s in key.lower() for s in ["password", "token", "apikey", "secret", "key", "auth_token", "secret_key"]):
+                    elif mask_sensitive and is_sens:
                         if entry.get("default"):
                             entry["default"] = "••••••••"
                         if entry.get("value"):
                             entry["value"] = "••••••••"
+                    
+                    source_key = f"{key}_source"
+                    if source_key in overrides_dict:
+                        entry["source"] = overrides_dict[source_key]
                 merged.append(entry)
         return merged
 
     node = dict(node)
-    user_props = merge_list(node.get("user_properties"), overrides)
-    system_props = merge_list(node.get("system_properties"), overrides)
+    # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
+    # Build baseline from system_properties defaults first so user_properties inherits
+    # system defaults when user_properties default/value is empty, then apply tenant overrides.
+    sys_defaults = property_entries_to_dict(node.get("system_properties"))
+    effective_overrides = {**sys_defaults, **(overrides or {})}
+    user_props = merge_list(node.get("user_properties"), overrides or {})
+    for u_entry in user_props:
+        if isinstance(u_entry, dict):
+            uk = u_entry.get("key")
+            is_sens = _is_sensitive_property(uk, u_entry.get("type", ""))
+            if uk and (u_entry.get("value") in (None, "") and u_entry.get("default") in (None, "")):
+                if uk in effective_overrides and effective_overrides[uk] not in (None, ""):
+                    fallback_val = effective_overrides[uk]
+                    if mask_sensitive and is_sens:
+                        u_entry["value"] = "••••••••"
+                        u_entry["default"] = "••••••••"
+                    else:
+                        u_entry["value"] = fallback_val
+                        u_entry["default"] = fallback_val
+    system_props = merge_list(node.get("system_properties"), overrides or {})
        
     node["user_properties"] = user_props
     node["system_properties"] = system_props
-    node["allow_node_testing"] = bool(overrides.get("allow_node_testing", False))
+    node["allow_node_testing"] = bool((overrides or {}).get("allow_node_testing", False))
     return node
 
 
 from typing import Optional
+
+
+def _is_tenant_admin_user(user: User) -> bool:
+    """Checks if the user is a tenant admin (role='tenant_admin' or 'admin', or has nodes:catalog:manage / nodes:catalog:clone)."""
+    return (
+        user.role in ("admin", "tenant_admin")
+        or getattr(user, "role_type", None) in ("admin", "tenant_admin")
+        or user.has_permission("nodes:catalog:manage")
+        or user.has_permission("admin:nodes:manage")
+    )
+
+
+def _can_clone_node(user: User) -> bool:
+    """Checks if the user has permission to clone a node (`system_admin`, `tenant_admin`, or `nodes:catalog:clone`)."""
+    return (
+        user.role in ("system_admin", "admin", "tenant_admin")
+        or getattr(user, "role_type", None) in ("system_admin", "admin", "tenant_admin")
+        or user.has_permission("nodes:catalog:clone")
+        or user.has_permission("admin:nodes:clone")
+        or user.has_permission("nodes:catalog:manage")
+        or user.has_permission("admin:nodes:manage")
+    )
+
 
 @router.get("/customer/config")
 async def get_customer_node_configs(
@@ -127,11 +203,11 @@ async def get_customer_node_configs(
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves all custom configurations and status of nodes for the active customer."""
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role != "system_admin" and not _is_tenant_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
     
     target_customer_id = customer_id
-    if current_user.role == "admin":
+    if current_user.role != "system_admin":
         target_customer_id = current_user.customer_id
     elif current_user.role == "system_admin":
         if target_customer_id is None:
@@ -177,15 +253,15 @@ async def configure_customer_node(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role != "system_admin" and not _is_tenant_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
         
-    is_customer_config = (current_user.role == "admin") or (current_user.role == "system_admin" and customer_id is not None)
+    is_customer_config = (current_user.role != "system_admin") or (current_user.role == "system_admin" and customer_id is not None)
     base_node = None
     
     if is_customer_config:
         # update specific customer node definitions
-        target_customer_id = current_user.customer_id if current_user.role == "admin" else customer_id
+        target_customer_id = current_user.customer_id if current_user.role != "system_admin" else customer_id
         stmt = select(CustomerNodeDB).where(
             CustomerNodeDB.customer_id == target_customer_id,
             CustomerNodeDB.node_name == node_name
@@ -209,7 +285,7 @@ async def configure_customer_node(
             )
             db.add(customer_node)
             
-        if current_user.role == "admin" and not customer_node.is_enabled:
+        if current_user.role != "system_admin" and not customer_node.is_enabled:
             raise HTTPException(
                 status_code=403,
                 detail="This node is locked and cannot be configured because it has been disabled by the system administrator."
@@ -353,7 +429,9 @@ async def configure_customer_node(
                     
                     existing.update(normalized_incoming)
                     sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()
-                    customer_node.properties = {prop_k: prop_v for prop_k, prop_v in existing.items() if prop_k not in sys_prop_keys}
+                    user_prop_keys = set(property_entries_to_dict(base_node.user_properties).keys()) if base_node else set()
+                    only_sys_prop_keys = sys_prop_keys - user_prop_keys
+                    customer_node.properties = {prop_k: prop_v for prop_k, prop_v in existing.items() if prop_k not in only_sys_prop_keys}
                 elif current_user.role == "system_admin" and not is_customer_config:
                     if isinstance(v, dict):
                         for prop_key, prop_val in v.items():
@@ -371,7 +449,9 @@ async def configure_customer_node(
                     norm_key = prop_key[7:] if (prop_key.startswith("system-") and current_user.role == "system_admin") else prop_key
                     existing[norm_key] = v
                     sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()
-                    customer_node.properties = {prop_k: prop_v for prop_k, prop_v in existing.items() if prop_k not in sys_prop_keys}
+                    user_prop_keys = set(property_entries_to_dict(base_node.user_properties).keys()) if base_node else set()
+                    only_sys_prop_keys = sys_prop_keys - user_prop_keys
+                    customer_node.properties = {prop_k: prop_v for prop_k, prop_v in existing.items() if prop_k not in only_sys_prop_keys}
                 elif current_user.role == "system_admin" and not is_customer_config:
                     update_system_admin_property(customer_node, prop_key, v)
     else:
@@ -427,11 +507,23 @@ async def configure_customer_node(
                     return updated_list
 
                 target_node_for_props = customer_node if not is_customer_config else base_node
-                if target_node_for_props:
+                can_mutate_schema = (
+                    current_user.role == "system_admin"
+                    or (base_node and base_node.customer_id is not None and str(base_node.customer_id) == str(current_user.customer_id))
+                )
+                if target_node_for_props and can_mutate_schema:
                     if "user_properties" in config_data:
                         target_node_for_props.user_properties = sync_properties(target_node_for_props.user_properties, config_data["user_properties"])
                     if "system_properties" in config_data:
                         target_node_for_props.system_properties = sync_properties(target_node_for_props.system_properties, config_data["system_properties"])
+                # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
+                # Always persist tenant property values into CustomerNodeDB.properties when configuring a customer node,
+                # even when user_properties/system_properties arrays are also sent by the UI.
+                if is_customer_config and updates:
+                    sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()
+                    user_prop_keys = set(property_entries_to_dict(base_node.user_properties).keys()) if base_node else set()
+                    only_sys_prop_keys = sys_prop_keys - user_prop_keys
+                    customer_node.properties = {k: v for k, v in updates if k not in only_sys_prop_keys}
             elif not is_customer_config:
                     # Update NodeDB columns: system_properties and user_properties
                     sys_props = customer_node.system_properties
@@ -517,9 +609,11 @@ async def configure_customer_node(
                     customer_node.system_properties = sys_props
                     customer_node.user_properties = user_props
             else:
-                # Update CustomerNodeDB properties column: replace it entirely with incoming overrides, excluding system properties
+                # Update CustomerNodeDB properties column: replace it entirely with incoming overrides, excluding system-only properties
                 sys_prop_keys = set(property_entries_to_dict(base_node.system_properties).keys()) if base_node else set()
-                customer_node.properties = {k: v for k, v in updates if k not in sys_prop_keys}
+                user_prop_keys = set(property_entries_to_dict(base_node.user_properties).keys()) if base_node else set()
+                only_sys_prop_keys = sys_prop_keys - user_prop_keys
+                customer_node.properties = {k: v for k, v in updates if k not in only_sys_prop_keys}
 
         if "is_enabled" in config_data:
             if is_customer_config:
@@ -569,6 +663,181 @@ async def configure_customer_node(
         }
 
 
+# ==============================================================================
+# BLOCK COMMENT: TENANT ADMIN NODE CLONING / NAMED NODE CONFIGURATIONS
+# Reference: EPIC-PROPS-CONTRACT-001 / STORY-PROPS-002
+# Description:
+#     Allows Tenant Admins (and System Admins) to clone any registered base node
+#     into a named node configuration (e.g. "MySQL - Sales DB", "MySQL - HR DB")
+#     with pre-configured user_properties, registering it in NodeDB,
+#     CustomerNodeDB, and NodesRegistry.
+# ==============================================================================
+@router.post("/customer/clone")
+async def clone_customer_node(
+    payload: dict,
+    customer_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _can_clone_node(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Access Denied: Missing required permission 'nodes:catalog:clone' or Admin privileges to clone nodes",
+        )
+
+    base_node_name = (payload.get("base_node_name") or payload.get("base_node") or "").strip()
+    raw_name = (payload.get("name") or "").strip()
+    label = (payload.get("label") or raw_name).strip()
+    description = payload.get("description")
+
+    if not base_node_name or not raw_name:
+        raise HTTPException(status_code=400, detail="Both 'base_node_name' and 'name' are required")
+
+    import re
+    clean_slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", raw_name).strip("_").lower()
+    if not clean_slug:
+        raise HTTPException(status_code=400, detail="Invalid node identifier")
+
+    target_customer_id = (
+        current_user.customer_id
+        if current_user.role != "system_admin"
+        else customer_id
+    )
+
+    base_res = await db.execute(select(NodeDB).where(NodeDB.name == base_node_name))
+    base_node = base_res.scalars().first()
+    if not base_node:
+        raise HTTPException(status_code=404, detail=f"Base node '{base_node_name}' not found")
+
+    existing_res = await db.execute(select(NodeDB).where(NodeDB.name == clean_slug))
+    if existing_res.scalars().first():
+        raise HTTPException(status_code=400, detail=f"Node identifier '{clean_slug}' already exists")
+
+    import copy
+    cloned_user_props = copy.deepcopy(base_node.user_properties or [])
+    if isinstance(cloned_user_props, str):
+        try:
+            cloned_user_props = json.loads(cloned_user_props)
+        except Exception:
+            cloned_user_props = []
+
+    cloned_sys_props = copy.deepcopy(base_node.system_properties or [])
+    if isinstance(cloned_sys_props, str):
+        try:
+            cloned_sys_props = json.loads(cloned_sys_props)
+        except Exception:
+            cloned_sys_props = []
+    if not isinstance(cloned_sys_props, list):
+        cloned_sys_props = []
+
+    # Flatten any nested single-item lists in cloned_sys_props
+    flat_sys = []
+    for item in cloned_sys_props:
+        if isinstance(item, list):
+            flat_sys.extend(item)
+        else:
+            flat_sys.append(item)
+    cloned_sys_props = flat_sys
+
+    # Determine root executable base node name
+    sys_dict = property_entries_to_dict(cloned_sys_props)
+    root_base_name = sys_dict.get("__base_node__") or base_node.name
+    cloned_sys_props = [p for p in cloned_sys_props if not (isinstance(p, dict) and p.get("key") == "__base_node__")]
+    cloned_sys_props.append({
+        "key": "__base_node__",
+        "type": "string",
+        "label": "Base Node",
+        "value": root_base_name,
+        "default": root_base_name,
+        "description": "Underlying executable node class reference",
+    })
+
+    incoming_props = payload.get("properties") or {}
+    if isinstance(cloned_user_props, list) and isinstance(incoming_props, dict):
+        for entry in cloned_user_props:
+            if isinstance(entry, dict) and entry.get("key") in incoming_props:
+                val = incoming_props[entry["key"]]
+                entry["value"] = val
+                entry["default"] = val
+
+    new_node_db = NodeDB(
+        name=clean_slug,
+        label=label,
+        node_type=base_node.node_type or "NODE",
+        description=description if description is not None else (base_node.description or ""),
+        version=base_node.version or "1.0.0",
+        category=base_node.category,
+        group=base_node.group,
+        icon=base_node.icon,
+        color=base_node.color,
+        badge=base_node.badge or "Configured",
+        sub_label=root_base_name,
+        user_properties=cloned_user_props,
+        system_properties=cloned_sys_props,
+        input_contract=copy.deepcopy(payload.get("input_contract") or base_node.input_contract or {}),
+        output_contract=copy.deepcopy(payload.get("output_contract") or base_node.output_contract or {}),
+        customer_id=str(target_customer_id) if target_customer_id is not None else None,
+    )
+    db.add(new_node_db)
+
+    if target_customer_id is not None:
+        new_cust_node = CustomerNodeDB(
+            customer_id=str(target_customer_id),
+            node_name=clean_slug,
+            properties=dict(incoming_props) if isinstance(incoming_props, dict) else {},
+            is_enabled=True,
+            input_contract=new_node_db.input_contract,
+            output_contract=new_node_db.output_contract,
+            label=label,
+        )
+        db.add(new_cust_node)
+
+    await db.commit()
+    await db.refresh(new_node_db)
+
+    from app.nodes.registry import NodesRegistry
+    await NodesRegistry.register_cloned_node(
+        cloned_name=clean_slug,
+        base_node_name=str(root_base_name),
+        label=label,
+        description=new_node_db.description,
+        user_properties=cloned_user_props,
+        system_properties=cloned_sys_props,
+        input_contract=new_node_db.input_contract,
+        output_contract=new_node_db.output_contract,
+        customer_id=new_node_db.customer_id,
+        category=new_node_db.category,
+        group=new_node_db.group,
+        icon=new_node_db.icon,
+        color=new_node_db.color,
+        badge=new_node_db.badge,
+        node_type=new_node_db.node_type,
+    )
+
+    return {
+        "node": {
+            "id": new_node_db.id,
+            "name": new_node_db.name,
+            "label": new_node_db.label,
+            "node_type": new_node_db.node_type,
+            "description": new_node_db.description,
+            "version": new_node_db.version,
+            "category": new_node_db.category,
+            "group": new_node_db.group,
+            "icon": new_node_db.icon,
+            "color": new_node_db.color,
+            "badge": new_node_db.badge,
+            "sub_label": new_node_db.sub_label,
+            "user_properties": new_node_db.user_properties,
+            "system_properties": new_node_db.system_properties,
+            "input_contract": new_node_db.input_contract,
+            "output_contract": new_node_db.output_contract,
+            "customer_id": new_node_db.customer_id,
+            "is_enabled": True,
+        }
+    }
+
+
 # BLOCK COMMENT: Non-breaking allowed nodes governance for standard users and tenant admins
 @router.get("")
 async def list_nodes(
@@ -585,9 +854,13 @@ async def list_nodes(
     filtered_nodes = []
     for node in nodes:
         node_name = node.get("name")
+        node_cust_id = node.get("customer_id")
+        if current_user.role != "system_admin" and node_cust_id is not None:
+            if str(node_cust_id) != str(current_user.customer_id):
+                continue
         cust_node = cust_nodes.get(node_name)
         
-        if current_user.role in ["system_admin", "admin"]:
+        if current_user.role == "system_admin" or _is_tenant_admin_user(current_user):
             overrides = cust_node.properties if cust_node and cust_node.properties else {}
             merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
@@ -647,7 +920,7 @@ async def get_node(
             return {"error": "Node not found or not enabled by admin"}
             
     overrides = cust_node.properties if cust_node and cust_node.properties else {}
-    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    mask_sensitive = not (current_user.role == "system_admin" or _is_tenant_admin_user(current_user))
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
@@ -686,7 +959,7 @@ async def get_node_by_id(
             return {"error": "Node not found or not enabled by admin"}
             
     overrides = cust_node.properties if cust_node and cust_node.properties else {}
-    mask_sensitive = current_user.role not in ["system_admin", "admin"]
+    mask_sensitive = not (current_user.role == "system_admin" or _is_tenant_admin_user(current_user))
     merged_node = _merge_customer_config_into_node(node, overrides, mask_sensitive=mask_sensitive)
     merged_node["is_enabled"] = cust_node.is_enabled if cust_node else True
     if cust_node:
@@ -796,7 +1069,7 @@ async def get_nodes_by_category(
         node_name = node.get("name")
         cust_node = cust_nodes.get(node_name)
 
-        if current_user.role in ["system_admin", "admin"]:
+        if current_user.role == "system_admin" or _is_tenant_admin_user(current_user):
             overrides = cust_node.properties if cust_node and cust_node.properties else {}
             merged = _merge_customer_config_into_node(node, overrides, mask_sensitive=False)
             merged["is_enabled"] = cust_node.is_enabled if cust_node else True
@@ -840,7 +1113,7 @@ async def delete_node(
     Only System Admins (for global/system nodes) or Tenant Admins (for their customer-scoped nodes) can delete.
     If the node is used in workflows, it flags them unless force=True is passed.
     """
-    if current_user.role not in ["admin", "system_admin"]:
+    if current_user.role != "system_admin" and not _is_tenant_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin permissions required to delete nodes")
 
     # Fetch the node definition
@@ -852,8 +1125,8 @@ async def delete_node(
         raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found")
 
     # Check authorization:
-    if current_user.role == "admin":
-        if node.customer_id is None or node.customer_id != current_user.customer_id:
+    if current_user.role != "system_admin":
+        if node.customer_id is None or str(node.customer_id) != str(current_user.customer_id):
             raise HTTPException(status_code=403, detail="You do not have permission to delete this node")
 
     # Scan workflows to check if node is in use

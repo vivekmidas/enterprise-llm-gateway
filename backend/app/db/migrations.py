@@ -269,7 +269,8 @@ MODULES_REGISTRY = [
         "actions": [
             {"action": "view", "is_route_guard": True, "label": "View Nodes Catalog", "description": "Browse available agent nodes", "api_path": "/nodes, /nodes/**, /categories, /categories/**, /api/nodes, /api/nodes/**, /api/admin/nodes, /api/admin/nodes/**", "http_methods": ["GET"]},
             {"action": "execute", "label": "Execute Standalone Node", "description": "Run isolated node executions", "api_path": "/nodes/*/execute, /nodes/*/test, /api/nodes/*/execute", "http_methods": ["POST"]},
-            {"action": "manage", "label": "Configure Node Registry", "description": "Enable and configure nodes", "api_path": "/nodes, /nodes/**, /admin/customers/*/nodes/**, /api/nodes/**, /api/admin/nodes/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+            {"action": "clone", "label": "Clone / Create Configured Node", "description": "Clone base nodes into tenant-scoped pre-configured node instances", "api_path": "/nodes/customer/clone, /api/nodes/customer/clone, /api/admin/nodes/customer/clone", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Configure Node Registry", "description": "Enable and configure nodes", "api_path": "/nodes, /nodes/**, /nodes/customer/config/**, /nodes/customer/clone, /admin/customers/*/nodes/**, /api/nodes/**, /api/admin/nodes/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
@@ -465,9 +466,11 @@ ROLE_PRESETS = [
             "workflows:builder:manage",
             "admin:nodes:view",
             "admin:nodes:execute",
+            "admin:nodes:clone",
             "admin:nodes:manage",
             "nodes:catalog:view",
             "nodes:catalog:execute",
+            "nodes:catalog:clone",
             "nodes:catalog:manage",
             "admin:playground:view",
             "admin:playground:query",

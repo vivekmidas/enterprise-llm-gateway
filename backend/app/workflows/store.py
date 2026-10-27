@@ -387,8 +387,15 @@ async def _hydrate_workflow_definition(
         global_system_defaults = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
         global_user_defaults = _default_properties_from_node_definition(catalog_node)
         
-        # System properties are sacrosanct and cannot be overridden by tenant
-        resolved_system = dict(global_system_defaults)
+        # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
+        # System properties provide baseline defaults; keys also present in user_properties
+        # are categorized under user_properties and resolved with System -> Node User -> Tenant -> Instance precedence.
+        user_defined_keys = set(global_user_defaults.keys())
+        resolved_system = {
+            k: v
+            for k, v in global_system_defaults.items()
+            if k not in user_defined_keys and k != "__base_node__"
+        }
 
         cust_node = None
         tenant_overrides = {}
@@ -413,31 +420,31 @@ async def _hydrate_workflow_definition(
             )
         )
         prop_row = prop_result.scalars().first()
-        # print(f"HYDRATION: workflow_id={definition.id}, node_id={n_dict.get('id')}, prop_row={prop_row}, label={prop_row.label if prop_row else None}")
         instance_overrides = {}
         if prop_row:
             if prop_row.properties:
                 instance_overrides = prop_row.properties if isinstance(prop_row.properties, dict) else _safe_json_loads(prop_row.properties, {})
             if prop_row.label:
                 data["label"] = prop_row.label
-                # print(f"HYDRATION SUCCESS: set label to {prop_row.label}")
 
-
-        
-        # Prevent standard users from overriding admin/tenant-locked properties
-        # Also clean out any system keys that might be present in instance_overrides by mistake
-        for k in global_system_defaults.keys():
+        # Clean out system-only keys and masked password placeholders ("••••••••") from instance_overrides
+        only_system_keys = set(global_system_defaults.keys()) - user_defined_keys
+        for k in only_system_keys:
             instance_overrides.pop(k, None)
+        for mk in list(instance_overrides.keys()):
+            if instance_overrides[mk] == "••••••••":
+                instance_overrides.pop(mk, None)
 
-        # Resolve user properties with the correct inheritance chain (instance > tenant > global)
+        # Resolve user properties with the correct inheritance chain (instance > tenant > global user > global system)
         resolved_user = {}
         for k, v in global_user_defaults.items():
+            base_val = v if v not in (None, "") else global_system_defaults.get(k, v)
             if k in instance_overrides:
                 resolved_user[k] = instance_overrides[k]
             elif k in tenant_overrides:
                 resolved_user[k] = tenant_overrides[k]
             else:
-                resolved_user[k] = v
+                resolved_user[k] = base_val
 
         # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
         for k, v in instance_overrides.items():
@@ -476,17 +483,7 @@ async def _hydrate_workflow_definition(
         # Construct property schema with types
         property_schema = []
         if catalog_node:
-            def parse_props(val, resolved_vals):
-                """
-                Parses property entries and updates them with their resolved values.
-
-                Args:
-                    val: The raw property list/string from the catalog node.
-                    resolved_vals: The resolved property values to map to the schema.
-
-                Returns:
-                    A list of property dictionaries.
-                """
+            def parse_props(val, resolved_vals, category: str, skip_keys: Optional[set] = None):
                 if not val:
                     return []
                 if isinstance(val, str):
@@ -497,22 +494,36 @@ async def _hydrate_workflow_definition(
                 if not isinstance(val, list):
                     return []
                 
+                flat_val = []
+                for v_item in val:
+                    if isinstance(v_item, list):
+                        flat_val.extend(v_item)
+                    else:
+                        flat_val.append(v_item)
+
                 res_list = []
                 # EPIC-NODE-PROPS-UI-001 / STORY-CHOICE-TEXTAREA-VALUES-001:
                 # normalize choice options before overwriting value with resolved value
                 from app.nodes.properties import normalize_choice_entry
-                for item in val:
+                for item in flat_val:
                     if isinstance(item, dict):
                         entry = normalize_choice_entry(dict(item))
                         key = entry.get("key")
-                        if key and key in resolved_vals:
+                        if not key or key in ("allow_node_testing", "__base_node__"):
+                            continue
+                        if skip_keys and key in skip_keys:
+                            continue
+                        if key in resolved_vals:
                             entry["value"] = resolved_vals[key]
+                        entry["category"] = category
                         res_list.append(entry)
                 return res_list
 
             resolved_properties = {**resolved_system, **resolved_user}
-            property_schema.extend(parse_props(catalog_node.user_properties, resolved_properties))
-            property_schema.extend(parse_props(catalog_node.system_properties, resolved_properties))
+            user_schema_list = parse_props(catalog_node.user_properties, resolved_properties, "user")
+            seen_u_keys = {e["key"] for e in user_schema_list}
+            property_schema.extend(user_schema_list)
+            property_schema.extend(parse_props(catalog_node.system_properties, resolved_properties, "system", skip_keys=seen_u_keys))
 
         # Add mapping_template and expected_output if present in properties
         resolved_properties = {**resolved_system, **resolved_user}
