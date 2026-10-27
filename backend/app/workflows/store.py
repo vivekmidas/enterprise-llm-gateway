@@ -387,16 +387,6 @@ async def _hydrate_workflow_definition(
         global_system_defaults = property_entries_to_dict(catalog_node.system_properties) if catalog_node else {}
         global_user_defaults = _default_properties_from_node_definition(catalog_node)
         
-        # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
-        # System properties provide baseline defaults; keys also present in user_properties
-        # are categorized under user_properties and resolved with System -> Node User -> Tenant -> Instance precedence.
-        user_defined_keys = set(global_user_defaults.keys())
-        resolved_system = {
-            k: v
-            for k, v in global_system_defaults.items()
-            if k not in user_defined_keys and k != "__base_node__"
-        }
-
         cust_node = None
         tenant_overrides = {}
         # Merge customer admin overrides if customer_id is provided
@@ -411,6 +401,16 @@ async def _hydrate_workflow_definition(
             cust_node = result.scalars().first()
             if cust_node and cust_node.properties:
                 tenant_overrides = cust_node.properties
+
+        # EPIC-PROPS-CONTRACT-001 / STORY-PROPS-001:
+        # System properties provide baseline defaults; tenant_admin overrides in CustomerNodeDB.properties
+        # apply to system_properties as well so locked tenant boundaries take effect at runtime.
+        user_defined_keys = set(global_user_defaults.keys())
+        resolved_system = {
+            k: (tenant_overrides[k] if k in tenant_overrides and tenant_overrides[k] not in (None, "") else v)
+            for k, v in global_system_defaults.items()
+            if k not in user_defined_keys and k not in ("__base_node__", "show_in_palette")
+        }
 
         # Load instance-specific overrides for user properties and label from the store
         prop_result = await session.execute(
@@ -438,6 +438,8 @@ async def _hydrate_workflow_definition(
         # Resolve user properties with the correct inheritance chain (instance > tenant > global user > global system)
         resolved_user = {}
         for k, v in global_user_defaults.items():
+            if k in ("allow_node_testing", "show_in_palette"):
+                continue
             base_val = v if v not in (None, "") else global_system_defaults.get(k, v)
             if k in instance_overrides:
                 resolved_user[k] = instance_overrides[k]
@@ -448,10 +450,10 @@ async def _hydrate_workflow_definition(
 
         # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
         for k, v in instance_overrides.items():
-            if k not in resolved_user and k not in resolved_system:
+            if k not in ("allow_node_testing", "show_in_palette") and k not in resolved_user and k not in resolved_system:
                 resolved_user[k] = v
         for k, v in tenant_overrides.items():
-            if k not in resolved_user and k not in resolved_system:
+            if k not in ("allow_node_testing", "show_in_palette") and k not in resolved_user and k not in resolved_system:
                 resolved_user[k] = v
 
         # Check if the instance itself defines custom contracts

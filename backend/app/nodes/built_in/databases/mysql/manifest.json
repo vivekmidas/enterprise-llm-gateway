@@ -14,20 +14,14 @@
     "class_name": "GenericMySQLDBExecutor",
     "user_properties": [
         {"key": "allow_node_testing", "type": "boolean", "label": "allow_node_testing", "value": true, "default": true, "description": ""},
-        {"key": "host", "type": "string", "label": "host", "value": "", "default": "", "description": ""},
-        {"key": "port", "type": "integer", "label": "port", "value": 3306, "default": 3306, "description": ""},
-        {"key": "server", "type": "string", "label": "server", "value": "", "default": "", "description": "server address or qualified domain name"},
-        {"key": "username", "type": "string", "label": "username", "value": "", "default": "", "description": ""},
-        {"key": "password", "type": "password", "label": "password", "value": "", "default": "", "description": ""},
-        {"key": "database", "type": "string", "label": "database", "value": "", "default": "", "description": ""}
+        {"key": "username", "type": "string", "label": "username", "value": "", "default": "", "description": "Database username"},
+        {"key": "password", "type": "password", "label": "password", "value": "", "default": "", "description": "Database password"}
     ],
     "system_properties": [
-        {"key": "host", "type": "string", "label": "host", "value": "", "default": "", "description": ""},
-        {"key": "port", "type": "integer", "label": "port", "value": 3306, "default": 3306, "description": ""},
+        {"key": "host", "type": "string", "label": "host", "value": "", "default": "", "description": "Database host / IP address"},
+        {"key": "port", "type": "integer", "label": "port", "value": 3306, "default": 3306, "description": "Database port"},
         {"key": "server", "type": "string", "label": "server", "value": "", "default": "", "description": "server address or qualified domain name"},
-        {"key": "username", "type": "string", "label": "username", "value": "", "default": "", "description": ""},
-        {"key": "password", "type": "password", "label": "password", "value": "", "default": "", "description": ""},
-        {"key": "database", "type": "string", "label": "database", "value": "", "default": "", "description": ""}
+        {"key": "database", "type": "string", "label": "database", "value": "", "default": "", "description": "Target database name"}
     ],
     "input_contract": {
         "version": "1.0",

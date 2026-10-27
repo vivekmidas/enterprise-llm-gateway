@@ -594,8 +594,8 @@ async def get_node_properties(
             cust_node = result.scalars().first()
             tenant_overrides = cust_node.properties if (cust_node and cust_node.properties) else {}
             if current_user.role != "system_admin" and workflow.customer_id is not None:
-                if not cust_node or not cust_node.is_enabled:
-                    raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled or not assigned to your tenant.")
+                if cust_node is not None and not cust_node.is_enabled:
+                    raise HTTPException(status_code=403, detail=f"Node '{agent_name}' is disabled by your tenant administrator.")
 
             # EPIC-PROPS-CONTRACT-001 / STORY-CONTRACT-003:
             # Allow tenant-customized input_contract / output_contract (e.g. allowed_values, defaults)
@@ -627,14 +627,17 @@ async def get_node_properties(
             # user_properties takes precedence (System default -> Node user_properties -> Tenant override -> Instance override)
             # and is categorized under user_properties so it is never hidden in Runtime System.
             global_user_defaults.pop("allow_node_testing", None)
+            global_user_defaults.pop("show_in_palette", None)
             user_defined_keys = set(global_user_defaults.keys())
             resolved_system = {
-                k: v for k, v in global_system_defaults.items() if k not in user_defined_keys
+                k: (tenant_overrides[k] if k in tenant_overrides and tenant_overrides[k] not in (None, "") else v)
+                for k, v in global_system_defaults.items()
+                if k not in user_defined_keys and k != "show_in_palette"
             }
             
             resolved_user = {}
             for k, v in global_user_defaults.items():
-                if k == "allow_node_testing":
+                if k in ("allow_node_testing", "show_in_palette"):
                     continue
                 base_val = v if v not in (None, "") else global_system_defaults.get(k, v)
                 if k in workflow_overrides and workflow_overrides[k] != "••••••••":
@@ -652,10 +655,10 @@ async def get_node_properties(
 
             # Preserve custom/mapping properties (e.g. mapping_template) that are not part of standard defaults
             for k, v in workflow_overrides.items():
-                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system and v != "••••••••":
+                if k not in ("allow_node_testing", "show_in_palette") and k not in resolved_user and k not in resolved_system and v != "••••••••":
                     resolved_user[k] = v
             for k, v in tenant_overrides.items():
-                if k != "allow_node_testing" and k not in resolved_user and k not in resolved_system:
+                if k not in ("allow_node_testing", "show_in_palette") and k not in resolved_user and k not in resolved_system:
                     resolved_user[k] = v
 
 
