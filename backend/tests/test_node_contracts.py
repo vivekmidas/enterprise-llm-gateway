@@ -262,7 +262,7 @@ class TemplateResolveTestNode(BaseNode):
 
 
 def test_sentiment_analyzer_with_various_data_formats():
-    from app.nodes.built_in.sentiment_analyzer_agent import SentimentAnalyzerAgent
+    from app.nodes.built_in.sentiment_analyzer.sentiment_analyzer_agent import SentimentAnalyzerAgent
 
     node = SentimentAnalyzerAgent()
     
@@ -286,7 +286,7 @@ def test_sentiment_analyzer_with_various_data_formats():
 
 
 def test_context_setter_with_dict_and_string():
-    from app.nodes.built_in.context_setter_agent import ContextSetterAgent
+    from app.nodes.built_in.llm.tools.context_setter.context_setter_agent import ContextSetterAgent
 
     node = ContextSetterAgent()
     
@@ -315,7 +315,7 @@ def test_context_setter_with_dict_and_string():
 
 
 def test_api_request_node_with_kv_list_and_dict():
-    from app.nodes.built_in.api_request_node import ApiRequestNode
+    from app.nodes.built_in.external_api_node.api_request_node import ApiRequestNode
 
     node = ApiRequestNode()
 
@@ -544,4 +544,55 @@ def test_flat_rules_contract_validates_string_input_for_object_schema():
     assert errors == []
 
 
+def test_validate_output_contract_wraps_array_and_relaxes_items():
+    from app.nodes.contracts import validate_output_contract
 
+    output_contract = {
+        "rules": [
+            {
+                "items": {"field_type": "string"},
+                "required": False,
+                "stateable": True,
+                "field_name": "data",
+                "field_type": "array",
+            },
+            {
+                "required": False,
+                "stateable": False,
+                "field_name": "rowcount",
+                "field_type": "integer",
+            },
+            {
+                "required": False,
+                "stateable": False,
+                "field_name": "lastrowid",
+                "field_type": "integer",
+            },
+        ],
+        "version": "1.0",
+    }
+
+    # 1. SELECT returning array of objects -> wrapped into {"data": [...]}
+    out_rows = NodeOutput(
+        trace_id="trace-select-rows",
+        data=json.dumps([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]),
+    )
+    errors = validate_output_contract(output_contract, out_rows, node_name="generic_mysql_query_executor")
+    assert errors == []
+    assert json.loads(out_rows.data) == {
+        "data": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+    }
+
+    # 2. SELECT returning empty array -> wrapped into {"data": []}
+    out_empty = NodeOutput(trace_id="trace-select-empty", data=json.dumps([]))
+    errors = validate_output_contract(output_contract, out_empty, node_name="generic_mysql_query_executor")
+    assert errors == []
+    assert json.loads(out_empty.data) == {"data": []}
+
+    # 3. UPDATE/DELETE returning dict with rowcount and null lastrowid
+    out_mutation = NodeOutput(
+        trace_id="trace-update",
+        data=json.dumps({"rowcount": 1, "lastrowid": None}),
+    )
+    errors = validate_output_contract(output_contract, out_mutation, node_name="generic_mysql_query_executor")
+    assert errors == []

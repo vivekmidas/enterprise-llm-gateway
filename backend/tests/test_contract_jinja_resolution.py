@@ -190,11 +190,11 @@ async def test_end_to_end_contract_resolution_in_workflow():
     # Verify execution was successful
     assert result["status"] == "completed"
     
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "target-1" in node_history
-    assert node_history["target-1"]["status"] == "success"
+    assert node_history["target-1"]["metadata"]["status"] == "success"
 
-    nodes_state = result.get("context", {}).get("nodes", {})
+    nodes_state = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "target-1" in nodes_state
 
     # Target node received the mapped and resolved field_values

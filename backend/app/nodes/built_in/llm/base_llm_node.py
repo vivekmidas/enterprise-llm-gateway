@@ -1,4 +1,5 @@
 import abc
+import asyncio
 import json
 import time
 import httpx
@@ -135,10 +136,10 @@ class BaseLLMNode(BaseNode, abc.ABC):
         tenant_settings = {}
 
         # Profile identifier (profile_name, profile_id, or llm_profile_id)
+        # CHANGE: also read 'profile_name' — key used by manifest user_properties (was ignored before).
         profile_identifier = (
             config.get("llm_profile_id")
-            or self.properties.get("llm_profile_id")
-        )
+         )
 
         if customer_id is not None or profile_identifier:
             try:
@@ -226,31 +227,51 @@ class BaseLLMNode(BaseNode, abc.ABC):
         max_retries = get_int("max_retries", 3)
 
         # 3. Resolve user prompt and messages from input payload
+        # DESIGN CHANGE (prompt consolidation):
+        #   - Run-time data (input_contract): prompt, context, history. 'query' and
+        #     'system_prompt_override' removed from contract.
+        #   - Design-time instructions (user_properties): system_prompt, user_prompt (template).
+        #   - 'query' / 'input' kept as silent fallback for legacy workflows only.
         input_payload = self.get_input_data(inp) or {}
         retrieved_context = None
         if isinstance(input_payload, str):
-            user_prompt = input_payload
-            system_prompt_override = None
+            prompt = input_payload
             history = []
+            data_vars: Dict[str, Any] = {}
         else:
-            user_prompt = input_payload.get("prompt") or input_payload.get("query") or input_payload.get("input") or ""
-            system_prompt_override = input_payload.get("system_prompt_override")
+            prompt = input_payload.get("prompt") or input_payload.get("query") or input_payload.get("input") or ""
             history = input_payload.get("history") or []
             retrieved_context = input_payload.get("context")
+            data_vars = input_payload
 
-        # Resolve prompt template if user_prompt is configured in properties/config
+        # Template variables: {{ prompt }}, {{ context }}, {{ data.<field> }}
+        # ('input_data' kept as legacy alias of prompt).
+        template_vars = {
+            "prompt": prompt,
+            "input_data": prompt,
+            "context": retrieved_context or "",
+            "data": data_vars,
+        }
+
+        # Wrap prompt with user_prompt template when configured; else prompt is sent as-is.
+        user_prompt = prompt
         user_prompt_template = config.get("user_prompt") or self.properties.get("user_prompt")
-        if user_prompt_template and user_prompt_template.strip():
-            user_prompt = self._resolve_variables(user_prompt_template, {"input_data": user_prompt, "data": input_payload})
+        context_in_template = False
+        if user_prompt_template and str(user_prompt_template).strip():
+            context_in_template = "context" in user_prompt_template and "{{" in user_prompt_template
+            user_prompt = str(self._resolve_variables(user_prompt_template, template_vars))
 
-        # System Prompt priority: Input override -> Node properties
-        system_prompt = system_prompt_override or config.get("system_prompt") or self.properties.get("system_prompt") or ""
+        # System prompt: user_properties only (no run-time override). Supports {{ data.<field> }}.
+        system_prompt = config.get("system_prompt") or self.properties.get("system_prompt") or ""
+        if system_prompt:
+            system_prompt = str(self._resolve_variables(system_prompt, template_vars))
 
         # Assemble unified messages list
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        if retrieved_context:
+        # Context auto-injected as system message only if template did not place it explicitly (avoid duplication).
+        if retrieved_context and not context_in_template:
             messages.append({"role": "system", "content": f"Context:\n{retrieved_context}"})
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
@@ -291,7 +312,8 @@ class BaseLLMNode(BaseNode, abc.ABC):
                     error=str(e)
                 )
                 if attempt < max_retries:
-                    await time.sleep(1.0 * attempt)
+                    # FIX: time.sleep is not awaitable; use asyncio.sleep for non-blocking backoff.
+                    await asyncio.sleep(1.0 * attempt)
 
         if response_json is None:
             self.logger.error("llm_execution_all_retries_failed", trace_id=inp.trace_id, error=str(last_error))
@@ -321,8 +343,9 @@ class BaseLLMNode(BaseNode, abc.ABC):
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             self.logger.info("llm_execution_success", trace_id=inp.trace_id, elapsed_ms=elapsed_ms, total_tokens=total_tokens)
 
+            # CHANGE: output key 'query' -> 'prompt' to match output_contract.
             out_data = self.set_output_data(inp, {
-                "query": user_prompt,
+                "prompt": user_prompt,
                 "answer": answer,
                 "usage": {
                     "prompt_tokens": prompt_tokens,

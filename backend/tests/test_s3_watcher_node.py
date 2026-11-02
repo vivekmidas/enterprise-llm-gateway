@@ -40,8 +40,8 @@ from app.models.db_models import (
     IngestionSourceLedgerDB,
 )
 from app.core.types.common import NodeInput, NodeOutput
-from app.nodes.built_in.storage.s3_watcher_node import S3WatcherNode
-from app.nodes.built_in.kb.rag_ingestion_node import RAGIngestionNode
+from app.nodes.built_in.storage.s3_watcher.s3_watcher_node import S3WatcherNode
+from app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node import RAGIngestionNode
 from app.knowledge.vector_store import vector_store
 
 
@@ -206,7 +206,7 @@ async def test_s3_watcher_new_files_discovered_and_emitted(setup_testdb):
         },
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         out = await node.execute(inp)
 
     assert out.status == "success"
@@ -264,7 +264,7 @@ async def test_s3_watcher_sync_ledger_skips_unchanged_files(setup_testdb):
         config={"mock_s3_client": mock_s3},
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         # First execution: file is new
         out1 = await node.execute(inp)
         assert parse_node_output(out1)["processed_count"] == 1
@@ -305,7 +305,7 @@ async def test_s3_watcher_detects_and_processes_modified_file(setup_testdb):
         config={"mock_s3_client": mock_s3},
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         # Pass 1: v1 ingested
         out1 = await node.execute(inp)
         assert parse_node_output(out1)["processed_count"] == 1
@@ -364,7 +364,7 @@ async def test_s3_watcher_max_files_per_run_limit(setup_testdb):
         config={"mock_s3_client": mock_s3},
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         out = await node.execute(inp)
         out_data = parse_node_output(out)
         assert out_data["processed_count"] == 2
@@ -398,7 +398,7 @@ async def test_s3_watcher_canvas_preview(setup_testdb):
         config={"mock_s3_client": mock_s3},
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         preview_data = await node.preview(inp)
         assert preview_data["total"] == 1
         assert preview_data["files"][0]["key"] == "data/report.pdf"
@@ -456,7 +456,7 @@ async def test_s3_watcher_pipeline_integration_with_rag_ingestion(setup_testdb, 
         config={"mock_s3_client": mock_s3},
     )
 
-    with patch("app.nodes.built_in.storage.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.storage.s3_watcher.s3_watcher_node.AsyncSessionLocal", env["session_factory"]):
         watcher_out = await watcher_node.execute(watcher_input)
 
     assert watcher_out.status == "success"
@@ -485,9 +485,9 @@ async def test_s3_watcher_pipeline_integration_with_rag_ingestion(setup_testdb, 
     )
 
     with (
-        patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]),
+        patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]),
         patch(
-            "app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model",
+            "app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model",
             return_value=mocks["mock_provider"],
         ),
     ):

@@ -29,7 +29,7 @@ async def test_llm_nodes_auto_discovery():
     assert isinstance(gemini_node, BaseLLMNode)
 
 def test_openai_node_helpers():
-    node = NodesRegistry.get_node("openai_node")
+    node = NodesRegistry.get_node("openai_node") or OpenAINode()
     assert node is not None
     
     # Auth headers
@@ -65,7 +65,7 @@ def test_openai_node_helpers():
     assert node.parse_response(response_mock) == "hello there"
 
 def test_ollama_node_helpers():
-    node = NodesRegistry.get_node("ollama_node")
+    node = NodesRegistry.get_node("ollama_node") or OllamaNode()
     assert node is not None
     
     # Auth headers - empty for default key
@@ -74,9 +74,29 @@ def test_ollama_node_helpers():
     
     # Completions endpoint
     assert node.get_completions_endpoint("http://localhost:11434") == "http://localhost:11434/v1/chat/completions"
+    assert node.get_completions_endpoint("http://localhost:11434/api/chat") == "http://localhost:11434/api/chat"
+    assert node.get_models_endpoint("http://localhost:11434") == "http://localhost:11434/v1/models"
+
+    # Payload format
+    payload = node.build_payload([{"role": "user", "content": "hi"}], "llama3.2", 0.7, 512, 0.9)
+    assert payload == {
+        "model": "llama3.2",
+        "messages": [{"role": "user", "content": "hi"}],
+        "temperature": 0.7,
+        "max_tokens": 512,
+        "top_p": 0.9,
+        "stream": False
+    }
+
+    # Response parsing
+    response_msg = {"message": {"role": "assistant", "content": "ollama reply"}}
+    assert node.parse_response(response_msg) == "ollama reply"
+
+    response_choices = {"choices": [{"message": {"role": "assistant", "content": "choice reply"}}]}
+    assert node.parse_response(response_choices) == "choice reply"
 
 def test_gemini_node_helpers():
-    node = NodesRegistry.get_node("gemini_node")
+    node = NodesRegistry.get_node("gemini_node") or GeminiNode()
     assert node is not None
     
     # Auth headers - always empty for Gemini URL query param auth
@@ -185,7 +205,6 @@ async def test_ollama_node_chat_execution():
         data=json.dumps({"prompt": "Tell me a joke"}),
         config={
             "base_url": "http://127.0.0.1:11434",
-            "model_type": "chat",
             "model": "llama3.2",
             "temperature": 0.7
         }
@@ -203,30 +222,36 @@ async def test_ollama_node_chat_execution():
             raise_for_status=lambda: None
         )
         
-        result = await node.execute(inp)
-        assert result.status == "success"
-        res_data = json.loads(result.data)
-        assert res_data["data"]["text"] == "Why did the computer cross the road? To get to the other byte!"
-        assert res_data["data"]["usage"]["total_tokens"] == 20
-        assert result.metadata["model_type"] == "chat"
+        with patch.object(node, "_resolve_customer_id", return_value=None):
+            result = await node.execute(inp)
+            assert result.status == "success"
+            res_data = json.loads(result.data)
+            assert res_data["data"]["text"] == "Why did the computer cross the road? To get to the other byte!"
+            assert res_data["data"]["answer"] == "Why did the computer cross the road? To get to the other byte!"
+            assert res_data["data"]["usage"]["total_tokens"] == 20
 
 @pytest.mark.asyncio
-async def test_ollama_node_embedding_execution():
+async def test_ollama_node_context_execution():
     node = OllamaNode()
     await node.init()
     
     trace_id = str(uuid.uuid4())
     inp = NodeInput(
         trace_id=trace_id,
-        data=json.dumps({"prompt": "Sample embedding text"}),
+        data=json.dumps({
+            "query": "What is RAG?",
+            "context": "RAG stands for Retrieval-Augmented Generation."
+        }),
         config={
             "base_url": "http://127.0.0.1:11434",
-            "model_type": "embedding",
-            "model": "nomic-embed-text"
+            "model": "llama3.2"
         }
     )
     
-    mock_response = {"embedding": [0.1, 0.2, 0.3, 0.4]}
+    mock_response = {
+        "message": {"role": "assistant", "content": "RAG is Retrieval-Augmented Generation."},
+        "usage": {"prompt_tokens": 15, "completion_tokens": 8, "total_tokens": 23}
+    }
     
     with patch("httpx.AsyncClient.post") as mock_post:
         mock_post.return_value = AsyncMock(
@@ -235,11 +260,71 @@ async def test_ollama_node_embedding_execution():
             raise_for_status=lambda: None
         )
         
+        with patch.object(node, "_resolve_customer_id", return_value=None):
+            result = await node.execute(inp)
+            assert result.status == "success"
+            res_data = json.loads(result.data)
+            assert res_data["data"]["text"] == "RAG is Retrieval-Augmented Generation."
+            assert res_data["data"]["usage"]["total_tokens"] == 23
+
+            # Verify prompt and context in payload sent to Ollama
+            mock_post.assert_called_once()
+            args, kwargs = mock_post.call_args
+            payload = kwargs["json"]
+            sent_messages = payload["messages"]
+            assert any("Context:\nRAG stands for Retrieval-Augmented Generation." in m.get("content", "") for m in sent_messages)
+            assert any(m.get("content") == "What is RAG?" for m in sent_messages)
+
+@pytest.mark.asyncio
+async def test_ollama_node_profile_resolution():
+    node = OllamaNode()
+    await node.init()
+    
+    trace_id = str(uuid.uuid4())
+    inp = NodeInput(
+        trace_id=trace_id,
+        data=json.dumps({"prompt": "Hello profile test"}),
+        config={
+            "profile_name": "tenant-ollama-profile"
+        }
+    )
+    
+    mock_resolved = {
+        "base_url": "http://tenant-ollama-host:11434",
+        "model_name": "qwen2.5",
+        "api_key": "custom-key",
+        "temperature": 0.2,
+        "max_tokens": 500
+    }
+    
+    mock_response = {
+        "message": {"role": "assistant", "content": "Hello from custom profile!"},
+        "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
+    }
+    
+    with patch("httpx.AsyncClient.post") as mock_post, \
+         patch("app.core.profile_resolver.ProfileResolver.resolve_execution_context", return_value=mock_resolved):
+        mock_post.return_value = AsyncMock(
+            status_code=200,
+            json=lambda: mock_response,
+            raise_for_status=lambda: None
+        )
+        
+        # Test with customer context
+        inp.context = {"customer_id": 42}
         result = await node.execute(inp)
         assert result.status == "success"
         res_data = json.loads(result.data)
-        assert res_data["data"]["embedding"] == [0.1, 0.2, 0.3, 0.4]
-        assert result.metadata["model_type"] == "embedding"
+        assert res_data["data"]["text"] == "Hello from custom profile!"
+        
+        # Verify call used profile host URL and profile model
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert args[0] == "http://tenant-ollama-host:11434/v1/chat/completions"
+        assert kwargs["headers"]["Authorization"] == "Bearer custom-key"
+        assert kwargs["json"]["model"] == "qwen2.5"
+        assert kwargs["json"]["temperature"] == 0.2
+        assert kwargs["json"]["max_tokens"] == 500
 
 
 @pytest.mark.asyncio

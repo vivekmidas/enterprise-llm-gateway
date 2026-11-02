@@ -655,7 +655,7 @@ async def toggle_workflow_in_store(workflow_id: str) -> dict:
 async def save_workflow_to_store(
     definition: WorkflowDefinition,
     user_id: str = None,
-    customer_id: Optional[int] = None
+    customer_id: Optional[str] = None
 ) -> dict:
     """
     Save workflow definition to database + invalidate Redis cache.
@@ -860,7 +860,7 @@ async def save_workflow_to_store(
             logger.error("failed_to_save_agent", agent_id=definition.id, error=str(e))
             raise HTTPException(status_code=500, detail=f"Failed to save agent: {str(e)}")
 
-async def get_workflow_user_customer_id(workflow_id: str) -> tuple[Optional[str], Optional[int]]:
+async def get_workflow_user_customer_id(workflow_id: str) -> tuple[Optional[str], Optional[str]]:
     """
     Get the user_id associated with a workflow.
     """
@@ -930,7 +930,7 @@ async def load_workflow_from_store(agent_id: str, version: Optional[str] = None,
 async def get_workflow_by_identifier(
     identifier: str,
     version: Optional[str] = None,
-    customer_id: Optional[int] = None
+    customer_id: Optional[str] = None
 ) -> WorkflowDefinition:
     with tracer.start_as_current_span("get_workflow_by_identifier") as span:
         _safe_set_span_attribute(span, "identifier", identifier)

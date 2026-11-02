@@ -228,9 +228,12 @@ def _mask_sensitive_properties(properties: dict) -> dict:
 # ==============================================================================
 @router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflows:builder:view"))])
 async def get_workflows(
-    customer_id: Optional[int] = Query(None, description="Filter workflows by customer_id"),
+    customer_id: Optional[str] = Query(None, description="Filter workflows by customer_id"),
     current_user: User = Depends(dynamic_api_guard)
 ):
+    if customer_id in ("NaN", "null", "undefined", ""):
+        customer_id = None
+
     logger.info("get_workflows_request", tenant_id=current_user.customer_id, query_customer_id=customer_id)
     user_role = (current_user.role or "").lower()
     user_role_type = (getattr(current_user, "role_type", "") or "").lower()

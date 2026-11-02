@@ -230,32 +230,34 @@ When a workflow is built, loaded, or executed, the system resolves its nodes' co
 2. **Tenant-wide Override**: If a tenant admin has configured custom input/output contracts (saved in `CustomerNodeDB`), these contracts override the system defaults for all workflows within that tenant.
 3. **Workflow-Level Hydration**: The workflow storage engine (`backend/app/workflows/store.py`) merges the tenant-level overrides into the workflow definition at load time, ensuring standard users see the correct tenant-wide contracts on the canvas and in properties mapping dialogs.
 
-### B. Access Control & Hybrid Editing Permissions
+### B. Access Control & Role-Scoped Node Governance (EPIC-PROPS-CONTRACT-001)
 
-To prevent schema drift, secure infrastructure credentials, and protect workflow execution integrity, editing capabilities are scoped by user role:
+To prevent schema drift, secure infrastructure credentials, and protect workflow execution integrity, editing capabilities are strictly separated by persona:
 
-| Action / Capability | System Admin | Tenant Admin | Standard User |
+| Action / Capability | System Admin | Tenant Admin (`/admin/nodes`) | Workflow Designer (`/workflow-builder`) |
 | :--- | :--- | :--- | :--- |
-| Edit Global Node Registry Contracts | **Yes** | No | No |
-| Edit Tenant-wide Override Contracts | **Yes** (on behalf of tenant) | **Yes** | No |
-| Override core schema structure in workflow | No | No | No |
-| Configure `system_properties` (e.g. credentials, endpoints) | **Yes** | No (Read-Only) | No (Read-Only) |
-| Configure `user_properties` (e.g. queries, table names) | **Yes** | **Yes** | **Yes** |
+| Edit Global Node Registry & Contracts | **Yes** | No | No |
+| Edit Tenant-wide Override Contracts (`allowed_values`, `default`) | **Yes** (on behalf of tenant) | **Yes** | No |
+| Clone / Create Named Tenant Node Configurations (e.g. `MySQL - Sales DB`) | **Yes** | **Yes** | No |
+| Configure `system_properties` (system defaults) | **Yes** | No (Read-Only unless key also in `user_properties`) | No (Read-Only) |
+| Configure `user_properties` (e.g. `host`, `port`, `database`, `username`, `password`) | **Yes** (defaults) | **Yes** (Tenant Overrides) | **No — Read-Only on Canvas** (values visible; passwords masked `••••••••`) |
+| Configure `input_contract` Execution Inputs (Fixed values or mapped from `output_contract`) | **Yes** (schema/defaults) | **Yes** (schema/defaults) | **Yes** (Fixed value or `{{ ... }}` mapped from upstream `output_contract` / `state`) |
+| Edit Node Display Label on Canvas | **Yes** | **Yes** | **Yes** |
 
 #### Property Precedence & Resolution Hierarchy
 When resolving the value of any node property at runtime or design-time, the system respects the following precedence order:
 ```
-[Workflow Node Instance Overrides (workflow_node_properties.properties)] (Highest Precedence)
+[Tenant-wide Node Overrides (customer_nodes.properties)] (Highest Precedence for user_properties)
             │
             ▼ (Falls back to)
-[Tenant-wide Node Overrides (customer_nodes.properties)]
+[Global Catalog User Properties (nodes.user_properties)]
             │
             ▼ (Falls back to)
-[Global Catalog Default Properties (nodes.user_properties / nodes.system_properties)] (Lowest Precedence)
+[Global Catalog System Properties (nodes.system_properties)] (Lowest Precedence)
 ```
 
-- **`system_properties` (Read-only for Admins & Users)**: System-level properties (such as ports, hosts, workers, and database credentials) represent tenant infrastructure settings. They are read-only for customer/tenant administrators and standard users. Only a System Administrator can edit them.
-- **`user_properties` (Editable by Admins & Users)**: User-level properties (such as database query types, table names, custom prompt templates, or mapping schemas) can be configured freely by both tenant admins and standard users.
-- **Standard User Restrictions**: Standard users are not allowed to change core input or output schemas (contracts) for node instances. Consequently, the `workflow_node_properties` table does NOT contain columns for `input_contract` and `output_contract`. Instead, standard users build workflows adhering strictly to the tenant-wide contracts. If field mapping is required (e.g., matching a dynamic database output to an input), the mapper saves the mappings inside the local instance `properties` (e.g. under `mapping_template`), leaving the contract schema intact.
-- **Tenant Admin Capabilities**: Tenant Admins can override the default contract schema for any node allocated to their tenant using the administration panel, which saves the custom JSON schemas directly to `CustomerNodeDB.input_contract` and `CustomerNodeDB.output_contract`. They can also define tenant-wide default values for `user_properties`.
+- **`system_properties` -> `user_properties` Override**: System Admin defines baseline defaults in `system_properties`. If a property key is also exposed in `user_properties`, Tenant Admin can override its value in `/admin/nodes` (`customer_nodes.properties`). On the workflow canvas (`PropertiesPanel.tsx`), any key in `user_properties` is always displayed under **Node Configuration** (never hidden in `Runtime System`).
+- **`user_properties` (Configured by Tenant Admin, Read-Only for Workflow Designer)**: Connection and tenant-level properties (such as `host`, `port`, `database`, `username`, `password`, LLM model endpoints) are configured by the Tenant Admin in `/admin/nodes`. On the workflow canvas, all non-sensitive `user_properties` are displayed as **Read-Only** so the Workflow Designer can see the active values, while sensitive fields (`password`, `secret`, `token`, `api_key`, `private_key`) are masked as `••••••••` with copy disabled.
+- **Tenant Node Cloning (`POST /nodes/customer/clone`)**: When a tenant needs multiple configurations of the same node type (e.g. connecting to both `MySQL - Sales DB` and `MySQL - HR DB`), the Tenant Admin can clone any base node in `/admin/nodes`, assign a custom label and identifier, configure its `user_properties`, and enable it for Workflow Designers.
+- **`input_contract` Execution Parameters (Configured by Workflow Designer)**: Workflow Designers configure operational execution inputs defined by the node's `input_contract` (e.g., `query_type`, `table_name`, `query`, `condition`, `condition_params`) directly in `PropertiesPanel.tsx` or `FieldMapperModal.tsx`—either by setting a **Fixed value** (dropdown from `allowed_values`, text, number, boolean, JSON) or by **Mapping a field from the upstream node's `output_contract`** (`{{ ... }}`) or workflow `state`. These values are stored in `workflow_node_properties.properties.mapping_template`.
 

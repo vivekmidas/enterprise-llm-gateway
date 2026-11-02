@@ -3,7 +3,7 @@
     "label": "Ollama Chat",
     "node_type": "NODE",
     "description": "Executes chat completions on local or remote Ollama server using tenant-configured LLM profile.",
-    "version": "2.0.4",
+    "version": "2.1.0",
     "category": "voice",
     "group": "LLM",
     "icon": "bot",
@@ -25,14 +25,14 @@
             "type": "textarea",
             "label": "System Prompt",
             "default": "You are a helpful assistant.",
-            "description": "System prompt instructions for the LLM."
+            "description": "System instructions for the LLM. Supports {{ data.<field> }} variables."
         },
         {
             "key": "user_prompt",
             "type": "textarea",
             "label": "User Prompt Template",
             "default": "",
-            "description": "Optional prompt template. Supports variables like {{ input_data }}."
+            "description": "Optional template wrapping the incoming prompt. Variables: {{ prompt }}, {{ context }}, {{ data.<field> }}. Leave empty to send the prompt as-is."
         },
         {
             "key": "temperature",
@@ -91,19 +91,11 @@
         "properties": {
             "prompt": {
                 "type": "string",
-                "description": "The main user instruction or query."
-            },
-            "query": {
-                "type": "string",
-                "description": "Alias for prompt input."
+                "description": "User message sent to the LLM. Wrapped by user_prompt template when configured."
             },
             "context": {
                 "type": "string",
-                "description": "Optional context string from upstream knowledge retrieval."
-            },
-            "system_prompt_override": {
-                "type": "string",
-                "description": "Optional system prompt override."
+                "description": "Optional context string from upstream knowledge retrieval. Available as {{ context }} in user_prompt."
             },
             "history": {
                 "type": "array",
@@ -128,13 +120,13 @@
     "output_contract": {
         "type": "object",
         "properties": {
-            "query": {
+            "prompt": {
                 "type": "string",
-                "description": "Cleaned response string returned by the LLM."
+                "description": "Final user prompt sent to the LLM (after template resolution)."
             },
             "answer": {
                 "type": "string",
-                "description": "Alias for text string."
+                "description": "Cleaned response string returned by the LLM."
             },
             "usage": {
                 "type": "object",
@@ -154,6 +146,6 @@
                 }
             }
         },
-        "required": ["text"]
+        "required": ["answer"]
     }
 }

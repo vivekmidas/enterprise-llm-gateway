@@ -8,6 +8,13 @@ from app.workflows.executor import WorkflowExecutor
 
 class DummySourceNode(BaseNode):
     name: str = "dummy_source_node"
+    # Shared state: stateable output fields are published into context.state
+    output_contract: dict = {
+        "rules": [
+            {"field_name": "user_question", "field_type": "string", "required": True, "stateable": True},
+            {"field_name": "max_results", "field_type": "integer", "required": True, "stateable": True},
+        ]
+    }
     
     async def init(self) -> None:
         pass
@@ -94,14 +101,14 @@ async def test_direct_mapping_resolution():
     )
     
     # Verify execution details
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "node-source" in node_history
     assert "node-target" in node_history
-    assert node_history["node-target"]["status"] == "success"
+    assert node_history["node-target"]["metadata"]["status"] == "success"
     
     # Verify that data was mapped properly and received by node-target
     context = result.get("context", {})
-    nodes_state = context.get("nodes", {})
+    nodes_state = {r["node_id"]: r for r in result.get("agents_executed", [])}
     
     # Check that state.context contains correct nodes history structure
     assert "node-source" in nodes_state
@@ -119,10 +126,10 @@ async def test_direct_mapping_resolution():
 
 
 @pytest.mark.asyncio
-async def test_mapping_via_nodes_state():
+async def test_mapping_via_shared_state():
     """
-    Verify that mapping_template resolves using the global nodes namespace structure:
-    nodes.node_id.data.output_data.field
+    Verify that mapping_template resolves from the position-independent shared
+    state (context.state), populated by the source node's `stateable` output fields.
     """
     workflow_config = {
         "id": f"test-mapping-flow-{uuid.uuid4()}",
@@ -139,8 +146,8 @@ async def test_mapping_via_nodes_state():
                 "name": "dummy_target_node",
                 "config": {
                     "mapping_template": {
-                        "query": "{{ nodes['source-1'].data.output_data.user_question }}",
-                        "limit": "{{ nodes['source-1'].data.output_data.max_results }}"
+                        "query": "{{ state.user_question }}",
+                        "limit": "{{ state.max_results }}"
                     }
                 }
             }
@@ -158,13 +165,16 @@ async def test_mapping_via_nodes_state():
         trace_id=trace_id
     )
     
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "source-1" in node_history
     assert "target-1" in node_history
-    assert node_history["target-1"]["status"] == "success"
+    assert node_history["target-1"]["metadata"]["status"] == "success"
     
-    nodes_state = result.get("context", {}).get("nodes", {})
+    nodes_state = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert nodes_state["target-1"]["data"]["input_data"] == {
         "query": "what is AI?",
         "limit": 10
     }
+    # Shared state persisted in the trace + provenance on the publishing node
+    assert result["context"]["state"] == {"user_question": "what is AI?", "max_results": 10}
+    assert nodes_state["source-1"]["metadata"]["state_published"] == {"user_question": "what is AI?", "max_results": 10}

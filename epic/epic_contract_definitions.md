@@ -151,38 +151,35 @@ When the user pastes the example JSON and applies the schema, it generates the f
 
 ---
 
-## 5. Input-to-Output Mapping Protocol (Zapier & n8n Model)
+## 5. Input Contract Value Assignment & Output-to-Input Mapping Protocol (n8n & Zapier Model — EPIC-PROPS-CONTRACT-001)
 
-To connect adjacent nodes in the workflow, the output contract from a predecessor node must be mapped to the input contract of the successor node.
+Every operational parameter required by a node at execution time (for example, MySQL `query_type`, `table_name`, `query`, `fields`, `condition`, `condition_params`) is defined as a rule in the node's `input_contract`.
 
-### A. The Mapping Interface (Frontend)
+### A. Admin Schema & Allowed Values (`/admin/nodes`)
+In `/admin/nodes`, System Admins and Tenant Admins can define on each `input_contract` rule:
+- **`field_name` & `field_type`**: Name and primitive/complex type (`string`, `number`, `integer`, `boolean`, `object`, `array`, `enum`, `json`, etc.).
+- **`allowed_values` (Dropdown Options)**: Optional array of valid values (e.g., `["select", "insert", "update", "delete", "raw"]` for `query_type`).
+- **`default`**: Optional default value applied when the field is omitted at runtime (e.g., `"select"`).
 
-When the user maps outputs to inputs:
+### B. The Inline & Full-Screen Mapping Interface (`PropertiesPanel.tsx` & `FieldMapperModal.tsx`)
 
-1. They open the **Field Mapper Modal** (`FieldMapperModal`).
-2. The modal displays:
-   - **Target Fields (Input)**: Inferred/defined by the successor's `input_contract` (e.g. `data.chunks`, `auth_token`).
-   - **Source Fields Popover (Output)**: A dropdown populated by the predecessor's `output_contract` structure.
-3. The user selects a source field (e.g. `chunks`), which automatically inserts a Jinja2 template mapping expression:
-   - For direct predecessor data: `{{ input_data.data.chunks }}`
-   - For cross-node reference: `{{ nodes.node_id.output_key }}`
+When a Workflow Designer selects a node on the canvas:
 
-### B. Mapping Resolution Engine (Backend Runtime)
+1. **Inline Input Parameters (`PropertiesPanel.tsx`)**:
+   - Every field in the node's `input_contract` is rendered directly in the sidebar under **Input Parameters (`input_contract`)** (and in the full-screen `FieldMapperModal`).
+   - Each field supports two modes via a **[Fixed | Map `{}`]** toggle:
+     - **Fixed Value Mode**: The user enters a static constant directly in the typed input control (a `<select>` dropdown when `allowed_values` is defined, a boolean toggle, number input, SQL/multiline textarea, JSON input, or text input—e.g. `query_type = "select"`, `table_name = "users"`).
+     - **Map `{}` Mode (Upstream `output_contract` / `state` Picker)**: The user clicks `{}` to open the **Source Fields Popover**, populated by the connected upstream node's `output_contract` fields and shared workflow `state` variables. Selecting a source field inserts a Jinja2 expression (e.g., `{{ user_id }}` or `{{ state.tenant_id }}`).
+2. **Persistence**:
+   - Both Fixed values and `{{ ... }}` mapped expressions are persisted in the workflow node's `properties.mapping_template` dictionary via `PUT /workflows/{workflow_id}/nodes/{agent_node_id}/properties`.
+
+### C. Mapping Resolution Engine (`BaseNode.run()` Backend Runtime)
 
 During execution of a node:
 
-1. The backend loads the node's properties, including `mapping_template` (a JSON dictionary/string defining the mapping).
-2. The backend constructs a `render_context` dictionary:
-   ```python
-   render_context = {
-       "data": previous_node_output,
-       "input_data": previous_node_output,
-       "nodes": all_preceding_node_outputs_dict,
-       "context": global_workflow_context,
-       "metadata": workflow_metadata
-   }
-   ```
-3. The backend resolves the templates for each mapped property:
-   - It iterates through the `mapping_template` dictionary recursively.
-   - For each string value containing `{{ ... }}`, it compiles and renders it using `Jinja2` within the `render_context`.
-4. The resolved dictionary becomes the node's payload (`inp.data`), which is then validated against B's `input_contract` before execution.
+1. The backend loads the node's properties, including `mapping_template` (a JSON dictionary/string defining Fixed values and Jinja mappings for `input_contract` fields).
+2. The backend constructs a `render_context` dictionary containing upstream `input_data` keys (both at top-level and under `input_data`/`data`), shared `state`, `context`, and `metadata`.
+3. The backend resolves `mapping_template`:
+   - Static/fixed values remain intact.
+   - String values containing `{{ ... }}` are compiled and rendered using `Jinja2` against `render_context`.
+4. When `input_data` is a dictionary and `resolved_mapping` is a dictionary, the backend merges `{ **input_data, **resolved_mapping }` (and applies any `input_contract` rule `default` values for missing keys) so unmapped upstream fields pass through while configured Fixed and Mapped `input_contract` values take precedence before `validate_input()` and `execute()` run.

@@ -120,7 +120,7 @@ async def test_mysql_node_execute_raw_query():
              "raw",
              {"status": "active"}
          )
-         assert json.loads(result.data) == [{"id": 1, "name": "Alice"}]
+         assert json.loads(result.data) == {"data": [{"id": 1, "name": "Alice"}]}
 
 @pytest.mark.asyncio
 async def test_mysql_node_select_all_fields_no_where():
@@ -443,9 +443,9 @@ async def test_mysql_node_workflow_execution():
          
          assert result.get("status") == "completed"
          
-         node_history = result.get("metadata", {}).get("node_history", {})
+         node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
          assert "mysql-node-1" in node_history
-         assert node_history["mysql-node-1"]["status"] == "success"
+         assert node_history["mysql-node-1"]["metadata"]["status"] == "success"
          
          mock_exec_query.assert_called_once()
          sql_arg = mock_exec_query.call_args[0][1]

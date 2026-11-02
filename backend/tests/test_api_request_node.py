@@ -3,11 +3,11 @@ import uuid
 import json
 from unittest.mock import patch, MagicMock
 from app.core.types.common import NodeInput
-from app.nodes.built_in.api_request_node import ApiRequestNode
+from app.nodes.built_in.external_api_node.api_request_node import ApiRequestNode
 from app.utils.http_client import ApiResponse
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_get(mock_execute):
     # Mock successful API response
     mock_execute.return_value = ApiResponse(
@@ -47,7 +47,7 @@ async def test_api_request_node_get(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_delete(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -82,7 +82,7 @@ async def test_api_request_node_delete(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_resolves_eod_stock_wrapped_data_templates(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -127,7 +127,7 @@ async def test_api_request_node_resolves_eod_stock_wrapped_data_templates(mock_e
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_post_json_raw_string(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=201,
@@ -161,7 +161,7 @@ async def test_api_request_node_post_json_raw_string(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_put_json_dict_string(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -198,7 +198,7 @@ async def test_api_request_node_put_json_dict_string(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_post_form(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -232,7 +232,7 @@ async def test_api_request_node_post_form(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_post_raw(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -266,7 +266,7 @@ async def test_api_request_node_post_raw(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_auth_key(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -300,7 +300,7 @@ async def test_api_request_node_auth_key(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_dynamic_overrides(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -353,7 +353,7 @@ async def test_api_request_node_dynamic_overrides(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_with_api_path_static(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -385,7 +385,7 @@ async def test_api_request_node_with_api_path_static(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_with_api_path_dynamic(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,
@@ -424,7 +424,7 @@ async def test_api_request_node_with_api_path_dynamic(mock_execute):
 
 
 @pytest.mark.asyncio
-@patch("app.nodes.built_in.api_request_node.HttpClient.execute_sync")
+@patch("app.nodes.built_in.external_api_node.api_request_node.HttpClient.execute_sync")
 async def test_api_request_node_api_path_ignored_when_missing(mock_execute):
     mock_execute.return_value = ApiResponse(
         status_code=200,

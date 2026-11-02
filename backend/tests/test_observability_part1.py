@@ -117,7 +117,6 @@ async def test_restart_execution(client: AsyncClient, system_admin_headers: dict
         "user_id": "1",
         "timestamp": time.time(),
         "latency_ms": 120,
-        "node_history": {},
         "context": {}
     }
     await trace_store.save_trace(trace_id, failed_trace)
@@ -157,7 +156,6 @@ async def test_get_trace_details(client: AsyncClient, system_admin_headers: dict
         "user_id": "1",
         "timestamp": time.time(),
         "latency_ms": 50,
-        "node_history": {},
         "context": {}
     }
     await trace_store.save_trace(trace_id, details)

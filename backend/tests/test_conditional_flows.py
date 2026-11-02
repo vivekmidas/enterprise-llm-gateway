@@ -81,7 +81,7 @@ async def test_successful_path_execution():
     )
     
     # Verify execution details
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "start-node" in node_history
     assert "success-target" in node_history
     assert "failure-target" not in node_history
@@ -132,7 +132,7 @@ async def test_failure_path_execution():
         trace_id=trace_id
     )
     
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "start-node" in node_history
     assert "failure-target" in node_history
     assert "success-target" not in node_history
@@ -176,7 +176,7 @@ async def test_default_stopping_on_failure():
         trace_id=trace_id
     )
     
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "start-node" in node_history
     assert "next-node" not in node_history
     # Resulting status should indicate failure
@@ -223,7 +223,7 @@ async def test_complex_expression_evaluation():
         trace_id=f"trace-{uuid.uuid4()}"
     )
     
-    history_high = result_high.get("metadata", {}).get("node_history", {})
+    history_high = {r["node_id"]: r for r in result_high.get("agents_executed", [])}
     assert "high-profit-target" in history_high
     assert "default-target" in history_high
     
@@ -233,6 +233,6 @@ async def test_complex_expression_evaluation():
         trace_id=f"trace-{uuid.uuid4()}"
     )
     
-    history_low = result_low.get("metadata", {}).get("node_history", {})
+    history_low = {r["node_id"]: r for r in result_low.get("agents_executed", [])}
     assert "high-profit-target" not in history_low
     assert "default-target" in history_low

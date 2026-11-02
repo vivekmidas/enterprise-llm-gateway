@@ -24,7 +24,7 @@ from app.utils.json_utils import try_parse_json
 
 logger = structlog.get_logger(__name__)
 
-async def save_workflow(definition: WorkflowDefinition, customer_id: Optional[int] = None) -> dict:
+async def save_workflow(definition: WorkflowDefinition, customer_id: Optional[str] = None) -> dict:
     """Public service method"""
     logger.info("workflow_save_initiated", workflow_id=definition.id, user_id=definition.user_id, tenant_id=customer_id)
     definition.updated_at = datetime.utcnow()  # Update the timestamp
@@ -173,11 +173,11 @@ async def get_workflow(workflow_id: str, version: Optional[str] = None) -> Workf
 # BLOCK COMMENT: RESOLVE WORKFLOW BY IDENTIFIER (EPIC-ARCH-001)
 # Resolves workflow by either UUID/ID or slug/name for decoupled domain plants.
 # =============================================================================
-async def get_workflow_by_identifier(identifier: str, version: Optional[str] = None, customer_id: Optional[int] = None) -> WorkflowDefinition:
+async def get_workflow_by_identifier(identifier: str, version: Optional[str] = None, customer_id: Optional[str] = None) -> WorkflowDefinition:
     """Public service method to get a workflow definition by id, name, or slug."""
     return await get_workflow_by_identifier_store(identifier, version, customer_id=customer_id)
 
-async def get_workflow_user_customer_id(workflow_id: str, version: Optional[str] = None) -> tuple[Optional[str], Optional[int]]:
+async def get_workflow_user_customer_id(workflow_id: str, version: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
     """Public service method to get the user_id and customer_id of a workflow."""
     return await get_workflow_user_customer_id_store(workflow_id)
 
@@ -370,7 +370,7 @@ def create_conditional_router(mapping: Dict[str, Dict[str, Any]], source_node_id
 
 _db_cache: Dict[str, Dict[str, Any]] = {}
 
-async def populate_execution_cache(trace_id: str, customer_id: Optional[int], workflow_id: Optional[str]):
+async def populate_execution_cache(trace_id: str, customer_id: Optional[str], workflow_id: Optional[str]):
     """Pre-fetch and cache all required db models for the execution to avoid queries inside node wrapper."""
     from app.models.db_models import CustomerNodeDB, WorkflowNodePropertyDB
     
@@ -395,7 +395,7 @@ async def populate_execution_cache(trace_id: str, customer_id: Optional[int], wo
         "workflow_properties": workflow_properties
     }
 
-async def get_or_populate_cache(trace_id: str, customer_id: Optional[int], workflow_id: Optional[str]):
+async def get_or_populate_cache(trace_id: str, customer_id: Optional[str], workflow_id: Optional[str]):
     if trace_id not in _db_cache:
         await populate_execution_cache(trace_id, customer_id, workflow_id)
     return _db_cache[trace_id]

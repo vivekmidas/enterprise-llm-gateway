@@ -41,7 +41,7 @@ from app.models.db_models import (
     JobDB,
 )
 from app.core.types.common import NodeInput, NodeOutput
-from app.nodes.built_in.kb.rag_ingestion_node import RAGIngestionNode
+from app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node import RAGIngestionNode
 from app.knowledge.vector_store import vector_store
 from app.workflows.executor import WorkflowExecutor
 
@@ -209,8 +209,8 @@ async def test_rag_ingestion_standalone_raw_text(setup_testdb, mock_embedding_an
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             val_err = await node.validate_input(inp)
             assert val_err is None
 
@@ -274,8 +274,8 @@ async def test_rag_ingestion_standalone_base64_content(setup_testdb, mock_embedd
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             out: NodeOutput = await node.execute(inp)
             assert out.status != "failure"
             parsed_out = json.loads(out.data)
@@ -311,8 +311,8 @@ async def test_rag_ingestion_versioning_replace_chunks(setup_testdb, mock_embedd
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             out_v1: NodeOutput = await node.execute(inp_v1)
             assert out_v1.status != "failure"
             parsed_v1 = json.loads(out_v1.data)
@@ -390,8 +390,8 @@ async def test_rag_ingestion_versioning_skip_if_exists(setup_testdb, mock_embedd
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             out1 = await node.execute(inp)
             p1 = json.loads(out1.data)
             r1 = p1.get("data", p1)
@@ -427,7 +427,7 @@ async def test_rag_ingestion_tenant_boundary_isolation(setup_testdb):
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
         out = await node.execute(inp)
         assert out.status == "failure"
         assert out.error_code == 403
@@ -456,8 +456,8 @@ async def test_rag_ingestion_sysadmin_cross_tenant_allowed(setup_testdb, mock_em
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             out = await node.execute(inp)
             assert out.status != "failure"
             p = json.loads(out.data)
@@ -488,8 +488,8 @@ async def test_rag_ingestion_async_mode(setup_testdb, mock_embedding_and_qdrant)
         },
     )
 
-    with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-        with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+        with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
             out = await node.execute(inp)
             assert out.status != "failure"
             p = json.loads(out.data)
@@ -565,8 +565,8 @@ async def test_rag_ingestion_workflow_execution_integration(setup_testdb, mock_e
     with patch("app.core.database.AsyncSessionLocal", env["session_factory"]):
         with patch("app.workflows.store.AsyncSessionLocal", env["session_factory"]):
             with patch("app.workflows.service.AsyncSessionLocal", env["session_factory"]):
-                with patch("app.nodes.built_in.kb.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
-                    with patch("app.nodes.built_in.kb.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
+                with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.AsyncSessionLocal", env["session_factory"]):
+                    with patch("app.nodes.built_in.kb.rag_ingestion.rag_ingestion_node.get_embedding_provider_for_model", return_value=mocks["mock_provider"]):
                         result = await executor.execute_async(
                             input_content=input_payload,
                             trace_id="trace_wf_integration_01",

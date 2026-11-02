@@ -135,3 +135,39 @@ async def test_require_permission_dependency():
         await dep_workflow(current_user=paralegal)
     assert exc_info.value.status_code == 403
     assert "Missing required permission 'workflow:create'" in exc_info.value.detail
+
+
+def test_canonical_1to1_aliases_and_workflows_access():
+    """
+    Verifies 1-to-1 route-permission-API alias resolution:
+    - workflows:builder:view <-> admin:workflows:view <-> workflows:view
+    - admin:roles:view <-> admin:role_management:view
+    - admin:users:view <-> admin:user_management:read
+    - admin:nodes:view <-> nodes:catalog:view
+    """
+    from app.api.auth.dependencies import has_permission_scope
+
+    wf_designer = User(
+        id="u_wf",
+        email="designer@tenant.com",
+        role="workflow_designer",
+        role_type="workflow_designer",
+        permissions=["workflows:builder:view", "workflows:builder:create", "nodes:catalog:view"]
+    )
+    assert wf_designer.has_permission("workflows:view", "GET") is True
+    assert wf_designer.has_permission("admin:workflows:view", "GET") is True
+    assert wf_designer.has_permission("workflows:builder:view", "GET") is True
+    assert wf_designer.has_permission("admin:nodes:view", "GET") is True
+    assert has_permission_scope(wf_designer.permissions, "workflows:view") is True
+    assert has_permission_scope(wf_designer.permissions, "admin:workflows:view") is True
+
+    role_viewer = User(
+        id="u_rv",
+        email="rv@tenant.com",
+        role="custom",
+        permissions=["admin:roles:view", "admin:users:view"]
+    )
+    assert role_viewer.has_permission("admin:role_management:view", "GET") is True
+    assert role_viewer.has_permission("admin:user_management:read", "GET") is True
+    assert role_viewer.has_permission("admin:roles:edit", "PUT") is False
+

@@ -212,9 +212,9 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
         trace_id="test-contract-fail-trace"
     )
     assert invalid_res.get("status") == "failure"
-    node_history = invalid_res.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in invalid_res.get("agents_executed", [])}
     assert "node-1" in node_history
-    assert "validation" in node_history["node-1"]["error"].lower() or "required" in node_history["node-1"]["error"].lower() or "mandatory" in node_history["node-1"]["error"].lower()
+    assert "validation" in node_history["node-1"]["metadata"]["error"].lower() or "required" in node_history["node-1"]["metadata"]["error"].lower() or "mandatory" in node_history["node-1"]["metadata"]["error"].lower()
 
     # 2. Run with valid input matching custom input contract (should pass contract validation and run)
     valid_executor = WorkflowExecutor(invalid_workflow_config)
@@ -224,12 +224,12 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
     )
     # Since it passed contract validation, it will try to call the endpoint (failing or succeeding depending on environment)
     assert valid_res.get("status") in ["failure", "completed"]
-    node_history2 = valid_res.get("metadata", {}).get("node_history", {})
+    node_history2 = {r["node_id"]: r for r in valid_res.get("agents_executed", [])}
     assert "node-1" in node_history2
-    if "error" in node_history2["node-1"] and node_history2["node-1"]["error"]:
+    if "error" in node_history2["node-1"]["metadata"] and node_history2["node-1"]["metadata"]["error"]:
         # Ensure it's not a contract validation error
-        assert "validation failed" not in node_history2["node-1"]["error"].lower()
-        assert "required" not in node_history2["node-1"]["error"].lower()
+        assert "validation failed" not in node_history2["node-1"]["metadata"]["error"].lower()
+        assert "required" not in node_history2["node-1"]["metadata"]["error"].lower()
 
     # Disable generic_llm_agent as acme_admin
     disable_res = await client.put(
@@ -272,9 +272,9 @@ async def test_saas_onboarding_and_scoping(client: AsyncClient, system_admin_hea
         trace_id="test-saas-trace-123"
     )
     assert exec_res.get("status") == "failure"
-    node_history = exec_res.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in exec_res.get("agents_executed", [])}
     assert "node-1" in node_history
-    assert "Workflow execution halted" in node_history["node-1"]["error"]
+    assert "Workflow execution halted" in node_history["node-1"]["metadata"]["error"]
 
     # Test System Admin configuring node for a customer via configure_customer_node
     # 1. System admin configure customer node with customer_id query param

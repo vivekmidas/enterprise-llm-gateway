@@ -88,11 +88,11 @@ async def test_user_data_propagation():
     )
     
     # Verify execution details
-    node_history = result.get("metadata", {}).get("node_history", {})
+    node_history = {r["node_id"]: r for r in result.get("agents_executed", [])}
     assert "node-1" in node_history
-    assert node_history["node-1"]["status"] == "success"
+    assert node_history["node-1"]["metadata"]["status"] == "success"
     
-    output_data = json.loads(node_history["node-1"]["output_data"])
+    output_data = json.loads(node_history["node-1"]["data"]["output_data"])
     
     # 1. Assert propagated via context
     assert output_data["user_data_from_context"] == user_data
@@ -101,8 +101,8 @@ async def test_user_data_propagation():
     assert output_data["user_data_from_data"] == user_data
     
     # Assert context is inside the data payload
-    assert "context" in json.loads(node_history["node-1"]["input_data"])
-    assert json.loads(node_history["node-1"]["input_data"])["context"]["user_data"] == user_data
+    assert "context" in json.loads(node_history["node-1"]["data"]["input_data"])
+    assert json.loads(node_history["node-1"]["data"]["input_data"])["context"]["user_data"] == user_data
     
     # 3. Assert resolved via Jinja template in config
     assert output_data["resolved_user_id"] == "usr_999"

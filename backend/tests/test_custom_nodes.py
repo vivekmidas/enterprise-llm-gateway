@@ -341,12 +341,28 @@ async def test_custom_node_db_version_check():
             assert db_node.description == "Initial description"
             assert db_node.version == "1.0.0"
 
-        # 2. Overwrite with SAME version, different fields
-        node.label = "Updated Label"
-        node.description = "Updated description"
+        # 2. Try to overwrite with SAME version (should NOT overwrite)
+        node.label = "Same Version Label"
+        node.description = "Same version description"
         await NodesRegistry.add_node_to_db(node)
 
-        # Verify overwritten in DB
+        # Verify NOT overwritten in DB
+        async with AsyncSessionLocal() as session:
+            stmt = select(NodeDB).where(NodeDB.name == node.name)
+            res = await session.execute(stmt)
+            db_node = res.scalar_one_or_none()
+            assert db_node is not None
+            assert db_node.label == "Initial Label"
+            assert db_node.description == "Initial description"
+            assert db_node.version == "1.0.0"
+
+        # 3. Overwrite with NEWER version (1.1.0 > 1.0.0)
+        node.label = "Updated Label"
+        node.description = "Updated description"
+        node.version = "1.1.0"
+        await NodesRegistry.add_node_to_db(node)
+
+        # Verify overwritten in DB with new version and label
         async with AsyncSessionLocal() as session:
             stmt = select(NodeDB).where(NodeDB.name == node.name)
             res = await session.execute(stmt)
@@ -354,20 +370,21 @@ async def test_custom_node_db_version_check():
             assert db_node is not None
             assert db_node.label == "Updated Label"
             assert db_node.description == "Updated description"
+            assert db_node.version == "1.1.0"
 
-        # 3. Try to overwrite with DIFFERENT version
+        # 4. Try to overwrite with OLDER version (1.0.5 < 1.1.0)
         node.label = "Should Not Be Applied"
-        node.version = "1.1.0"
+        node.version = "1.0.5"
         await NodesRegistry.add_node_to_db(node)
 
-        # Verify NOT overwritten in DB (still has "Updated Label" and version "1.0.0")
+        # Verify NOT overwritten in DB
         async with AsyncSessionLocal() as session:
             stmt = select(NodeDB).where(NodeDB.name == node.name)
             res = await session.execute(stmt)
             db_node = res.scalar_one_or_none()
             assert db_node is not None
             assert db_node.label == "Updated Label"
-            assert db_node.version == "1.0.0"
+            assert db_node.version == "1.1.0"
 
     finally:
         # Clean up

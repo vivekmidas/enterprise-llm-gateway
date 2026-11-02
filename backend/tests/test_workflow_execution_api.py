@@ -198,7 +198,9 @@ async def test_workflow_execute_async_mode(setup_testdb_and_client):
                 data = res.json()
                 assert data["status"] == "accepted"
                 assert data["workflow_id"] == "wf-legal-intake-101"
-                assert data["trace_id"].startswith("exec-wf-legal-intake-101")
+                # trace_id is now a plain uuid4 when not supplied by the caller
+                import uuid
+                uuid.UUID(data["trace_id"])
 
 
 @pytest.mark.asyncio

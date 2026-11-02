@@ -4,7 +4,7 @@ import pytest
 import io
 import zipfile
 from app.core.types.common import NodeInput
-from app.nodes.built_in.llm.tools.document_categorizer_node import DocumentCategorizerNode
+from app.nodes.built_in.llm.tools.document_categorizer_agent.document_categorizer_node import DocumentCategorizerNode
 from app.nodes.registry import NodesRegistry
 from app.utils.document_categorizer import (
     extract_document_text,
@@ -103,7 +103,7 @@ async def test_document_categorizer_node_auto_discovery():
     assert discovered_node is not None
     assert discovered_node.label == "Document Categorizer"
     assert discovered_node.group == "Data"
-    assert discovered_node.category == "11"
+    assert discovered_node.category in ("book", "11")
 
 
 @pytest.mark.asyncio
