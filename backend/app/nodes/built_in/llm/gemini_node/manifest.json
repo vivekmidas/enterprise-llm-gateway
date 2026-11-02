@@ -3,7 +3,7 @@
     "label": "Gemini Chat",
     "node_type": "NODE",
     "description": "Executes chat completions on Google Gemini developer API.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "category": "voice",
     "group": "LLM",
     "icon": "bot",
@@ -12,39 +12,151 @@
     "sub_label": "Google Cloud",
     "file_name": "gemini_node.py",
     "class_name": "GeminiNode",
-    "user_properties": [],
+    "user_properties": [
+        {
+            "key": "profile_name",
+            "type": "source",
+            "label": "LLM Profile",
+            "source": "/api/llm-profiles",
+            "description": "Select tenant-configured LLM profile for Gemini base URL, model, and authentication settings."
+        },
+        {
+            "key": "system_prompt",
+            "type": "textarea",
+            "label": "System Prompt",
+            "default": "You are a helpful assistant.",
+            "description": "System instructions for the LLM. Supports {{ data.<field> }} variables."
+        },
+        {
+            "key": "user_prompt",
+            "type": "textarea",
+            "label": "User Prompt Template",
+            "default": "",
+            "description": "Optional template wrapping the incoming prompt. Variables: {{ prompt }}, {{ context }}, {{ data.<field> }}. Leave empty to send the prompt as-is."
+        },
+        {
+            "key": "temperature",
+            "type": "number",
+            "label": "Temperature",
+            "default": 0.7,
+            "description": "Sampling temperature (0.0 to 1.0)."
+        },
+        {
+            "key": "max_tokens",
+            "type": "number",
+            "label": "Max Tokens",
+            "default": 1024,
+            "description": "Maximum completion tokens to generate."
+        }
+    ],
     "system_properties": [
         {
             "key": "base_url",
             "type": "string",
-            "label": "Base URL",
-            "default": "https://generativelanguage.googleapis.com"
-        },
-        {
-            "key": "api_key",
-            "type": "password",
-            "label": "API Key",
-            "default": ""
-        },
-        {
-            "key": "timeout_seconds",
-            "type": "number",
-            "label": "Timeout (seconds)",
-            "default": 60
-        },
-        {
-            "key": "max_retries",
-            "type": "number",
-            "label": "Max Retries",
-            "default": 3
+            "label": "Fallback Base URL",
+            "default": "https://generativelanguage.googleapis.com",
+            "description": "Fallback base URL when no profile is configured."
         },
         {
             "key": "default_model",
             "type": "string",
             "label": "Default Model",
-            "default": "gemini-1.5-flash"
+            "default": "gemini-1.5-flash",
+            "description": "Fallback model name when not specified in profile or node."
+        },
+        {
+            "key": "api_key",
+            "type": "password",
+            "label": "API Key",
+            "default": "",
+            "description": "Google AI Studio API key used when no profile is configured."
+        },
+        {
+            "key": "timeout_seconds",
+            "type": "number",
+            "label": "Timeout (seconds)",
+            "default": 60,
+            "description": "HTTP request timeout limit."
+        },
+        {
+            "key": "max_retries",
+            "type": "number",
+            "label": "Max Retries",
+            "default": 3,
+            "description": "Number of retry attempts on request failure."
         }
     ],
-    "input_contract": {},
-    "output_contract": {}
+    "input_contract": {
+        "type": "object",
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "User message sent to the LLM. Wrapped by user_prompt template when configured."
+            },
+            "context": {
+                "type": "string",
+                "description": "Optional context string from upstream knowledge retrieval. Available as {{ context }} in user_prompt."
+            },
+            "history": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {
+                            "type": "string",
+                            "enum": [
+                                "system",
+                                "user",
+                                "assistant"
+                            ]
+                        },
+                        "content": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "role",
+                        "content"
+                    ]
+                },
+                "description": "Optional conversation history list."
+            }
+        },
+        "required": [
+            "prompt"
+        ]
+    },
+    "output_contract": {
+        "type": "object",
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "Final user prompt sent to the LLM (after template resolution)."
+            },
+            "answer": {
+                "type": "string",
+                "description": "Cleaned response string returned by the LLM."
+            },
+            "usage": {
+                "type": "object",
+                "properties": {
+                    "prompt_tokens": {
+                        "type": "integer",
+                        "default": 0
+                    },
+                    "completion_tokens": {
+                        "type": "integer",
+                        "default": 0
+                    },
+                    "total_tokens": {
+                        "type": "integer",
+                        "default": 0
+                    }
+                }
+            }
+        },
+        "required": [
+            "answer"
+        ]
+    }
 }

@@ -23,7 +23,7 @@ class NLPQueryAnalyzerNode(BaseNode):
     name: str = "nlp_query_analyzer"
     label: str = "NLP Query Analyzer"
     description: str = "Pure LLM-driven NLU: extracts developer-defined JSON fields, intent, and context from user query."
-    version: str = "1.2.0"
+    version: str = "1.3.0"
     category: str = "NLP"
     group: str = "NLP"
 
@@ -33,25 +33,29 @@ class NLPQueryAnalyzerNode(BaseNode):
 
     async def validate_input(self, inp: NodeInput) -> Optional[NodeOutput]:
         await super().validate_input(inp)
-        query = self._extract_query(inp)
-        if not query:
+        prompt = self._extract_prompt(inp)
+        if not prompt:
             return NodeOutput(
                 trace_id=inp.trace_id,
                 data=inp.data,
                 status="failure",
                 error_code=400,
-                error_message="Missing required field 'query' in input."
+                error_message="Missing required field 'prompt' in input."
             )
         return None
 
-    def _extract_query(self, inp: NodeInput) -> Optional[str]:
-        """Strictly extracts 'query' field. No fallback to text or message."""
+    def _extract_prompt(self, inp: NodeInput) -> Optional[str]:
+        """
+        Extracts 'prompt' field (standard input key across LLM/NLP nodes).
+        CHANGE: renamed from 'query' -> 'prompt' to align with LLM node input_contract.
+        'query' kept as silent legacy fallback for existing workflows only.
+        """
         data_val = self.get_input_data(inp)
         if isinstance(data_val, str):
             val = data_val.strip()
             return val if val else None
         if isinstance(data_val, dict):
-            val = data_val.get("query")
+            val = data_val.get("prompt") or data_val.get("query")
             if isinstance(val, str) and val.strip():
                 return val.strip()
             return None
@@ -181,22 +185,21 @@ class NLPQueryAnalyzerNode(BaseNode):
         )
 
     async def execute(self, inp: NodeInput) -> NodeOutput:
-        query = self._extract_query(inp) or ""
+        prompt = self._extract_prompt(inp) or ""
         config = inp.config or {}
         input_payload = self.get_input_data(inp)
 
         history: List[Dict[str, str]] = []
-        system_prompt_override: Optional[str] = None
         output_format_override = None
 
         if isinstance(input_payload, dict):
             history = input_payload.get("history") or []
-            system_prompt_override = input_payload.get("system_prompt_override")
             output_format_override = input_payload.get("output_format")
 
+        # CHANGE: system prompt sourced from user_properties only; run-time
+        # 'system_prompt_override' removed (aligned with LLM node prompt consolidation).
         base_system_prompt = (
-            system_prompt_override
-            or config.get("system_prompt")
+            config.get("system_prompt")
             or self.properties.get("system_prompt")
             or "You are an expert NLP Context & Intent Analyzer."
         )
@@ -232,7 +235,7 @@ class NLPQueryAnalyzerNode(BaseNode):
         try:
             base_url, api_key, model = await self._resolve_llm_credentials(inp)
             analysis_result = await self._execute_llm_analysis(
-                query, final_system_prompt, history, base_url, api_key, model, config
+                prompt, final_system_prompt, history, base_url, api_key, model, config
             )
         except Exception as e:
             self.logger.error("nlp_llm_execution_failed", trace_id=inp.trace_id, error=str(e))
@@ -253,7 +256,7 @@ class NLPQueryAnalyzerNode(BaseNode):
 
     async def _execute_llm_analysis(
         self,
-        query: str,
+        prompt: str,
         system_instruction: str,
         history: List[Dict[str, str]],
         base_url: str,
@@ -264,7 +267,7 @@ class NLPQueryAnalyzerNode(BaseNode):
         """Direct LLM execution with JSON format constraint and retries."""
         timeout_seconds = float(config.get("timeout_seconds") or self.properties.get("timeout_seconds") or 15)
         max_retries = int(config.get("max_retries") or self.properties.get("max_retries") or 1)
-        user_content = f"User Query:\n\"\"\"{query}\"\"\""
+        user_content = f"User Prompt:\n\"\"\"{prompt}\"\"\""
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": system_instruction}

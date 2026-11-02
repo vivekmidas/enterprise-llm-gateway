@@ -25,9 +25,11 @@ class GeminiNode(BaseLLMNode):
             role = msg["role"]
             content = msg["content"]
             if role == "system":
-                system_instruction = {
-                    "parts": [{"text": content}]
-                }
+                # FIX: accumulate system parts. BaseLLMNode may emit system_prompt + context
+                # as separate system messages; previous assignment dropped all but the last.
+                if system_instruction is None:
+                    system_instruction = {"parts": []}
+                system_instruction["parts"].append({"text": content})
             else:
                 gemini_role = "user" if role == "user" else "model"
                 contents.append({
