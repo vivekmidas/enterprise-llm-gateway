@@ -20,6 +20,10 @@ class WorkflowResponse(WorkflowSaveRequest):
     version: int
 
 
+class WorkflowExportRequest(BaseModel):
+    workflow_ids: Optional[List[str]] = Field(default=None, description="Optional workflow IDs to export. If empty or None, exports all workflows accessible to current user.")
+
+
 # =============================================================================
 # BLOCK COMMENT: DOMAIN-AGNOSTIC WORKFLOW EXECUTION CONTRACTS (EPIC-ARCH-001)
 # Models for executing workflows via REST API from decoupled domain plants

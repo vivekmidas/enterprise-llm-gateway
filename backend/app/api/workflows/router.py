@@ -4,9 +4,16 @@ import json
 import time
 import asyncio
 import uuid
+import re
+from datetime import datetime, timezone
 import structlog
 from app.core.types.users import User
-from app.api.workflows.schemas import WorkflowSaveRequest, WorkflowExecutionRequest, WorkflowExecutionResponse
+from app.api.workflows.schemas import (
+    WorkflowSaveRequest,
+    WorkflowExecutionRequest,
+    WorkflowExecutionResponse,
+    WorkflowExportRequest,
+)
 from app.nodes.registry import NodesRegistry
 from app.nodes.contracts import normalize_contract
 from app.utils.json_sample_generator import generate_sample_json
@@ -512,6 +519,239 @@ async def execute_tenant_workflow_direct(
         current_user=current_user,
         http_request=http_request,
     )
+
+
+# ==============================================================================
+# BLOCK COMMENT: WORKFLOW BACKUP EXPORT & RESTORE/IMPORT ENDPOINTS
+# Reference: EPIC-WORKFLOW-BACKUP-001
+# Description:
+#   Provides single and bulk workflow export into a portable JSON format.
+#   Provides workflow import/restore with:
+#   1. Automatic name collision handling (never overwrites; appends "(Copy)").
+#   2. Fresh workflow ID assignment.
+#   3. Strict tenant scoping (binds to active caller customer_id and user_id).
+#   4. Node capabilities audit (marks is_runnable=False if node not permitted or unregistered).
+# ==============================================================================
+def _format_workflow_for_export(workflow: WorkflowDefinition) -> Dict[str, Any]:
+    nodes_data = []
+    for n in (workflow.nodes_structure or []):
+        if hasattr(n, "model_dump"):
+            nodes_data.append(n.model_dump(mode="json"))
+        elif isinstance(n, dict):
+            nodes_data.append(n)
+        else:
+            nodes_data.append(dict(n))
+
+    return {
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "category": workflow.category or "default",
+        "entry_point": workflow.entry_point or "input_guard",
+        "is_enabled": workflow.is_enabled,
+        "nodes": nodes_data,
+        "edges": workflow.edges or [],
+        "properties": workflow.properties or {},
+    }
+
+
+@router.post("/export", response_model=dict, dependencies=[Depends(require_permission("workflows:builder:view"))])
+async def export_workflows(
+    request: Optional[WorkflowExportRequest] = Body(default=None),
+    current_user: User = Depends(dynamic_api_guard),
+):
+    target_cid = current_user.customer_id if current_user.role != "system_admin" else None
+    selected_ids = request.workflow_ids if request and request.workflow_ids else None
+    workflows_to_export: List[Dict[str, Any]] = []
+
+    if selected_ids:
+        for wid in selected_ids:
+            try:
+                wf = await get_workflow(wid)
+                if current_user.role != "system_admin" and wf.customer_id is not None and wf.customer_id != current_user.customer_id:
+                    continue
+                workflows_to_export.append(_format_workflow_for_export(wf))
+            except Exception as e:
+                logger.warning("export_workflow_skip_failed", workflow_id=wid, error=str(e))
+    else:
+        all_wfs = await list_workflows_from_store(customer_id=target_cid)
+        for basic_wf in all_wfs:
+            try:
+                full_wf = await get_workflow(basic_wf.id)
+                workflows_to_export.append(_format_workflow_for_export(full_wf))
+            except Exception as e:
+                logger.warning("export_workflow_skip_failed", workflow_id=basic_wf.id, error=str(e))
+
+    return {
+        "version": "1.0",
+        "export_type": "workflow_backup",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(workflows_to_export),
+        "workflows": workflows_to_export,
+    }
+
+
+@router.post("/import", response_model=dict, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("workflows:builder:view"))])
+async def import_workflows(
+    payload: Dict[str, Any] = Body(...),
+    current_user: User = Depends(dynamic_api_guard),
+):
+    raw_items = []
+    if isinstance(payload.get("workflows"), list):
+        raw_items = payload["workflows"]
+    elif payload.get("nodes") or payload.get("nodes_structure"):
+        raw_items = [payload]
+    else:
+        raise HTTPException(status_code=400, detail="Invalid import payload: no workflows found.")
+
+    if not raw_items:
+        raise HTTPException(status_code=400, detail="Import payload contains an empty workflow list.")
+
+    target_customer_id = current_user.customer_id
+    target_user_id = current_user.id
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.db_models import WorkflowDB, CustomerNodeDB
+    from app.nodes.registry import NodesRegistry
+
+    # 1. Fetch existing workflow names for this tenant to handle duplicate collision
+    async with AsyncSessionLocal() as session:
+        stmt = select(WorkflowDB.name).where(WorkflowDB.customer_id == target_customer_id)
+        existing_res = await session.execute(stmt)
+        existing_names = {str(row[0]).strip().lower() for row in existing_res.fetchall() if row[0]}
+
+        # 2. Fetch permitted customer nodes if tenant user
+        allowed_customer_nodes = None
+        if current_user.role != "system_admin" and target_customer_id is not None:
+            c_stmt = select(CustomerNodeDB.node_name).where(
+                CustomerNodeDB.customer_id == target_customer_id,
+                CustomerNodeDB.is_enabled == True
+            )
+            c_res = await session.execute(c_stmt)
+            allowed_customer_nodes = {str(row[0]) for row in c_res.fetchall() if row[0]}
+
+    registered_nodes = set(NodesRegistry._nodes.keys())
+    imported_results = []
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+
+        base_name = str(item.get("name") or "Imported Workflow").strip()
+
+        # Name collision: NEVER overwrite. Always generate unique "(Copy)" name
+        candidate_name = base_name
+        if candidate_name.lower() in existing_names:
+            candidate_name = f"{base_name} (Copy)"
+            counter = 2
+            while candidate_name.lower() in existing_names:
+                candidate_name = f"{base_name} (Copy {counter})"
+                counter += 1
+
+        existing_names.add(candidate_name.lower())
+
+        # Generate fresh workflow ID
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", candidate_name.lower()).strip("_")
+        if not slug:
+            slug = "workflow"
+        new_workflow_id = f"{slug}_{uuid.uuid4().hex[:8]}"
+
+        raw_nodes = item.get("nodes") or item.get("nodes_structure") or []
+        edges = item.get("edges") or []
+        properties = item.get("properties") or {}
+
+        # Sanitize nodes structure
+        sanitized_nodes = []
+        for idx, n in enumerate(raw_nodes):
+            n_dict = dict(n) if isinstance(n, dict) else (n.model_dump() if hasattr(n, "model_dump") else {})
+            if not n_dict.get("id"):
+                n_dict["id"] = f"node_{idx}_{uuid.uuid4().hex[:4]}"
+            if not n_dict.get("type"):
+                n_dict["type"] = "agent"
+            sanitized_nodes.append(n_dict)
+
+        # Handle webhook base_path collision in properties
+        for nid, nprops in properties.items():
+            if isinstance(nprops, dict) and "base_path" in nprops:
+                bp = str(nprops.get("base_path") or "").strip("/")
+                if bp:
+                    nprops["base_path"] = f"{bp}_{uuid.uuid4().hex[:4]}"
+
+        # Audit node capability / registry / permissions
+        is_runnable = True
+        warnings = []
+        for n in sanitized_nodes:
+            node_data = n.get("data") or {}
+            agent_name = node_data.get("name") or n.get("name")
+            if not agent_name:
+                continue
+
+            if agent_name not in registered_nodes:
+                is_runnable = False
+                warnings.append(f"Node '{agent_name}' is not registered in system.")
+            elif allowed_customer_nodes is not None and agent_name not in allowed_customer_nodes:
+                is_runnable = False
+                warnings.append(f"Node '{agent_name}' is disabled or not permitted for your tenant.")
+
+        workflow_obj = WorkflowDefinition(
+            id=new_workflow_id,
+            name=candidate_name,
+            description=item.get("description") or "",
+            category=item.get("category") or "default",
+            entry_point=item.get("entry_point") or "input_guard",
+            is_enabled=bool(item.get("is_enabled", True)),
+            is_runnable=is_runnable,
+            nodes_structure=sanitized_nodes,
+            edges=edges,
+            properties=properties,
+            user_id=target_user_id,
+            customer_id=target_customer_id,
+            version="1",
+        )
+
+        try:
+            await save_workflow(workflow_obj, customer_id=target_customer_id)
+            imported_results.append({
+                "id": new_workflow_id,
+                "name": candidate_name,
+                "is_runnable": is_runnable,
+                "warnings": warnings,
+                "status": "imported",
+            })
+        except Exception as e:
+            logger.error("import_single_workflow_failed", name=candidate_name, error=str(e))
+            imported_results.append({
+                "id": new_workflow_id,
+                "name": candidate_name,
+                "is_runnable": False,
+                "warnings": [f"Save failed: {str(e)}"],
+                "status": "failed",
+            })
+
+    return {
+        "status": "success",
+        "imported_count": len([r for r in imported_results if r["status"] == "imported"]),
+        "failed_count": len([r for r in imported_results if r["status"] == "failed"]),
+        "workflows": imported_results,
+    }
+
+
+@router.get("/{workflow_id}/export", response_model=dict, dependencies=[Depends(require_permission("workflows:builder:view"))])
+async def export_single_workflow(
+    workflow_id: str,
+    current_user: User = Depends(dynamic_api_guard),
+):
+    workflow = await get_workflow(workflow_id)
+    if current_user.role != "system_admin" and workflow.customer_id is not None and workflow.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="Access denied to this workflow")
+
+    exported = _format_workflow_for_export(workflow)
+    return {
+        "version": "1.0",
+        "export_type": "workflow_backup",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "count": 1,
+        "workflows": [exported],
+    }
 
 
 # ==============================================================================
