@@ -12,10 +12,10 @@ from app.nodes.built_in.webhook.base.scheduler_agent.scheduler_node import Sched
 from app.core.database import get_db
 from app.models.db_models import CustomerDB, UserDB, AuditLogDB
 from app.core.security.hash import get_password_hash
-from app.api.auth.dependencies import  require_system_admin, get_current_user, require_admin_or_system_admin
+from app.api.auth.dependencies import require_system_admin, get_current_user, require_admin_or_system_admin, dynamic_api_guard
 from app.core.types.users import User
 
-router = APIRouter(prefix="/api/admin/company", tags=["admin"])
+router = APIRouter(prefix="/api/admin/company", tags=["admin"], dependencies=[Depends(dynamic_api_guard)])
 logger = structlog.get_logger(__name__)
 logger = logger.bind(module=__name__)
 

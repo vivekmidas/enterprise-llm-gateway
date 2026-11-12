@@ -32,7 +32,7 @@ from app.workflows.executor import execute_dynamic_agent
 from app.core.cache import trace_store
 from app.utils.request_utils import extract_request_info
 from app.workflows.class_models import WorkflowDefinition
-from app.api.auth.dependencies import get_current_user, require_resource_access, require_permission, dynamic_api_guard
+from app.api.auth.dependencies import get_current_user, require_resource_access, dynamic_api_guard
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 run_workflows_router = APIRouter(prefix="/run/workflows", tags=["Workflow Runs"])
@@ -233,7 +233,7 @@ def _mask_sensitive_properties(properties: dict) -> dict:
 #   so roles with workflows:builder:view, admin:workflows:view, or workflows:view
 #   are authorized for GET /workflows and GET /api/workflows.
 # ==============================================================================
-@router.get("", response_model=List[WorkflowDefinition], dependencies=[Depends(require_permission("workflows:builder:view"))])
+@router.get("", response_model=List[WorkflowDefinition])
 async def get_workflows(
     customer_id: Optional[str] = Query(None, description="Filter workflows by customer_id"),
     current_user: User = Depends(dynamic_api_guard)
@@ -264,7 +264,7 @@ async def get_workflows(
 @router.get("/traces/{trace_id}", response_model=dict, summary="Get workflow execution trace by ID [EPIC-ARCH-001]")
 async def get_workflow_execution_trace(
     trace_id: str = Path(..., description="Trace identifier"),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     logger.info("get_workflow_trace_request", trace_id=trace_id, tenant_id=current_user.customer_id)
     trace_data = await trace_store.get_trace(trace_id)
@@ -294,7 +294,7 @@ async def get_workflow_execution_trace(
 async def execute_workflow_by_id(
     workflow_id: str = Path(..., description="Workflow ID, name, or slug"),
     request: Optional[WorkflowExecutionRequest] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     http_request: Request = None,
 ):
     if request is None:
@@ -311,7 +311,8 @@ async def execute_workflow_by_id(
     workflow = await get_workflow_by_identifier(workflow_id)
 
     # 2. Enforce tenant authorization
-    if current_user.role != "system_admin" and workflow.customer_id is not None and str(workflow.customer_id) != str(current_user.customer_id):
+    is_sysadmin = current_user.role == "system_admin" or current_user.role_type == "system_admin"
+    if not is_sysadmin and workflow.customer_id is not None and str(workflow.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Access denied: workflow belongs to another tenant")
 
     # 2b. Enforce API key workflow restrictions if configured
@@ -425,7 +426,7 @@ async def execute_workflow_by_id(
 async def execute_workflow_by_slug(
     workflow_slug: str = Path(..., description="Workflow slug or identifier"),
     request: Optional[WorkflowExecutionRequest] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     http_request: Request = None,
 ):
     """Convenience alias route for decoupled domain plants invoking workflows by slug."""
@@ -458,12 +459,13 @@ async def execute_tenant_workflow_direct(
     workflow_id: str = Path(..., description="Workflow ID, name, or slug"),
     mode: Optional[str] = Query(None, description="Execution mode override: 'sync' or 'async'"),
     payload: Optional[Any] = Body(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     http_request: Request = None,
 ):
     # 1. Validate tenant boundary against path customer_id
+    is_sysadmin = current_user.role == "system_admin" or current_user.role_type == "system_admin"
     if (
-        current_user.role != "system_admin"
+        not is_sysadmin
         and current_user.customer_id is not None
         and customer_id != "default"
         and str(customer_id) != str(current_user.customer_id)
@@ -483,7 +485,7 @@ async def execute_tenant_workflow_direct(
     workflow = await get_workflow_by_identifier(workflow_id, customer_id=target_cid)
 
     if (
-        current_user.role != "system_admin"
+        not is_sysadmin
         and workflow.customer_id is not None
         and str(workflow.customer_id) != str(current_user.customer_id)
     ):
@@ -554,7 +556,7 @@ def _format_workflow_for_export(workflow: WorkflowDefinition) -> Dict[str, Any]:
     }
 
 
-@router.post("/export", response_model=dict, dependencies=[Depends(require_permission("workflows:builder:view"))])
+@router.post("/export", response_model=dict)
 async def export_workflows(
     request: Optional[WorkflowExportRequest] = Body(default=None),
     current_user: User = Depends(dynamic_api_guard),
@@ -590,7 +592,7 @@ async def export_workflows(
     }
 
 
-@router.post("/import", response_model=dict, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("workflows:builder:view"))])
+@router.post("/import", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def import_workflows(
     payload: Dict[str, Any] = Body(...),
     current_user: User = Depends(dynamic_api_guard),
@@ -735,7 +737,7 @@ async def import_workflows(
     }
 
 
-@router.get("/{workflow_id}/export", response_model=dict, dependencies=[Depends(require_permission("workflows:builder:view"))])
+@router.get("/{workflow_id}/export", response_model=dict)
 async def export_single_workflow(
     workflow_id: str,
     current_user: User = Depends(dynamic_api_guard),
@@ -794,7 +796,7 @@ async def get_workflow_by_id(
 async def get_node_properties(
     workflow_id: str,
     agent_node_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     logger.info("get_workflow_node_properties_request", workflow_id=workflow_id, agent_node_id=agent_node_id)
     try:
@@ -1138,7 +1140,10 @@ class RefreshTokenRequest(BaseModel):
     client_secret: str = Field(..., description="The new access token to store.")
 
 @router.put("/refresh-token", summary="Update access and refresh tokens for a workflow node")
-async def refresh_node_tokens(request: RefreshTokenRequest):
+async def refresh_node_tokens(
+    request: RefreshTokenRequest,
+    current_user: User = Depends(dynamic_api_guard)
+):
     """
     Updates the `access_token` and `refresh_token` properties for a specific node
     within a workflow. This is typically used for OAuth flows where tokens
@@ -1169,10 +1174,13 @@ async def refresh_node_tokens(request: RefreshTokenRequest):
 @router.post("/cache/clear")
 async def clear_workflow_cache(
     workflow_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     """Clear cached compiled workflows. Only admins or system admins can trigger this."""
-    if current_user.role not in ["system_admin", "admin"]:
+    if (
+        current_user.role not in ["system_admin", "admin", "tenant_admin"]
+        and current_user.role_type not in ["system_admin", "admin", "tenant_admin"]
+    ):
         raise HTTPException(status_code=403, detail="Forbidden: Only admins can clear the workflow cache")
         
     from app.workflows.executor import WorkflowExecutor
@@ -1201,10 +1209,13 @@ async def clear_workflow_cache(
 
 @router.get("/cache/info")
 async def get_workflow_cache_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     """Retrieve stats/info about the compiled workflow cache. Only admins or system admins can call this."""
-    if current_user.role not in ["system_admin", "admin"]:
+    if (
+        current_user.role not in ["system_admin", "admin", "tenant_admin"]
+        and current_user.role_type not in ["system_admin", "admin", "tenant_admin"]
+    ):
         raise HTTPException(status_code=403, detail="Forbidden: Only admins can inspect the workflow cache")
     
     from app.core.cache import workflow_cache

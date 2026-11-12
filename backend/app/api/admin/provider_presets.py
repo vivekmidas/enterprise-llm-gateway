@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.core.database import get_db
 from app.core.seed_provider_presets import seed_provider_presets
 from app.core.types.users import User
@@ -40,7 +40,7 @@ async def list_provider_presets(
     return presets
 
 
-@router.get("/api/admin/provider-presets", response_model=List[ProviderPresetResponse])
+@router.get("/api/admin/provider-presets", response_model=List[ProviderPresetResponse], dependencies=[Depends(dynamic_api_guard)])
 async def list_all_provider_presets_admin(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -57,7 +57,7 @@ async def list_all_provider_presets_admin(
     return presets
 
 
-@router.post("/api/admin/provider-presets", response_model=ProviderPresetResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/api/admin/provider-presets", response_model=ProviderPresetResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(dynamic_api_guard)])
 async def create_provider_preset(
     payload: ProviderPresetCreate,
     current_user: User = Depends(get_current_user),
@@ -88,7 +88,7 @@ async def create_provider_preset(
     return preset
 
 
-@router.put("/api/admin/provider-presets/{preset_id}", response_model=ProviderPresetResponse)
+@router.put("/api/admin/provider-presets/{preset_id}", response_model=ProviderPresetResponse, dependencies=[Depends(dynamic_api_guard)])
 async def update_provider_preset(
     preset_id: str,
     payload: ProviderPresetUpdate,
@@ -120,7 +120,7 @@ async def update_provider_preset(
     return preset
 
 
-@router.delete("/api/admin/provider-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/api/admin/provider-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(dynamic_api_guard)])
 async def delete_provider_preset(
     preset_id: str,
     current_user: User = Depends(get_current_user),
@@ -141,7 +141,7 @@ async def delete_provider_preset(
     return None
 
 
-@router.post("/api/admin/provider-presets/seed", status_code=status.HTTP_200_OK)
+@router.post("/api/admin/provider-presets/seed", status_code=status.HTTP_200_OK, dependencies=[Depends(dynamic_api_guard)])
 async def seed_defaults(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

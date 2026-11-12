@@ -1,10 +1,11 @@
 import time
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from typing import List, Optional
 from app.core.cache import trace_store
+from app.api.auth.dependencies import dynamic_api_guard
 from app.api.webhooks import email as email_webhooks
 
-router = APIRouter(prefix="/api/observability")
+router = APIRouter(prefix="/api/observability", dependencies=[Depends(dynamic_api_guard)])
 
 @router.get("/traces")
 async def get_traces(minutes: int = Query(default=30)):

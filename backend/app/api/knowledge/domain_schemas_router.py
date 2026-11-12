@@ -5,14 +5,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth.dependencies import get_current_user, require_tenant
+from app.api.auth.dependencies import get_current_user, require_tenant, dynamic_api_guard
 from app.core.database import get_db
 from app.core.types.users import User
 from app.models.db_models import DomainSchemaDB, KnowledgeBaseDB
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/domains", tags=["Domain Schemas"])
+router = APIRouter(prefix="/domains", tags=["Domain Schemas"], dependencies=[Depends(dynamic_api_guard)])
 
 # ==============================================================================
 # BLOCK COMMENT: CANONICAL DEFAULT PROMPTS (SINGLE SOURCE OF TRUTH)

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.repositories.job_repository import JobRepository
 from app.schemas.job import JobListResponse, JobResponse
 from app.models.services.job_service import JobService
@@ -9,6 +10,7 @@ from app.models.services.job_service import JobService
 router = APIRouter(
     prefix="/api/jobs",
     tags=["Jobs"],
+    dependencies=[Depends(get_current_user), Depends(dynamic_api_guard)],
 )
 
 def get_service(db: AsyncSession) -> JobService:

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.core.types.users import User
 from app.models.db_models import LLMProfileDB
 from app.schemas.llm_profile_schemas import (
@@ -16,7 +16,7 @@ from app.schemas.llm_profile_schemas import (
 from app.nodes.built_in.kb.rag_service import RAGService
 from app.knowledge.retrieval_models import RAGRequest
 
-router = APIRouter(prefix="/api/v1/playground", tags=["Playground"])
+router = APIRouter(prefix="/api/v1/playground", tags=["Playground"], dependencies=[Depends(dynamic_api_guard)])
 
 
 def _deep_merge(target: dict, source: dict) -> dict:

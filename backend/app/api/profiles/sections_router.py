@@ -47,11 +47,10 @@ async def _patch_section(
     db: AsyncSession,
 ) -> LLMProfileDB:
 
-    role = current_user.get("role")
-    if role == "system_admin":
+    if current_user.role_type == "system_admin" or current_user.role == "system_admin":
         stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
-        customer_id = str(current_user.get("tenant") or current_user.get("customer_id"))
+        customer_id = str(current_user.customer_id or "")
         stmt = select(LLMProfileDB).where(
             LLMProfileDB.id == str(profile_id),
             LLMProfileDB.customer_id == customer_id,

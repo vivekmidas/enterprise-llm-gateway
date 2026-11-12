@@ -9,55 +9,61 @@ from app.models.db_models import WorkflowDB, WorkflowNodePropertyDB
 from app.workflows.executor import execute_dynamic_agent
 from sqlalchemy import select
 from app.core.types.users import User
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import dynamic_api_guard
 
 router = APIRouter(prefix="/webhooks/run", tags=["Webhook Runs"])
 logger = structlog.get_logger(__name__)
 
+# ==============================================================================
+# BLOCK COMMENT: UNIFIED WEBHOOK WORKFLOW TRIGGER (JWT & X-API-KEY SAFE)
+# Reference: EPIC-AUTH-001 / STORY-1.3
+# ==============================================================================
 @router.post("/{webhook_path:path}")
 async def execute_webhook_workflow(
     webhook_path: str = Path(..., description="The configured base path of the webhook"),
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(dynamic_api_guard)
 ):
     """
-    Unified public endpoint to trigger webhook-enabled workflows.
-    Secured by global AuthenticationMiddleware (requires valid JWT token).
-    Checks tenant (customer_id) authorization.
+    Unified endpoint to trigger webhook-enabled workflows via JWT or X-API-Key.
+    Validates execute permission, tenant ownership, and allowed_workflow_ids.
     """
-    user_id = request.state.user.get("id")
-    tenant = request.state.user.get("tenant")
-    domain = request.state.user.get("domain")
-    role = request.state.user.get("role")
-    status= True if request.state.user.get("status") else False
+    user_id = current_user.id
+    tenant = current_user.customer_id
+    domain = current_user.domain
+    role = current_user.role
+    user_status = current_user.status == "active" if current_user.status else True
     normalized_path = webhook_path.strip("/") # remove leading /, if any
-    logger.info("webhook_run_received", path=normalized_path, tenant=tenant, user_id=user_id, domain=domain, role=role, user_status=status)
+    logger.info("webhook_run_received", path=normalized_path, tenant=tenant, user_id=user_id, domain=domain, role=role, user_status=user_status)
 
     async with AsyncSessionLocal() as session:
         # Find the enabled workflow belonging to this customer that has a webhook node with the configured base_path
         stmt = (
-            select(WorkflowDB.id, WorkflowNodePropertyDB.agent_name, WorkflowNodePropertyDB.agent_node_id, WorkflowNodePropertyDB.properties)
+            select(WorkflowDB.id, WorkflowDB.name, WorkflowNodePropertyDB.agent_name, WorkflowNodePropertyDB.agent_node_id, WorkflowNodePropertyDB.properties)
             .join(WorkflowNodePropertyDB, WorkflowNodePropertyDB.workflow_id == WorkflowDB.id)
-            .where(
-                WorkflowDB.customer_id == tenant,
-                WorkflowDB.is_enabled == True
-            )
+            .where(WorkflowDB.is_enabled == True)
         )
+        if current_user.role != "system_admin" and current_user.role_type != "system_admin":
+            stmt = stmt.where(WorkflowDB.customer_id == tenant)
         res = await session.execute(stmt)
         matched = None
-        for workflow_id, agent_name, agent_node_id, properties in res.all():
+        for workflow_id, workflow_name, agent_name, agent_node_id, properties in res.all():
             if not properties or not isinstance(properties, dict):
                 continue
             other_path = properties.get("base_path", "").strip("/")
             if other_path and other_path == normalized_path:
-                matched = (workflow_id, agent_name, agent_node_id, properties)
+                matched = (workflow_id, workflow_name, agent_name, agent_node_id, properties)
                 break
 
         if not matched:
             logger.warning("webhook_route_not_found", path=normalized_path, tenant_id=tenant)
             raise HTTPException(status_code=404, detail="Webhook endpoint not found or inactive")
 
-        workflow_id, agent_name, agent_node_id, properties = matched
+        workflow_id, workflow_name, agent_name, agent_node_id, properties = matched
+
+    if current_user.allowed_workflow_ids is not None:
+        if workflow_id not in current_user.allowed_workflow_ids and workflow_name not in current_user.allowed_workflow_ids:
+            raise HTTPException(status_code=403, detail=f"API Key is not authorized to execute workflow '{workflow_id}'")
 
     # Load the full workflow definition from the store
     from app.workflows.store import load_workflow_from_store
@@ -107,10 +113,10 @@ async def execute_webhook_workflow(
             node_instance._workflows[agent_node_id] = workflow_def
 
         user_data = {
-            "user_id": current_user.id if current_user else request.state.user.get("id"),
-            "customer_id": current_user.customer_id if current_user else request.state.user.get("tenant"),
-            "role": current_user.role if current_user else request.state.user.get("role"),
-            "status": request.state.user.get("status")
+            "user_id": current_user.id,
+            "customer_id": current_user.customer_id,
+            "role": current_user.role,
+            "status": current_user.status,
         }
         # ======================================================================
         # DESIGN CHANGE (webhook request capture): sanitized inbound request

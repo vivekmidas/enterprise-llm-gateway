@@ -6,10 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.models.db_models import KnowledgeBaseDB, KnowledgeDocumentDB, KnowledgeChunkDB
 from app.core.cache import trace_store
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.core.types.users import User
 
-router = APIRouter(prefix="/api/observability")
+router = APIRouter(prefix="/api/observability", dependencies=[Depends(dynamic_api_guard)])
 
 @router.get("/traces")
 async def get_traces(

@@ -17,6 +17,7 @@ from sqlalchemy import select, func
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.api.auth.dependencies import dynamic_api_guard
 from app.models.db_models import EKPDocumentDB, EKPParagraphDB, EKPEntityDB, LLMProfileDB
 from app.schemas.ekp_schemas import (
     DocumentRegistrationRequest, DocumentRegistrationResponse,
@@ -30,7 +31,7 @@ from app.knowledge.ekp_v3.worker import sweep_and_process_pending_jobs_async
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/v3/knowledge", tags=["EKP V3 Knowledge Platform"])
+router = APIRouter(prefix="/api/v3/knowledge", tags=["EKP V3 Knowledge Platform"], dependencies=[Depends(dynamic_api_guard)])
 pipeline = EKPProcessingPipeline()
 
 

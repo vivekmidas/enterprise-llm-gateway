@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.types.users import User
-from app.api.auth.dependencies import get_current_user
+from app.api.auth.dependencies import get_current_user, dynamic_api_guard
 from app.models.db_models import APIKeyDB, CustomerDB, RoleDB
 from app.core.security.api_keys import generate_api_key
 from app.api.admin.api_keys.schemas import (
@@ -27,17 +27,23 @@ from app.api.admin.api_keys.schemas import (
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/admin/api-keys", tags=["admin-api-keys"])
+router = APIRouter(prefix="/admin/api-keys", tags=["admin-api-keys"], dependencies=[Depends(dynamic_api_guard)])
 
 
-def _check_admin_access(current_user: User) -> None:
-    """Enforces that caller has admin privileges (system_admin or tenant_admin)."""
+# ==============================================================================
+# BLOCK COMMENT: API KEYS RBAC GUARD (EPIC-AUTH-001 / STORY-1.4)
+# Supports system_admin, tenant_admin, and granular admin:api_keys:view/manage.
+# ==============================================================================
+def _check_admin_access(current_user: User, require_manage: bool = False) -> None:
+    """Enforces that caller has admin privileges (system_admin, tenant_admin, or api_keys perms)."""
     user_role = (current_user.role or "").lower()
     user_role_type = (current_user.role_type or "").lower()
+    required_perm = "admin:api_keys:manage" if require_manage else "admin:api_keys:view"
     is_admin = (
         user_role in {"admin", "tenant_admin", "system_admin"}
         or user_role_type in {"admin", "tenant_admin", "system_admin"}
-        or current_user.has_permission("admin:tenant_settings:configure")
+        or current_user.has_permission(required_perm)
+        or current_user.has_permission("admin:api_keys:manage")
         or current_user.has_permission("admin:*:*")
         or current_user.has_permission("*:*:*")
     )
@@ -113,7 +119,7 @@ async def create_api_key(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_admin_access(current_user)
+    _check_admin_access(current_user, require_manage=True)
 
     is_sysadmin = (current_user.role == "system_admin" or current_user.role_type == "system_admin")
 
@@ -245,7 +251,7 @@ async def update_api_key(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_admin_access(current_user)
+    _check_admin_access(current_user, require_manage=True)
 
     stmt = select(APIKeyDB).where(APIKeyDB.id == key_id)
     if current_user.role != "system_admin" and current_user.role_type != "system_admin":
@@ -332,7 +338,7 @@ async def delete_api_key(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_admin_access(current_user)
+    _check_admin_access(current_user, require_manage=True)
 
     stmt = select(APIKeyDB).where(APIKeyDB.id == key_id)
     if current_user.role != "system_admin" and current_user.role_type != "system_admin":

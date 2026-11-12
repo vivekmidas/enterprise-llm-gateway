@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
 from app.core.database import get_db
-from app.api.auth.dependencies import get_current_user, require_admin_or_system_admin, require_system_admin
+from app.api.auth.dependencies import get_current_user, require_admin_or_system_admin, require_system_admin, dynamic_api_guard
 from app.core.types.users import User
 # BLOCK COMMENT: CANONICAL MODULE SOT & ROUTE MATRIX ENDPOINTS
 from app.models.db_models import ModuleDB, RoleDB, PermissionDB, RolePermissionDB, RoutePermissionDB, UserDB, generate_uuid
@@ -89,6 +89,10 @@ class CustomModuleCreateRequest(BaseModel):
     actions: Optional[List[ModuleActionItem]] = []
 
 
+def _is_sys_admin(user: User) -> bool:
+    return (user.role or "").lower() == "system_admin" or (user.role_type or "").lower() == "system_admin"
+
+
 @router.get("/modules", response_model=List[dict])
 async def list_modules_and_actions(
     customer_id: Optional[str] = Query(None, description="Optional tenant customer_id filter"),
@@ -100,7 +104,7 @@ async def list_modules_and_actions(
     Resolves tenant-specific overrides merged with global system defaults.
     """
     target_cid = None
-    if current_user.role == "system_admin":
+    if _is_sys_admin(current_user):
         if customer_id and str(customer_id).strip() not in ("all", "null", "None", "system", "system-wide", ""):
             target_cid = str(customer_id).strip()
     else:
@@ -173,13 +177,13 @@ async def list_modules_and_actions(
 @router.post("/modules/custom", response_model=dict, status_code=201)
 async def create_custom_module(
     payload: CustomModuleCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Creates or updates a custom module with route patterns, action capabilities, and API endpoint bindings for a tenant."""
     target_cid = current_user.customer_id
-    if current_user.role == "system_admin":
+    if _is_sys_admin(current_user):
         target_cid = payload.customer_id if payload.customer_id and str(payload.customer_id).strip() not in ("null", "None", "system") else None
     elif payload.customer_id and str(payload.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to create modules for another tenant")
@@ -328,7 +332,7 @@ async def create_custom_module(
 @router.delete("/modules/{module_id}", status_code=204)
 async def delete_custom_module(
     module_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -339,14 +343,28 @@ async def delete_custom_module(
     if not mod:
         raise HTTPException(status_code=404, detail="Module not found")
 
-    if mod.customer_id is None and current_user.role != "system_admin":
+    if mod.customer_id is None and not _is_sys_admin(current_user):
         raise HTTPException(status_code=403, detail="System default modules can only be removed by System Admin")
 
-    if mod.customer_id is not None and current_user.role != "system_admin" and str(mod.customer_id) != str(current_user.customer_id):
+    if mod.customer_id is not None and not _is_sys_admin(current_user) and str(mod.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to delete module for another tenant")
+
+    # Clean up RoutePermissionDB rules linked to this module's patterns/permissions
+    p_res = await db.execute(select(PermissionDB.id).where(PermissionDB.module_id == mod.id))
+    mod_perm_ids = [pid for pid in p_res.scalars().all()]
+    if mod_perm_ids:
+        rp_del_stmt = delete(RoutePermissionDB).where(RoutePermissionDB.permission_id.in_(mod_perm_ids))
+        if mod.customer_id is not None:
+            rp_del_stmt = rp_del_stmt.where(RoutePermissionDB.customer_id == mod.customer_id)
+        else:
+            rp_del_stmt = rp_del_stmt.where(RoutePermissionDB.customer_id.is_(None))
+        await db.execute(rp_del_stmt)
 
     await db.delete(mod)
     await db.commit()
+
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await reload_route_permissions_cache(db)
     return None
 
 
@@ -527,7 +545,7 @@ async def get_route_permissions(
     Returns active route permission rules resolved directly from the canonical ModuleDB registry.
     """
     target_cid = None
-    if current_user.role == "system_admin":
+    if _is_sys_admin(current_user):
         if customer_id and str(customer_id).strip() not in ("all", "null", "None", "system", "system-wide", ""):
             target_cid = str(customer_id).strip()
     else:
@@ -555,11 +573,14 @@ async def get_route_permissions(
     guard_perm_by_mod_sub = {}
     for p in all_perms:
         if p.is_route_guard or p.action in ("view", "read", "query"):
-            if p.module_id:
+            if p.module_id and p.module_id not in guard_perm_by_mod_id:
                 guard_perm_by_mod_id[p.module_id] = p
-            guard_perm_by_mod_sub[f"{p.module}:{p.submodule or 'all'}"] = p
+            sub_key = f"{p.module}:{p.submodule or 'all'}"
+            if sub_key not in guard_perm_by_mod_sub:
+                guard_perm_by_mod_sub[sub_key] = p
 
     routes = []
+    seen_patterns = set()
     idx = 0
     for m in mod_map.values():
         guard_p = guard_perm_by_mod_id.get(m.id) or guard_perm_by_mod_sub.get(f"{m.module}:{m.submodule or 'all'}")
@@ -577,7 +598,30 @@ async def get_route_permissions(
                 "description": m.description,
                 "customer_id": m.customer_id
             })
+            seen_patterns.add(pattern)
             idx += 1
+
+    # Merge explicit custom UI bindings stored directly in RoutePermissionDB
+    rp_filters = [RoutePermissionDB.customer_id.is_(None)]
+    if target_cid:
+        rp_filters.append(RoutePermissionDB.customer_id == target_cid)
+    rp_res = await db.execute(
+        select(RoutePermissionDB).where(or_(*rp_filters), RoutePermissionDB.http_method == "*")
+    )
+    for rp in rp_res.scalars().all():
+        if rp.pattern and rp.pattern not in seen_patterns:
+            routes.append({
+                "id": rp.id,
+                "pattern": rp.pattern,
+                "permission": rp.permission_id,
+                "permission_id": rp.permission_id,
+                "module": rp.module,
+                "submodule": rp.submodule,
+                "label": rp.label,
+                "description": rp.description,
+                "customer_id": rp.customer_id,
+            })
+            seen_patterns.add(rp.pattern)
 
     return routes
 
@@ -626,6 +670,9 @@ async def create_route_permission_binding(
     db.add(new_rp)
     await db.commit()
     await db.refresh(new_rp)
+
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await reload_route_permissions_cache(db)
 
     return {
         "id": new_rp.id,
@@ -693,6 +740,9 @@ async def update_route_permission_binding(
     await db.commit()
     await db.refresh(rp)
 
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await reload_route_permissions_cache(db)
+
     return {
         "id": rp.id,
         "pattern": rp.pattern,
@@ -719,6 +769,9 @@ async def delete_route_permission_binding(
 
     await db.delete(rp)
     await db.commit()
+
+    from app.api.auth.dependencies import reload_route_permissions_cache
+    await reload_route_permissions_cache(db)
     return None
 
 
@@ -802,7 +855,7 @@ async def list_permissions_registry(
 @router.get("", response_model=List[dict])
 async def list_roles(
     customer_id: Optional[str] = Query(None, description="System Admin can specify customer_id"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -810,7 +863,7 @@ async def list_roles(
     System Admin can specify customer_id to view roles for a target tenant.
     """
     # BLOCK COMMENT: SYSTEM ADMIN SEES ALL ROLES ACROSS TENANTS (OR FILTERED IF TARGET SPECIFIED)
-    if current_user.role == "system_admin":
+    if _is_sys_admin(current_user):
         if customer_id and str(customer_id).strip() not in ("all", "null", "None", ""):
             if str(customer_id).strip() in ("system", "system-wide"):
                 stmt = select(RoleDB).where(or_(RoleDB.is_system_preset == True, RoleDB.customer_id.is_(None)))
@@ -868,7 +921,7 @@ async def list_roles(
 async def create_role(
     payload: dict,
     customer_id: Optional[str] = Query(None, description="System Admin target customer_id"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -878,7 +931,7 @@ async def create_role(
     """
     # BLOCK COMMENT: TARGET CUSTOMER ID RESOLUTION (SYSTEM-WIDE IF NULL/OMITTED FOR SYSTEM ADMIN)
     target_customer_id = current_user.customer_id
-    if current_user.role == "system_admin":
+    if _is_sys_admin(current_user):
         raw_cid = customer_id if customer_id is not None else payload.get("customer_id")
         if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide"):
             target_customer_id = str(raw_cid)
@@ -967,7 +1020,7 @@ async def create_role(
 async def update_role(
     role_id: str,
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -980,20 +1033,20 @@ async def update_role(
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
 
-    if role.is_system_preset and current_user.role != "system_admin":
+    if role.is_system_preset and not _is_sys_admin(current_user):
         raise HTTPException(status_code=403, detail="System preset roles can only be updated by System Admin")
 
-    if role.customer_id is None and current_user.role != "system_admin":
+    if role.customer_id is None and not _is_sys_admin(current_user):
         raise HTTPException(status_code=403, detail="System-wide custom roles can only be updated by System Admin")
 
-    if not role.is_system_preset and role.customer_id is not None and current_user.role != "system_admin" and str(role.customer_id) != str(current_user.customer_id):
+    if not role.is_system_preset and role.customer_id is not None and not _is_sys_admin(current_user) and str(role.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to edit roles for another tenant")
 
     if "role_name" in payload and payload["role_name"]:
         role.role_name = payload["role_name"]
     if "description" in payload:
         role.description = payload["description"]
-    if "customer_id" in payload and current_user.role == "system_admin":
+    if "customer_id" in payload and _is_sys_admin(current_user):
         raw_cid = payload.get("customer_id")
         role.customer_id = str(raw_cid) if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide") else None
 
@@ -1052,7 +1105,7 @@ async def update_role(
 @router.delete("/{role_id}", status_code=204)
 async def delete_role(
     role_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(dynamic_api_guard),
     _: None = Depends(require_admin_or_system_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1067,10 +1120,10 @@ async def delete_role(
     if role.is_system_preset:
         raise HTTPException(status_code=400, detail="System preset default roles cannot be deleted")
 
-    if role.customer_id is None and current_user.role != "system_admin":
+    if role.customer_id is None and not _is_sys_admin(current_user):
         raise HTTPException(status_code=403, detail="System-wide custom roles can only be deleted by System Admin")
 
-    if role.customer_id is not None and current_user.role != "system_admin" and str(role.customer_id) != str(current_user.customer_id):
+    if role.customer_id is not None and not _is_sys_admin(current_user) and str(role.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to delete roles for another tenant")
 
     # Check if any user is currently assigned this role

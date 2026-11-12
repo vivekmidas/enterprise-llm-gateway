@@ -85,34 +85,6 @@ async def resolve_role_for_user(
     if role_obj:
         return role_obj
 
-    # 5. Handle legacy role alias mappings
-    alias_map = {
-        "admin": "system_admin" if customer_id is None else "tenant_admin",
-        "tenant_admin": "tenant_admin",
-        "administrator": "system_admin" if customer_id is None else "tenant_admin",
-        "system_admin": "system_admin",
-        "super_admin": "system_admin",
-        "sysadmin": "system_admin",
-        "user": "tenant_user",
-        "tenant_user": "tenant_user",
-        "standard_user": "tenant_user",
-        "para_legal": "para_legal",
-        "paralegal": "para_legal",
-        "legal_analyst": "legal_analyst",
-        "analyst": "legal_analyst"
-    }
-    mapped_type = alias_map.get(clean_str.lower().replace(" ", "_"))
-    if mapped_type:
-        res = await db.execute(
-            select(RoleDB).where(
-                RoleDB.role_type == mapped_type,
-                or_(RoleDB.is_system_preset == True, RoleDB.customer_id.is_(None))
-            )
-        )
-        role_obj = res.scalars().first()
-        if role_obj:
-            return role_obj
-
     return None
 
 
@@ -150,6 +122,207 @@ async def resolve_role_and_id(
 #    resolves service account User with tenant customer_id and scopes.
 # 3. Direct Session Auth: If only JWT / cookie is supplied, resolves interactive user.
 # ==============================================================================
+async def resolve_authorized_modules(
+    db: AsyncSession,
+    permissions_list: List[str],
+    permission_methods_map: Dict[str, List[str]],
+    role_str: Optional[str] = None,
+    role_type_val: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    include_internal_routes: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Returns only modules from ModuleDB/PermissionDB whose permissions match
+    the role's granted permissions (from RolePermissionDB) and allowed HTTP methods.
+    """
+    from app.models.db_models import ModuleDB, PermissionDB
+    from sqlalchemy import or_
+
+    is_sysadmin = (
+        (role_type_val or "").lower() == "system_admin"
+        or (role_str or "").lower() == "system_admin"
+        or "*:*:*" in permissions_list
+    )
+    if not is_sysadmin and not permissions_list:
+        return []
+
+    filters = [ModuleDB.customer_id.is_(None)]
+    if customer_id:
+        filters.append(ModuleDB.customer_id == str(customer_id))
+
+    mod_res = await db.execute(select(ModuleDB).where(or_(*filters)))
+    mod_map: Dict[str, Any] = {}
+    for m in mod_res.scalars().all():
+        if m.id not in mod_map or m.customer_id is not None:
+            mod_map[m.id] = m
+    sorted_mods = sorted(mod_map.values(), key=lambda x: (x.display_order or 0, x.module, x.label))
+
+    perm_res = await db.execute(select(PermissionDB))
+    perms_by_module_id: Dict[str, List[Any]] = {}
+    for p in perm_res.scalars().all():
+        if p.module_id:
+            perms_by_module_id.setdefault(p.module_id, []).append(p)
+
+    user_ctx = User(
+        id="rbac-resolver",
+        role=role_str or "user",
+        role_type=role_type_val,
+        email="rbac@local",
+        permissions=permissions_list,
+        permission_methods=permission_methods_map,
+    )
+
+    authorized_modules: List[Dict[str, Any]] = []
+    for m in sorted_mods:
+        allowed_actions: List[str] = []
+        allowed_methods_union: List[str] = []
+
+        for p in perms_by_module_id.get(m.id, []):
+            act_name = p.action or p.id.split(":")[-1]
+            defined_methods = [meth.upper() for meth in (p.http_methods or [])] or ["GET"]
+            matched_methods = defined_methods if is_sysadmin else [
+                meth for meth in defined_methods if user_ctx.has_permission(p.id, meth)
+            ]
+            if not matched_methods:
+                continue
+
+            allowed_actions.append(act_name)
+            for meth in matched_methods:
+                if meth not in allowed_methods_union:
+                    allowed_methods_union.append(meth)
+
+        if not allowed_actions:
+            continue
+
+        entry: Dict[str, Any] = {
+            "id": m.id,
+            "module": m.module,
+            "submodule": m.submodule,
+            "label": m.label,
+            "description": m.description,
+            "icon": m.icon,
+            "display_order": m.display_order,
+            "allowed_actions": allowed_actions,
+            "allowed_methods": allowed_methods_union,
+        }
+        if include_internal_routes:
+            entry["_route_patterns"] = m.route_patterns if isinstance(m.route_patterns, list) else []
+        authorized_modules.append(entry)
+
+    return authorized_modules
+
+
+async def resolve_user_rbac_and_modules(
+    db: AsyncSession,
+    db_user: Any,
+) -> Dict[str, Any]:
+    """
+    Shared RBAC & module resolver for both /auth/login and get_current_user (/auth/me).
+    Resolves RoleDB, RolePermissionDB (permissions + allowed_methods), authorized modules, and default_route.
+    """
+    from app.models.db_models import RoleDB, RolePermissionDB
+
+    role_obj = None
+    if db_user.role_id:
+        role_res = await db.execute(select(RoleDB).where(RoleDB.id == db_user.role_id))
+        role_obj = role_res.scalar_one_or_none()
+
+    if not role_obj:
+        role_obj = await resolve_role_for_user(
+            db,
+            role_id=db_user.role_id,
+            role_str=db_user.role,
+            customer_id=db_user.customer_id,
+        )
+        if role_obj and not db_user.role_id:
+            db_user.role_id = role_obj.id
+            await db.commit()
+
+    permissions_list: List[str] = []
+    permission_methods_map: Dict[str, List[str]] = {}
+    role_id_val = None
+    role_name_val = None
+    role_type_val = db_user.role
+
+    if role_obj:
+        role_id_val = str(role_obj.id)
+        role_name_val = role_obj.role_name
+        role_type_val = role_obj.role_type
+
+        perm_res = await db.execute(select(RolePermissionDB).where(RolePermissionDB.role_id == role_obj.id))
+        rps = perm_res.scalars().all()
+        permissions_list = [p.permission_id for p in rps]
+        permission_methods_map = {p.permission_id: p.allowed_methods for p in rps if p.allowed_methods}
+        if role_type_val == "system_admin" and not permissions_list:
+            permissions_list = ["*:*:*"]
+    elif (db_user.role or "").lower() == "system_admin":
+        permissions_list = ["*:*:*"]
+
+    modules_with_routes = await resolve_authorized_modules(
+        db=db,
+        permissions_list=permissions_list,
+        permission_methods_map=permission_methods_map,
+        role_str=db_user.role,
+        role_type_val=role_type_val,
+        customer_id=db_user.customer_id,
+        include_internal_routes=True,
+    )
+
+    # Compute destination default_route internally before stripping route_patterns from modules
+    has_wf_builder = any(m["id"] == "workflow_builder" for m in modules_with_routes)
+    has_wf_design = any(
+        p in permissions_list
+        for p in (
+            "workflows:builder:edit",
+            "workflows:builder:create",
+            "workflows:builder:manage",
+            "workflows:*:*", "*:*:*",
+        )
+    )
+    has_admin_module = any(
+        m.get("module") == "admin" or m.get("id") == "admin_nodes"
+        for m in modules_with_routes
+    )
+    is_admin_role = (
+        db_user.role in ("system_admin", "tenant_admin")
+        or role_type_val in ("system_admin", "tenant_admin")
+    )
+    is_wf_designer = (
+        db_user.role == "workflow_designer"
+        or role_type_val == "workflow_designer"
+        or (has_wf_builder and has_wf_design and not is_admin_role and db_user.role != "tenant_user")
+    )
+
+    if is_wf_designer:
+        default_route = "/workflow-builder"
+    elif db_user.role == "system_admin" or role_type_val == "system_admin":
+        default_route = "/admin"
+    elif (is_admin_role or has_admin_module) and has_admin_module:
+        default_route = "/admin"
+    else:
+        first_ui_route = next(
+            (pat for m in modules_with_routes for pat in (m.get("_route_patterns") or []) if pat and "*" not in pat),
+            None,
+        )
+        default_route = first_ui_route or ("/admin" if db_user.customer_id is None and is_admin_role else "/")
+
+    # Strip internal _route_patterns before returning modules in /auth/me & /auth/login
+    modules = [
+        {k: v for k, v in m.items() if k != "_route_patterns"}
+        for m in modules_with_routes
+    ]
+
+    return {
+        "role_id": role_id_val,
+        "role_name": role_name_val,
+        "role_type": role_type_val,
+        "permissions": permissions_list,
+        "permission_methods": permission_methods_map,
+        "modules": modules,
+        "default_route": default_route,
+    }
+
+
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
@@ -240,12 +413,11 @@ async def get_current_user(
             if role_type_val == "system_admin":
                 permissions_list = ["*:*:*"]
 
-        # If no permissions resolved from role, fall back to api_key_obj.scopes (backward compatibility) or default
         if not permissions_list:
             if api_key_obj.scopes and isinstance(api_key_obj.scopes, list) and len(api_key_obj.scopes) > 0:
                 permissions_list = api_key_obj.scopes
             else:
-                permissions_list = ["workflow:execute"]
+                permissions_list = []
 
         return User(
             id=str(api_key_obj.user_id),
@@ -325,135 +497,7 @@ async def get_current_user(
                 detail="Cross-tenant access denied: API Key and User token belong to different tenants",
             )
         
-    # Resolve Granular Role & Permissions
-    role_obj = None
-    if db_user.role_id:
-        role_stmt = select(RoleDB).where(RoleDB.id == db_user.role_id)
-        role_res = await db.execute(role_stmt)
-        role_obj = role_res.scalar_one_or_none()
-
-    if not role_obj:
-        role_obj = await resolve_role_for_user(
-            db,
-            role_id=db_user.role_id,
-            role_str=db_user.role,
-            customer_id=db_user.customer_id
-        )
-        if role_obj and not db_user.role_id:
-            db_user.role_id = role_obj.id
-            await db.commit()
-
-    permissions_list = []
-    permission_methods_map = {}
-    role_id_val = None
-    role_name_val = None
-    role_type_val = None
-
-    if role_obj:
-        role_id_val = str(role_obj.id)
-        role_name_val = role_obj.role_name
-        role_type_val = role_obj.role_type
-        
-        # Fetch permissions assigned to role
-        perm_stmt = select(RolePermissionDB).where(RolePermissionDB.role_id == role_obj.id)
-        perm_res = await db.execute(perm_stmt)
-        rps = perm_res.scalars().all()
-        permissions_list = [p.permission_id for p in rps]
-        permission_methods_map = {p.permission_id: p.allowed_methods for p in rps if p.allowed_methods}
-
-    if not permissions_list:
-        if db_user.role == "system_admin" or role_type_val == "system_admin":
-            permissions_list = ["*:*:*"]
-        elif db_user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
-            permissions_list = [
-                "admin:dashboard:view",
-                "admin:user_management:read",
-                "admin:user_management:manage",
-                "admin:role_management:view",
-                "admin:role_management:manage",
-                "admin:tenant_settings:configure",
-                "admin:nodes:view",
-                "admin:nodes:clone",
-                "admin:nodes:manage",
-                "nodes:catalog:view",
-                "nodes:catalog:clone",
-                "nodes:catalog:manage",
-                "legal:*:*",
-                "kb:*:*",
-                "workflow:*:*",
-                "node:*:*",
-            ]
-        elif db_user.role == "para_legal" or role_type_val == "para_legal":
-            permissions_list = [
-                "legal:research:query",
-                "legal:case_management:view",
-                "legal:case_management:upload",
-                "legal:case_management:bookmark",
-                "kb:base:view",
-            ]
-        elif db_user.role == "legal_analyst" or role_type_val == "legal_analyst":
-            permissions_list = [
-                "legal:research:query",
-                "legal:case_management:view",
-                "legal:case_management:upload",
-                "legal:case_management:edit",
-                "legal:case_management:bookmark",
-                "kb:base:view",
-                "kb:document:ingest",
-                "workflow:builder:execute",
-                "node:catalog:view",
-            ]
-        elif db_user.role == "workflow_designer" or role_type_val == "workflow_designer":
-            permissions_list = [
-                "workflows:builder:view",
-                "workflows:builder:create",
-                "workflows:builder:edit",
-                "workflows:builder:delete",
-                "workflows:builder:execute",
-                "workflows:builder:manage",
-                "workflow:builder:view",
-                "workflow:builder:create",
-                "workflow:builder:edit",
-                "workflow:builder:delete",
-                "workflow:builder:execute",
-                "workflow:builder:manage",
-                "nodes:catalog:view",
-                "nodes:catalog:execute",
-                "nodes:catalog:manage",
-                "admin:knowledge:view",
-                "admin:profiles:view",
-            ]
-        else:
-            permissions_list = [
-                "legal:research:query",
-                "kb:base:view",
-                "node:catalog:view",
-            ]
-
-    # ==============================================================================
-    # BLOCK COMMENT: RESOLVE DESTINATION DEFAULT ROUTE (STORY 2)
-    # Users with workflow designer role/permissions route directly to /workflow-builder.
-    # ==============================================================================
-    has_wf_view = any(p in permissions_list for p in ("workflow:builder:view", "workflows:builder:view", "workflow:*:*", "*:*:*"))
-    has_wf_design = any(p in permissions_list for p in ("workflow:builder:edit", "workflows:builder:edit", "workflow:builder:create", "workflows:builder:create", "workflow:builder:manage", "workflows:builder:manage", "workflow:*:*", "*:*:*"))
-    is_wf_designer = (db_user.role == "workflow_designer" or role_type_val == "workflow_designer" or (has_wf_view and has_wf_design and db_user.role not in ["para_legal", "legal_analyst", "tenant_user"]))
-
-    if is_wf_designer:
-        default_route = "/workflow-builder"
-    elif db_user.role == "system_admin" or role_type_val == "system_admin":
-        default_route = "/admin"
-    elif domain_schema and domain_schema.schema_json and isinstance(domain_schema.schema_json, dict) and domain_schema.schema_json.get("default_path"):
-        default_route = domain_schema.schema_json.get("default_path")
-    elif domain_schema:
-        default_route = f"/{domain_schema.domain_key}"
-    elif primary_domain_ref:
-        default_route = f"/{primary_domain_ref}"
-    elif db_user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
-        default_route = "/admin"
-    elif db_user.customer_id is None:
-        default_route = "/admin"
-    else:
-        default_route = "/"
+    rbac_ctx = await resolve_user_rbac_and_modules(db=db, db_user=db_user)
 
     return User(
         id=str(db_user.id),
@@ -464,14 +508,15 @@ async def get_current_user(
         domain_id=domain_id_val,
         domain_key=domain_key_val,
         allowed_domains=allowed_domains_list,
-        default_route=default_route,
+        default_route=rbac_ctx["default_route"],
         name=db_user.name,
         status=db_user.status,
-        role_id=role_id_val,
-        role_name=role_name_val,
-        role_type=role_type_val,
-        permissions=permissions_list,
-        permission_methods=permission_methods_map,
+        role_id=rbac_ctx["role_id"],
+        role_name=rbac_ctx["role_name"],
+        role_type=rbac_ctx["role_type"],
+        permissions=rbac_ctx["permissions"],
+        permission_methods=rbac_ctx["permission_methods"],
+        modules=rbac_ctx["modules"],
         api_key_id=str(api_key_obj.id) if api_key_obj else None,
         allowed_workflow_ids=api_key_obj.allowed_workflow_ids if (api_key_obj and isinstance(api_key_obj.allowed_workflow_ids, list)) else None,
     )
@@ -498,47 +543,14 @@ async def get_current_admin(
 
 
 def has_permission_scope(user_permissions: List[str], required_permission: str) -> bool:
-    """
-    ===========================================================================
-    BLOCK COMMENT: 1-TO-1 & LEGACY ALIAS-AWARE PERMISSION SCOPE CHECKER
-    Reference: EPIC-RBAC-1TO1-001 / STORY-CANONICAL-ROUTE-PERMS-001
-    Description:
-        Checks whether a user's permissions list satisfies a required permission.
-        Supports:
-        - Full wildcard *:*:*
-        - Exact permission match (e.g. admin:roles:view, admin:knowledge:create)
-        - Bidirectional 1-to-1 and legacy aliases (e.g. admin:workflows:view <->
-          workflows:builder:view <-> workflows:view; admin:roles:view <->
-          admin:role_management:view; admin:users:view <-> admin:user_management:read)
-        - Action wildcards / manage (e.g. admin:roles:manage or admin:roles:*)
-        - Submodule wildcards (e.g. admin:*:*)
-    ===========================================================================
-    """
+    """Checks canonical 3-tier permission scope (exact, wildcards, and same-submodule :manage/:admin)."""
     if not user_permissions or not isinstance(user_permissions, list):
         return False
-
     if "*:*:*" in user_permissions:
         return True
 
-    from app.core.types.users import expand_permission_aliases
-    import fnmatch
-
-    acceptable = expand_permission_aliases(required_permission)
-    req_lower = required_permission.strip().lower()
-
-    for up in user_permissions:
-        if not up:
-            continue
-        up_clean = up.strip().lower()
-        if up_clean in acceptable:
-            return True
-        if fnmatch.fnmatch(req_lower, up_clean):
-            return True
-        for cand in acceptable:
-            if fnmatch.fnmatch(cand, up_clean):
-                return True
-
-    return False
+    from app.core.types.users import canonical_permission_matches
+    return any(up and canonical_permission_matches(up, required_permission) for up in user_permissions)
 
 
 import re
@@ -631,8 +643,11 @@ def _candidate_paths_for_matching(path: str) -> List[str]:
     return seen
 
 
-def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optional[str] = None) -> Optional[str]:
-    """Finds required permission ID matching (method, path) against cached route rules. Supports (method, path) or (path, method)."""
+def get_matching_route_permissions(arg1: str, arg2: str, customer_id: Optional[str] = None) -> List[str]:
+    """
+    Returns all distinct permission IDs matching (method, path) against cached RoutePermissionDB rules,
+    ordered by specificity (exact HTTP method & exact path first).
+    """
     if arg1.startswith("/"):
         path, http_method = arg1, arg2
     else:
@@ -640,6 +655,7 @@ def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optio
 
     norm_method = (http_method or "GET").upper()
     path_variants = _candidate_paths_for_matching(path)
+    matched_perms: List[str] = []
 
     # First pass: exact path match on primary path
     for rule in _CACHED_ROUTE_RULES:
@@ -648,9 +664,14 @@ def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optio
         rule_meth = rule.get("http_method", "*")
         if rule_meth == "*" or rule_meth == norm_method:
             if rule["regex"].match(path_variants[0]):
-                return rule["permission_id"]
+                pid = rule["permission_id"]
+                if pid not in matched_perms:
+                    matched_perms.append(pid)
 
-    # Second pass: normalized /api <-> /admin <-> / path equivalents (only for explicit HTTP verb API rules)
+    if matched_perms:
+        return matched_perms
+
+    # Second pass: normalized /api <-> /admin <-> / path equivalents (explicit HTTP verb API rules)
     for variant in path_variants[1:]:
         for rule in _CACHED_ROUTE_RULES:
             if rule.get("customer_id") and customer_id and str(rule["customer_id"]) != str(customer_id):
@@ -658,9 +679,17 @@ def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optio
             rule_meth = rule.get("http_method", "*")
             if rule_meth != "*" and rule_meth == norm_method:
                 if rule["regex"].match(variant):
-                    return rule["permission_id"]
+                    pid = rule["permission_id"]
+                    if pid not in matched_perms:
+                        matched_perms.append(pid)
 
-    return None
+    return matched_perms
+
+
+def get_required_permission_for_request(arg1: str, arg2: str, customer_id: Optional[str] = None) -> Optional[str]:
+    """Finds primary required permission ID matching (method, path) against cached route rules."""
+    matches = get_matching_route_permissions(arg1, arg2, customer_id)
+    return matches[0] if matches else None
 
 
 async def dynamic_api_guard(
@@ -670,8 +699,8 @@ async def dynamic_api_guard(
 ) -> User:
     """
     Dynamic API route guard dependency.
-    Evaluates incoming request (method, path) against RoutePermissionDB live cache
-    and checks user granular permissions including method-level filtering.
+    Evaluates incoming request (method, path) against ALL matching RoutePermissionDB rules
+    and checks user x:y:z permissions including HTTP method-level filtering.
     """
     global _CACHED_ROUTE_RULES
     if not _CACHED_ROUTE_RULES:
@@ -688,19 +717,19 @@ async def dynamic_api_guard(
     ):
         return current_user
 
-    required_perm = get_required_permission_for_request(method, path, current_user.customer_id)
-    if required_perm:
-        if not current_user.has_permission(required_perm, method):
+    matched_perms = get_matching_route_permissions(method, path, current_user.customer_id)
+    if matched_perms:
+        if not any(current_user.has_permission(perm, method) for perm in matched_perms):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access Denied: Missing required capability '{required_perm}' for {method} {path}"
+                detail=f"Access Denied: Missing required capability '{matched_perms[0]}' for {method} {path}"
             )
 
     return current_user
 
 
 def require_permission(required_permission: str):
-    """FastAPI dependency to enforce required permission key (HTTP 403 on denial)."""
+    """FastAPI dependency to enforce required x:y:z permission key and HTTP method (HTTP 403 on denial)."""
     async def dependency(
         request: Request = None,
         current_user: User = Depends(get_current_user)
@@ -709,7 +738,6 @@ def require_permission(required_permission: str):
             current_user.role == "system_admin"
             or current_user.role_type == "system_admin"
             or current_user.has_permission(required_permission, request.method if request else None)
-            or has_permission_scope(current_user.permissions, required_permission)
         ):
             return current_user
         raise HTTPException(
@@ -830,7 +858,7 @@ async def _require_resource_access(
 
     # Check permissions
     # 1. System Admin check
-    if current_user.role == "system_admin":
+    if current_user.role == "system_admin" or current_user.role_type == "system_admin" or "*:*:*" in (current_user.permissions or []):
         return resource
 
     # 2. Tenant check (admin or tenant member)
@@ -846,7 +874,7 @@ async def _require_resource_access(
             return resource
         elif resource_type == "user":
             # For user resources, only tenant admin has access to other users' profiles
-            if current_user.role == "admin":
+            if current_user.role in ("admin", "tenant_admin") or current_user.role_type in ("admin", "tenant_admin"):
                 return resource
 
     # 3. User Owner check
@@ -904,38 +932,40 @@ async def _require_resource_access(
 #         detail="Access denied: You must be the owner, a tenant admin, or a system admin to perform this action.",
 #     )
 
-@staticmethod
-def require_system_admin(request: Request):
-    if request.state.user["role"] != "system_admin":
+async def require_system_admin(current_user: User = Depends(get_current_user)) -> User:
+    if (
+        (current_user.role or "").lower() != "system_admin"
+        and (current_user.role_type or "").lower() != "system_admin"
+        and "*:*:*" not in (current_user.permissions or [])
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
+            detail="System Admin privileges required",
         )
+    return current_user
 
-@staticmethod
-def require_admin(request: Request):
-    user_state = getattr(request.state, "user", None) or {}
-    user_role = (user_state.get("role") or "").lower()
-    role_type = (user_state.get("role_type") or "").lower()
-    permissions = user_state.get("permissions") or []
+
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    user_role = (current_user.role or "").lower()
+    role_type = (current_user.role_type or "").lower()
+    permissions = current_user.permissions or []
     if (
-        user_role in ["admin", "tenant_admin"]
-        or role_type in ["admin", "tenant_admin"]
+        user_role in ["admin", "tenant_admin", "system_admin"]
+        or role_type in ["admin", "tenant_admin", "system_admin"]
         or "*:*:*" in permissions
         or "admin:*:*" in permissions
     ):
-        return user_state
+        return current_user
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Admin privileges required",
     )
 
-@staticmethod
-def require_admin_or_system_admin(request: Request):
-    user_state = getattr(request.state, "user", None) or {}
-    user_role = (user_state.get("role") or "").lower()
-    role_type = (user_state.get("role_type") or "").lower()
-    permissions = user_state.get("permissions") or []
+
+async def require_admin_or_system_admin(current_user: User = Depends(get_current_user)) -> User:
+    user_role = (current_user.role or "").lower()
+    role_type = (current_user.role_type or "").lower()
+    permissions = current_user.permissions or []
 
     if (
         user_role in ["admin", "system_admin", "tenant_admin"]
@@ -943,11 +973,9 @@ def require_admin_or_system_admin(request: Request):
         or "*:*:*" in permissions
         or "admin:*:*" in permissions
         or "tenant:admin:*" in permissions
-        or has_permission_scope(permissions, "admin:users:view")
-        or has_permission_scope(permissions, "admin:roles:view")
-        or has_permission_scope(permissions, "admin:permissions:view")
+        or any(p.startswith("admin:") for p in permissions)
     ):
-        return user_state
+        return current_user
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -976,7 +1004,7 @@ async def verify_node_tenant_access(
     FastAPI dependency to verify node tenant authorization.
     Super admin bypasses check. For tenant admin and users, verifies CustomerNodeDB assignment and enablement.
     """
-    if current_user.role == "system_admin":
+    if current_user.role == "system_admin" or current_user.role_type == "system_admin":
         return current_user
 
     if current_user.customer_id is None:

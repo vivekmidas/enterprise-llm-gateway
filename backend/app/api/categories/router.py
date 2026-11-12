@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
-from app.api.auth.dependencies import require_system_admin, require_admin
+from app.api.auth.dependencies import require_system_admin, require_admin, dynamic_api_guard
 from app.core.database import get_db
 from app.models.db_models import CategoryDB
 from app.api.categories.schemas import CategoryCreate, CategoryUpdate, CategoryResponse, CategoryListResponse
 
 logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/categories", tags=["categories"])
+router = APIRouter(prefix="/categories", tags=["categories"], dependencies=[Depends(dynamic_api_guard)])
 
 @router.get("", response_model=CategoryListResponse)
 async def get_workflow_categories(db: AsyncSession = Depends(get_db)):

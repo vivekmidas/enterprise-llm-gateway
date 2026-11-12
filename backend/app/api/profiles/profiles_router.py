@@ -140,11 +140,12 @@ async def create_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new LLM profile for the tenant."""
-    role = current_user.get("role")
-    if role == "system_admin" and payload.customer_id is not None:
+    role = (current_user.role or "").lower()
+    role_type = (current_user.role_type or "").lower()
+    if (role == "system_admin" or role_type == "system_admin") and payload.customer_id is not None:
         customer_id = str(payload.customer_id)
     else:
-        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        customer_id = str(current_user.customer_id or "")
 
     if not customer_id:
         raise HTTPException(status_code=400, detail="Customer ID is required to create a profile.")
@@ -170,7 +171,7 @@ async def create_profile(
         description=payload.description.strip() if payload.description else None,
         is_default=payload.is_default,
         customer_id=customer_id,
-        created_by=str(current_user.get("id")),
+        created_by=str(current_user.id),
         settings=settings_val,
     )
     db.add(profile)
@@ -263,11 +264,10 @@ async def update_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the settings of an existing LLM profile."""
-    role = current_user.get("role")
-    if role == "system_admin":
+    if current_user.role_type == "system_admin" or current_user.role == "system_admin":
         stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
-        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        customer_id = str(current_user.customer_id or "")
         if not customer_id:
             raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
@@ -335,11 +335,10 @@ async def delete_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an LLM profile."""
-    role = current_user.get("role")
-    if role == "system_admin":
+    if current_user.role_type == "system_admin" or current_user.role == "system_admin":
         stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
-        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        customer_id = str(current_user.customer_id or "")
         if not customer_id:
             raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(
@@ -363,11 +362,10 @@ async def set_default_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Set a profile as the tenant default."""
-    role = current_user.get("role")
-    if role == "system_admin":
+    if current_user.role_type == "system_admin" or current_user.role == "system_admin":
         stmt = select(LLMProfileDB).where(LLMProfileDB.id == str(profile_id))
     else:
-        customer_id = str(current_user.get("tenant") or current_user.get("customer_id") or "")
+        customer_id = str(current_user.customer_id or "")
         if not customer_id:
             raise HTTPException(status_code=400, detail="Customer ID is required.")
         stmt = select(LLMProfileDB).where(

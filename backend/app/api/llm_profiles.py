@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
 from app.core.database import get_db
-from app.api.auth.dependencies import get_current_user, require_tenant, require_admin_or_system_admin
+from app.api.auth.dependencies import get_current_user, require_tenant, require_admin_or_system_admin, dynamic_api_guard
 from app.core.types.users import User
 from app.models.db_models import LLMProfileDB, CustomerDB
 from app.schemas.llm_profile_schemas import (
@@ -14,7 +14,7 @@ from app.schemas.llm_profile_schemas import (
     LLMProfileResponse,
 )
 
-router = APIRouter(prefix="/api/llm-profiles", tags=["LLM Profiles"])
+router = APIRouter(prefix="/api/llm-profiles", tags=["LLM Profiles"], dependencies=[Depends(dynamic_api_guard)])
 
 
 # ==============================================================================
@@ -235,7 +235,7 @@ async def create_llm_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new LLM profile for the tenant."""
-    customer_id = current_user.get("tenant")
+    customer_id = current_user.customer_id
 
     if payload.is_default:
         await db.execute(
@@ -252,7 +252,7 @@ async def create_llm_profile(
         description=payload.description,
         is_default=payload.is_default,
         customer_id=customer_id,
-        created_by=str(current_user.get("id")),
+        created_by=str(current_user.id),
         settings=settings_val,
     )
     db.add(profile)
@@ -307,7 +307,7 @@ async def update_llm_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing LLM profile."""
-    customer_id = current_user.get("tenant")
+    customer_id = current_user.customer_id
     result = await db.execute(
         select(LLMProfileDB).where(
             LLMProfileDB.id == profile_id,

@@ -22,10 +22,10 @@ from app.models.db_models import (
 )
 from app.knowledge.vector_store import vector_store
 from app.core.security.hash import get_password_hash
-from app.api.auth.dependencies import  require_system_admin, get_current_user, require_admin_or_system_admin
+from app.api.auth.dependencies import require_system_admin, get_current_user, require_admin_or_system_admin, dynamic_api_guard
 from app.core.types.users import User
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(dynamic_api_guard)])
 logger = structlog.get_logger(__name__)
 
 @router.get("/triggers", response_model=List[Dict[str, Any]])
@@ -622,7 +622,7 @@ async def list_audit_logs(
     - admin: shows only logs matching their customer_id.
     """
     stmt = select(AuditLogDB).order_by(AuditLogDB.created_at.desc())
-    if current_user.role == "admin":
+    if current_user.role != "system_admin" and current_user.role_type != "system_admin":
         stmt = stmt.where(AuditLogDB.customer_id == current_user.customer_id)
         
     result = await db.execute(stmt)

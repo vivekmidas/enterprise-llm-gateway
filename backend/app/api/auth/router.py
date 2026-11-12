@@ -104,139 +104,24 @@ async def login(request: LoginRequest, response: Response):
         domain_id_val = domain_schema.id if domain_schema else (str(primary_domain_ref) if primary_domain_ref else None)
         domain_key_val = domain_schema.domain_key if domain_schema else (str(primary_domain_ref) if primary_domain_ref else None)
 
-        # Resolve granular role & permissions
-        role_obj = None
-        if user.role_id:
-            role_stmt = select(RoleDB).where(RoleDB.id == user.role_id)
-            role_res = await session.execute(role_stmt)
-            role_obj = role_res.scalar_one_or_none()
+        from app.api.auth.dependencies import resolve_user_rbac_and_modules
 
-        if not role_obj:
-            role_obj = await resolve_role_for_user(
-                session,
-                role_id=user.role_id,
-                role_str=user.role,
-                customer_id=user.customer_id,
-            )
-            if role_obj and not user.role_id:
-                user.role_id = role_obj.id
-                await session.commit()
+        rbac_ctx = await resolve_user_rbac_and_modules(db=session, db_user=user)
 
-        permissions_list = []
-        role_id_val = None
-        role_name_val = None
-        role_type_val = user.role
-
-        if role_obj:
-            role_id_val = str(role_obj.id)
-            role_name_val = role_obj.role_name
-            role_type_val = role_obj.role_type
-            perm_stmt = select(RolePermissionDB.permission_id).where(RolePermissionDB.role_id == role_obj.id)
-            perm_res = await session.execute(perm_stmt)
-            permissions_list = [p for p in perm_res.scalars().all()]
-
-        if not permissions_list:
-            if user.role == "system_admin" or role_type_val == "system_admin":
-                permissions_list = ["*:*:*"]
-            elif user.role in ["admin", "tenant_admin"] or role_type_val in ["admin", "tenant_admin"]:
-                permissions_list = [
-                    "admin:dashboard:view",
-                    "admin:profiles:view",
-                    "admin:profiles:manage",
-                    "admin:knowledge:view",
-                    "admin:knowledge:manage",
-                    "admin:playground:view",
-                    "admin:user_management:read",
-                    "admin:user_management:manage",
-                    "admin:role_management:view",
-                    "admin:role_management:manage",
-                    "admin:tenant_settings:configure",
-                    "admin:workflows:view",
-                    "admin:nodes:view",
-                    "legal:*:*",
-                    "kb:*:*",
-                    "workflow:*:*",
-                    "node:*:*",
-                ]
-            elif user.role == "para_legal" or role_type_val == "para_legal":
-                permissions_list = [
-                    "legal:research:query",
-                    "legal:case_management:view",
-                    "legal:case_management:upload",
-                    "legal:case_management:bookmark",
-                    "kb:base:view",
-                ]
-            elif user.role == "legal_analyst" or role_type_val == "legal_analyst":
-                permissions_list = [
-                    "legal:research:query",
-                    "legal:case_management:view",
-                    "legal:case_management:upload",
-                    "legal:case_management:edit",
-                    "legal:case_management:bookmark",
-                    "kb:base:view",
-                    "kb:document:ingest",
-                    "workflow:builder:execute",
-                    "node:catalog:view",
-                ]
-            elif user.role == "workflow_designer" or role_type_val == "workflow_designer":
-                permissions_list = [
-                    "workflows:builder:view",
-                    "workflows:builder:create",
-                    "workflows:builder:edit",
-                    "workflows:builder:delete",
-                    "workflows:builder:execute",
-                    "workflows:builder:manage",
-                    "workflow:builder:view",
-                    "workflow:builder:create",
-                    "workflow:builder:edit",
-                    "workflow:builder:delete",
-                    "workflow:builder:execute",
-                    "workflow:builder:manage",
-                    "nodes:catalog:view",
-                    "nodes:catalog:execute",
-                    "nodes:catalog:manage",
-                    "admin:knowledge:view",
-                    "admin:profiles:view",
-                ]
-            else:
-                permissions_list = [
-                    "legal:research:query",
-                    "kb:base:view",
-                    "node:catalog:view",
-                ]
-
-        # ==============================================================================
-        # BLOCK COMMENT: RESOLVE DESTINATION DEFAULT ROUTE (STORY 2)
-        # Users with workflow designer role/permissions route directly to /workflow-builder.
-        # ==============================================================================
-        has_wf_view = any(p in permissions_list for p in ("workflow:builder:view", "workflows:builder:view", "workflow:*:*", "*:*:*"))
-        has_wf_design = any(p in permissions_list for p in ("workflow:builder:edit", "workflows:builder:edit", "workflow:builder:create", "workflows:builder:create", "workflow:builder:manage", "workflows:builder:manage", "workflow:*:*", "*:*:*"))
-        is_wf_designer = (user.role == "workflow_designer" or role_type_val == "workflow_designer" or (has_wf_view and has_wf_design and user.role not in ["para_legal", "legal_analyst", "tenant_user"]))
-
-        if is_wf_designer:
-            default_route = "/workflow-builder"
-        elif (
-            user.role in ["system_admin", "admin"]
-            or role_type_val in ["system_admin", "admin"]
-            or "*:*:*" in permissions_list
-        ):
-            default_route = "/admin"
-        elif domain_schema and domain_schema.schema_json and isinstance(domain_schema.schema_json, dict) and domain_schema.schema_json.get("default_path"):
-            default_route = domain_schema.schema_json.get("default_path")
-        elif domain_schema:
-            default_route = f"/{domain_schema.domain_key}"
-        elif primary_domain_ref:
-            default_route = f"/{primary_domain_ref}"
-        elif user.customer_id is None:
-            default_route = "/admin"
-        else:
-            default_route = "/"
+        role_id_val = rbac_ctx["role_id"]
+        role_name_val = rbac_ctx["role_name"]
+        role_type_val = rbac_ctx["role_type"]
+        permissions_list = rbac_ctx["permissions"]
+        permission_methods_map = rbac_ctx["permission_methods"]
+        modules_list = rbac_ctx["modules"]
+        default_route = rbac_ctx["default_route"]
 
         token_data = {
             "user_id": str(user.id),
             "email": user.email_id,
             "role": user.role,
             "role_type": role_type_val,
+            "role_id": role_id_val,
             "status": True if user.status == "active" else False,
             "customer_id": user.customer_id,
             "company_domain": domain,        # Customer company domain e.g. wayme.com
@@ -279,6 +164,8 @@ async def login(request: LoginRequest, response: Response):
             "domain_key": domain_key_val,
             "allowed_domains": allowed_domains_list,
             "permissions": permissions_list,
+            "permission_methods": permission_methods_map,
+            "modules": modules_list,
             "default_route": default_route,
         }
 

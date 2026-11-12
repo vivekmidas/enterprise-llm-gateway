@@ -16,7 +16,7 @@ from app.utils.json_sample_generator import generate_sample_json
 from app.utils.request_utils import extract_request_info
 
 logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/nodes", tags=["nodes"])
+router = APIRouter(prefix="/nodes", tags=["nodes"], dependencies=[Depends(dynamic_api_guard)])
 
 
 def _defaults_from_payload(node_data: dict) -> dict:
@@ -180,23 +180,20 @@ from typing import Optional
 
 
 def _is_tenant_admin_user(user: User) -> bool:
-    """Checks if the user is a tenant admin (role='tenant_admin' or 'admin', or has nodes:catalog:manage / nodes:catalog:clone)."""
+    """Checks if the user is a tenant admin or holds admin:nodes:manage."""
     return (
-        user.role in ("admin", "tenant_admin")
-        or getattr(user, "role_type", None) in ("admin", "tenant_admin")
-        or user.has_permission("nodes:catalog:manage")
+        user.role == "tenant_admin"
+        or getattr(user, "role_type", None) == "tenant_admin"
         or user.has_permission("admin:nodes:manage")
     )
 
 
 def _can_clone_node(user: User) -> bool:
-    """Checks if the user has permission to clone a node (`system_admin`, `tenant_admin`, or `nodes:catalog:clone`)."""
+    """Checks if the user has permission to clone a node (`system_admin`, `tenant_admin`, or `admin:nodes:clone`)."""
     return (
-        user.role in ("system_admin", "admin", "tenant_admin")
-        or getattr(user, "role_type", None) in ("system_admin", "admin", "tenant_admin")
-        or user.has_permission("nodes:catalog:clone")
+        user.role in ("system_admin", "tenant_admin")
+        or getattr(user, "role_type", None) in ("system_admin", "tenant_admin")
         or user.has_permission("admin:nodes:clone")
-        or user.has_permission("nodes:catalog:manage")
         or user.has_permission("admin:nodes:manage")
     )
 
@@ -707,7 +704,7 @@ async def clone_customer_node(
     if not _can_clone_node(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Access Denied: Missing required permission 'nodes:catalog:clone' or Admin privileges to clone nodes",
+            detail="Access Denied: Missing required permission 'admin:nodes:clone' or Admin privileges to clone nodes",
         )
 
     base_node_name = (payload.get("base_node_name") or payload.get("base_node") or "").strip()

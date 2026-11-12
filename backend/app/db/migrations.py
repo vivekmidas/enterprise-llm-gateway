@@ -13,8 +13,7 @@ Description:
        default system_admin, tenant_admin, and tenant_user accounts.
     4. Standard LLM Provider Presets Seed Data: Ollama, vLLM, OpenAI, Cohere,
        Grok, Azure OpenAI, Anthropic Claude, and Google Gemini.
-    5. System Domain Schemas & EKP Domains Seed Data: legal_judgment, legal,
-       general, finance, and education.
+    5. System Domain Schemas & EKP Domains Seed Data: general baseline.
 
     Idempotency & Conflict Handling:
     - By default (`force=False`), all seed routines are strictly idempotent and
@@ -129,7 +128,7 @@ MODULES_REGISTRY = [
     {
         "id": "admin_customers",
         "module": "admin",
-        "submodule": "customer_management",
+        "submodule": "customers",
         "label": "Tenants",
         "description": "Enterprise customer tenant lifecycle management",
         "route_patterns": ["/admin/customers", "/admin/customers/**"],
@@ -163,7 +162,7 @@ MODULES_REGISTRY = [
         "submodule": "dashboard",
         "label": "Admin Dashboard",
         "description": "Admin Console overview and system health",
-        "route_patterns": ["/admin", "/system", "/system/**"],
+        "route_patterns": ["/admin"],
         "icon": "LayoutDashboard",
         "display_order": 1,
         "actions": [
@@ -173,14 +172,14 @@ MODULES_REGISTRY = [
     {
         "id": "admin_users",
         "module": "admin",
-        "submodule": "user_management",
+        "submodule": "users",
         "label": "Users",
         "description": "User accounts, invitations, and role assignments",
         "route_patterns": ["/admin/users", "/admin/users/**"],
         "icon": "Users",
         "display_order": 2,
         "actions": [
-            {"action": "read", "is_route_guard": True, "label": "View Users", "description": "View tenant users list", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["GET"]},
+            {"action": "view", "is_route_guard": True, "label": "View Users", "description": "View tenant users list", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["GET"]},
             {"action": "create", "label": "Create / Invite Users", "description": "Invite new users to tenant", "api_path": "/admin/users, /admin/users/**, /api/admin/users, /api/admin/users/**", "http_methods": ["POST"]},
             {"action": "edit", "label": "Edit Users", "description": "Edit user roles and profiles", "api_path": "/admin/users/*, /admin/users/**, /api/admin/users/*, /api/admin/users/**", "http_methods": ["PUT", "PATCH"]},
             {"action": "delete", "label": "Deactivate Users", "description": "Deactivate or remove users", "api_path": "/admin/users/*, /api/admin/users/*", "http_methods": ["DELETE"]},
@@ -190,7 +189,7 @@ MODULES_REGISTRY = [
     {
         "id": "admin_roles",
         "module": "admin",
-        "submodule": "role_management",
+        "submodule": "roles",
         "label": "Roles & Permissions",
         "description": "Custom role creation and granular capability matrices",
         "route_patterns": ["/admin/roles", "/admin/roles/**"],
@@ -210,7 +209,7 @@ MODULES_REGISTRY = [
         "submodule": "knowledge",
         "label": "Knowledge Bases",
         "description": "Enterprise knowledge base catalog and document ingestion",
-        "route_patterns": ["/admin/knowledge", "/admin/knowledge/**", "/knowledge", "/knowledge/**"],
+        "route_patterns": ["/admin/knowledge", "/admin/knowledge/**"],
         "icon": "BookOpen",
         "display_order": 4,
         "actions": [
@@ -241,26 +240,44 @@ MODULES_REGISTRY = [
     },
     {
         "id": "admin_workflows",
-        "module": "workflows",
-        "submodule": "builder",
-        "label": "Workflows & Automation",
-        "description": "Workflow graph builder, execution engine, and demo flows",
-        "route_patterns": ["/workflow-builder", "/workflow-builder/**", "/admin/workflows", "/admin/workflows/**", "/demo-flows", "/demo-flows/**"],
+        "module": "admin",
+        "submodule": "workflows",
+        "label": "Workflows",
+        "description": "Manage tenant workflows, imports, exports, and execution lifecycle",
+        "route_patterns": ["/admin/workflows", "/admin/workflows/**"],
         "icon": "Workflow",
         "display_order": 6,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Workflows", "description": "View workflow definitions", "api_path": "/workflows, /workflows/*, /workflows/*/invocation-spec, /workflows/*/nodes/*/properties, /workflows/traces/*, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET"]},
-            {"action": "create", "label": "Create Workflow", "description": "Create workflow canvases", "api_path": "/workflows, /api/workflows, /api/admin/workflows", "http_methods": ["POST"]},
-            {"action": "edit", "label": "Edit Workflow", "description": "Modify workflow nodes and links", "api_path": "/workflows/*/nodes/*/properties, /workflows/*/toggle, /workflows/refresh-token, /api/workflows/**, /api/admin/workflows/**", "http_methods": ["PUT", "PATCH"]},
+            {"action": "view", "is_route_guard": True, "label": "View Workflows", "description": "View workflow definitions", "api_path": "/workflows, /workflows/*, /workflows/*/invocation-spec, /workflows/*/nodes/*/properties, /workflows/traces/*, /admin/triggers, /api/admin/triggers, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create / Import Workflow", "description": "Create or import workflows", "api_path": "/workflows, /workflows/import, /api/workflows, /api/workflows/import, /api/admin/workflows", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit / Toggle Workflow", "description": "Modify workflow nodes, properties, or status", "api_path": "/workflows/*/nodes/*/properties, /workflows/*/toggle, /workflows/refresh-token, /api/workflows/**, /api/admin/workflows/**", "http_methods": ["PUT", "PATCH"]},
             {"action": "delete", "label": "Delete Workflow", "description": "Delete workflow definitions", "api_path": "/workflows/*, /api/workflows/*, /api/admin/workflows/*", "http_methods": ["DELETE"]},
-            {"action": "execute", "label": "Execute Workflow", "description": "Trigger workflow execution runs", "api_path": "/workflows/*/execute, /workflows/run/**, /run/workflows/**, /api/workflows/*/execute", "http_methods": ["POST"]},
-            {"action": "manage", "label": "Full Workflow Management", "description": "Full control over workflow graphs", "api_path": "/workflows, /workflows/**, /run/workflows/**, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+            {"action": "execute", "label": "Execute Workflow", "description": "Trigger workflow execution runs", "api_path": "/workflows/*/execute, /workflows/run/**, /run/workflows/**, /webhooks/run/**, /api/workflows/*/execute", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Full Workflow Management", "description": "Full control over workflows", "api_path": "/workflows, /workflows/**, /run/workflows/**, /admin/triggers/**, /api/admin/triggers/**, /api/workflows, /api/workflows/**, /api/admin/workflows, /api/admin/workflows/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        ],
+    },
+    {
+        "id": "workflow_builder",
+        "module": "workflows",
+        "submodule": "builder",
+        "label": "Workflow Builder",
+        "description": "Visual workflow graph canvas and node orchestration builder",
+        "route_patterns": ["/workflow-builder", "/workflow-builder/**"],
+        "icon": "Workflow",
+        "display_order": 22,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "Open Workflow Builder", "description": "Access visual workflow builder canvas", "api_path": "/workflows, /workflows/*, /workflows/*/invocation-spec, /workflows/*/nodes/*/properties, /workflows/traces/*, /api/workflows, /api/workflows/**", "http_methods": ["GET"]},
+            {"action": "create", "label": "Create Workflow Canvas", "description": "Create new workflows from builder", "api_path": "/workflows, /api/workflows", "http_methods": ["POST"]},
+            {"action": "edit", "label": "Edit Workflow Canvas", "description": "Modify workflow canvas nodes and links", "api_path": "/workflows/*/nodes/*/properties, /workflows/*/toggle, /api/workflows/**", "http_methods": ["PUT", "PATCH"]},
+            {"action": "delete", "label": "Delete Workflow Canvas", "description": "Delete workflows from builder", "api_path": "/workflows/*, /api/workflows/*", "http_methods": ["DELETE"]},
+            {"action": "execute", "label": "Test / Execute Canvas", "description": "Run and test workflows in builder", "api_path": "/workflows/*/execute, /workflows/run/**, /run/workflows/**, /webhooks/run/**, /api/workflows/*/execute", "http_methods": ["POST"]},
+            {"action": "manage", "label": "Full Builder Control", "description": "Full control over workflow builder", "api_path": "/workflows, /workflows/**, /api/workflows, /api/workflows/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
     {
         "id": "admin_nodes",
-        "module": "nodes",
-        "submodule": "catalog",
+        "module": "admin",
+        "submodule": "nodes",
         "label": "Agent Nodes",
         "description": "Agent tool nodes and execution components",
         "route_patterns": ["/admin/nodes", "/admin/nodes/**"],
@@ -307,12 +324,12 @@ MODULES_REGISTRY = [
         "submodule": "logs",
         "label": "Audit & System Logs",
         "description": "Audit logs, request tracing, and execution telemetry",
-        "route_patterns": ["/admin/logs", "/admin/logs/**", "/logs", "/logs/**"],
+        "route_patterns": ["/admin/logs", "/admin/logs/**"],
         "icon": "FileText",
         "display_order": 10,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Audit Logs", "description": "Access audit logs console", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs/**, /api/admin/logs/**", "http_methods": ["GET"]},
-            {"action": "manage", "label": "Manage Audit Logs", "description": "Configure log retention and export", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs/**, /api/admin/logs/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
+            {"action": "view", "is_route_guard": True, "label": "View Audit Logs", "description": "Access audit logs console", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs, /admin/audit-logs/**, /api/admin/audit-logs, /api/admin/logs/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage Audit Logs", "description": "Configure log retention and export", "api_path": "/observability/**, /api/observability/**, /admin/audit-logs, /admin/audit-logs/**, /api/admin/audit-logs, /api/admin/logs/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
     {
@@ -321,7 +338,7 @@ MODULES_REGISTRY = [
         "submodule": "oauth",
         "label": "OAuth Integrations",
         "description": "OAuth 2.0 connected apps and provider credentials",
-        "route_patterns": ["/admin/oauth", "/admin/oauth/**", "/oauth", "/oauth/**"],
+        "route_patterns": ["/admin/oauth", "/admin/oauth/**", "/oauth/google"],
         "icon": "Key",
         "display_order": 11,
         "actions": [
@@ -343,56 +360,39 @@ MODULES_REGISTRY = [
             {"action": "manage", "label": "Configure Metrics", "description": "Configure telemetry metrics collection", "api_path": "/observability/metrics/**, /api/observability/**, /api/admin/metrics/**", "http_methods": ["GET", "POST", "PUT", "DELETE"]},
         ],
     },
+    # =========================================================================
+    # BLOCK COMMENT: SEPARATE API KEYS MODULE (EPIC-AUTH-001)
+    # Reference: EPIC-AUTH-001 / STORY-1.5
+    # Description:
+    #   Dedicated RBAC module for /admin/api-keys so "API Keys" renders as its
+    #   own Admin tab/route separate from "Company Settings" (admin_settings).
+    # =========================================================================
+    {
+        "id": "admin_api_keys",
+        "module": "admin",
+        "submodule": "api_keys",
+        "label": "API Keys",
+        "description": "Manage tenant-scoped M2M API keys for 3rd-party gateway calls",
+        "route_patterns": ["/admin/api-keys", "/admin/api-keys/**"],
+        "icon": "Key",
+        "display_order": 6,
+        "actions": [
+            {"action": "view", "is_route_guard": True, "label": "View API Keys", "description": "View tenant API keys and masked prefixes", "api_path": "/admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys, /api/v1/admin/api-keys/**", "http_methods": ["GET"]},
+            {"action": "manage", "label": "Manage API Keys", "description": "Create, update, toggle, and revoke tenant API keys", "api_path": "/admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys, /api/v1/admin/api-keys/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        ],
+    },
     {
         "id": "admin_settings",
         "module": "admin",
-        "submodule": "tenant_settings",
+        "submodule": "company_settings",
         "label": "Company Settings",
-        "description": "Tenant profile, branding, API keys, and custom configurations",
-        "route_patterns": ["/admin/company-settings", "/admin/company-settings/**", "/admin/api-keys", "/admin/api-keys/**"],
+        "description": "Tenant profile, LLM & RAG defaults, and custom configurations",
+        "route_patterns": ["/admin/company-settings", "/admin/company-settings/**"],
         "icon": "Settings",
         "display_order": 13,
         "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Company Settings", "description": "View tenant configuration settings", "api_path": "/api/admin/company/**, /admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys/**", "http_methods": ["GET"]},
-            {"action": "configure", "label": "Configure Company Settings", "description": "Update tenant settings, branding, and API keys", "api_path": "/api/admin/company/**, /admin/api-keys, /admin/api-keys/**, /api/v1/admin/api-keys/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-        ],
-    },
-    # -------------------------------------------------------------------------
-    # 3. LEGAL AI PLATFORM DOMAIN
-    # -------------------------------------------------------------------------
-    {
-        "id": "legal_platform",
-        "module": "legal",
-        "submodule": "research",
-        "label": "Legal AI Platform",
-        "description": "Legal case research, judgment analysis, and precedent search",
-        "route_patterns": ["/legal", "/legal/**", "/legal-research", "/legal-research/**"],
-        "icon": "Scale",
-        "display_order": 20,
-        "actions": [
-            {"action": "query", "is_route_guard": True, "label": "Execute Legal Research", "description": "Run search queries on legal knowledge bases", "api_path": "/api/v1/legal/search, /api/v1/legal/query, /api/knowledge/query/**", "http_methods": ["GET", "POST"]},
-            {"action": "view", "label": "View Legal Cases", "description": "View court judgments, acts, and case summaries", "api_path": "/api/v1/legal, /api/v1/legal/**", "http_methods": ["GET"]},
-            {"action": "upload", "label": "Upload Case Files", "description": "Upload legal briefs and documents", "api_path": "/api/v1/legal/upload, /api/v1/legal/summarize, /api/v1/legal/intake", "http_methods": ["POST"]},
-            {"action": "edit", "label": "Edit Legal Cases", "description": "Edit case metadata and details", "api_path": "/api/v1/legal/cases, /api/v1/legal/cases/**", "http_methods": ["POST", "PUT", "PATCH"]},
-            {"action": "delete", "label": "Delete Legal Cases", "description": "Delete legal cases", "api_path": "/api/v1/legal/cases/*", "http_methods": ["DELETE"]},
-            {"action": "bookmark", "label": "Bookmark Legal Cases", "description": "Save case bookmarks", "api_path": "/api/v1/legal/bookmarks/**", "http_methods": ["GET", "POST", "DELETE"]},
-            {"action": "admin", "label": "Full Legal Admin", "description": "Full administrative control of legal platform", "api_path": "/api/v1/legal/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-        ],
-    },
-    {
-        "id": "legal_autopilot",
-        "module": "legal",
-        "submodule": "autopilot",
-        "label": "Litigation Autopilot",
-        "description": "Interactive case intelligence, gap analysis, evidence vault, and court pleading drafting",
-        "route_patterns": ["/autopilot", "/autopilot/**"],
-        "icon": "Sword",
-        "display_order": 21,
-        "actions": [
-            {"action": "view", "is_route_guard": True, "label": "View Litigation Autopilot", "description": "Access litigation autopilot workspace and case intelligence", "api_path": "/api/v1/legal/autopilot, /api/v1/legal/autopilot/**, /api/v1/legal/cases/**", "http_methods": ["GET"]},
-            {"action": "edit", "label": "Log Updates & Case Details", "description": "Add updates, edit parties, and modify case timelines", "api_path": "/api/v1/legal/autopilot/**, /api/v1/legal/cases/**", "http_methods": ["POST", "PUT", "PATCH"]},
-            {"action": "evidence", "label": "Ingest Evidence", "description": "Upload evidence, documents, and notes to workspace", "api_path": "/api/v1/legal/autopilot/*/evidence/**", "http_methods": ["POST"]},
-            {"action": "draft", "label": "Generate Pleadings", "description": "Generate first-draft notices and court pleadings", "api_path": "/api/v1/legal/autopilot/*/draft/**, /api/v1/legal/draft/**", "http_methods": ["POST"]},
+            {"action": "view", "is_route_guard": True, "label": "View Company Settings", "description": "View tenant configuration settings", "api_path": "/api/admin/company/**", "http_methods": ["GET"]},
+            {"action": "edit", "label": "Edit Company Settings", "description": "Update tenant settings and configurations", "api_path": "/api/admin/company/**", "http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
         ],
     },
 ]
@@ -400,10 +400,7 @@ MODULES_REGISTRY = [
 WILDCARD_PERMISSIONS = [
     {"id": "*:*:*", "module": "admin", "submodule": "all", "action": "*", "label": "Global System Super Admin", "description": "Unrestricted system super admin access", "is_route_guard": True},
     {"id": "admin:*:*", "module": "admin", "submodule": "all", "action": "*", "label": "Admin Domain Full Access", "description": "Full access to all admin submodules", "is_route_guard": True},
-    {"id": "legal:*:*", "module": "legal", "submodule": "all", "action": "*", "label": "Legal Domain Full Access", "description": "Full access to all legal submodules", "is_route_guard": True},
-    {"id": "kb:*:*", "module": "knowledge", "submodule": "all", "action": "*", "label": "Knowledge Domain Full Access", "description": "Full access to knowledge submodules", "is_route_guard": True},
-    {"id": "workflow:*:*", "module": "workflows", "submodule": "all", "action": "*", "label": "Workflows Domain Full Access", "description": "Full access to workflow submodules", "is_route_guard": True},
-    {"id": "node:*:*", "module": "nodes", "submodule": "all", "action": "*", "label": "Nodes Domain Full Access", "description": "Full access to node submodules", "is_route_guard": True},
+    {"id": "workflows:*:*", "module": "workflows", "submodule": "all", "action": "*", "label": "Workflows Domain Full Access", "description": "Full access to workflow submodules", "is_route_guard": True},
 ]
 
 ROLE_PRESETS = [
@@ -417,7 +414,7 @@ ROLE_PRESETS = [
     {
         "role_type": "tenant_admin",
         "role_name": "Tenant Administrator",
-        "description": "Full administrative control within assigned customer tenant (Users, Roles, Knowledge, Profiles, Workflows, Logs, Settings, Legal)",
+        "description": "Full administrative control within assigned customer tenant (Users, Roles, Knowledge, Profiles, Workflows, Logs, Settings)",
         "is_system_preset": True,
         "permissions": [
             "admin:dashboard:view",
@@ -426,21 +423,11 @@ ROLE_PRESETS = [
             "admin:users:edit",
             "admin:users:delete",
             "admin:users:manage",
-            "admin:user_management:read",
-            "admin:user_management:create",
-            "admin:user_management:edit",
-            "admin:user_management:delete",
-            "admin:user_management:manage",
             "admin:roles:view",
             "admin:roles:create",
             "admin:roles:edit",
             "admin:roles:delete",
             "admin:roles:manage",
-            "admin:role_management:view",
-            "admin:role_management:create",
-            "admin:role_management:edit",
-            "admin:role_management:delete",
-            "admin:role_management:manage",
             "admin:knowledge:view",
             "admin:knowledge:create",
             "admin:knowledge:edit",
@@ -468,10 +455,6 @@ ROLE_PRESETS = [
             "admin:nodes:execute",
             "admin:nodes:clone",
             "admin:nodes:manage",
-            "nodes:catalog:view",
-            "nodes:catalog:execute",
-            "nodes:catalog:clone",
-            "nodes:catalog:manage",
             "admin:playground:view",
             "admin:playground:query",
             "admin:provider_presets:view",
@@ -486,77 +469,16 @@ ROLE_PRESETS = [
             "admin:company_settings:edit",
             "admin:api_keys:view",
             "admin:api_keys:manage",
-            "admin:tenant_settings:view",
-            "admin:tenant_settings:configure",
-            "legal:research:query",
-            "legal:research:view",
-            "legal:research:upload",
-            "legal:research:edit",
-            "legal:research:delete",
-            "legal:research:bookmark",
-            "legal:research:admin",
-            "legal:autopilot:view",
-            "legal:autopilot:edit",
-            "legal:autopilot:evidence",
-            "legal:autopilot:draft",
-        ],
-    },
-    {
-        "role_type": "para_legal",
-        "role_name": "Paralegal / Legal Assistant",
-        "description": "Legal research search, judgment view/upload, and bookmarking access.",
-        "is_system_preset": True,
-        "permissions": [
-            "legal:research:query",
-            "legal:research:view",
-            "legal:research:upload",
-            "legal:research:bookmark",
-            "legal:autopilot:view",
-            "legal:autopilot:edit",
-            "legal:autopilot:evidence",
-            "legal:autopilot:draft",
-            "admin:knowledge:view",
-            "admin:nodes:view",
-            "nodes:catalog:view",
-        ],
-    },
-    {
-        "role_type": "legal_analyst",
-        "role_name": "Senior Legal Analyst",
-        "description": "Full legal research, document ingestion, and workflow execution access",
-        "is_system_preset": True,
-        "permissions": [
-            "legal:research:query",
-            "legal:research:view",
-            "legal:research:upload",
-            "legal:research:edit",
-            "legal:research:bookmark",
-            "legal:autopilot:view",
-            "legal:autopilot:edit",
-            "legal:autopilot:evidence",
-            "legal:autopilot:draft",
-            "admin:knowledge:view",
-            "admin:knowledge:ingest",
-            "admin:workflows:view",
-            "admin:workflows:execute",
-            "workflows:builder:view",
-            "workflows:builder:execute",
-            "admin:nodes:view",
-            "nodes:catalog:view",
         ],
     },
     {
         "role_type": "tenant_user",
         "role_name": "Standard User",
-        "description": "Baseline access for standard tenant users (Legal search, KB reading)",
+        "description": "Baseline access for standard tenant users (Knowledge reading, Node viewing)",
         "is_system_preset": True,
         "permissions": [
-            "legal:research:query",
-            "legal:research:view",
-            "legal:autopilot:view",
             "admin:knowledge:view",
             "admin:nodes:view",
-            "nodes:catalog:view",
         ],
     },
     {
@@ -565,12 +487,6 @@ ROLE_PRESETS = [
         "description": "Design and view workflow canvases, configure nodes, test canvas runs, and access node catalog.",
         "is_system_preset": True,
         "permissions": [
-            "admin:workflows:view",
-            "admin:workflows:create",
-            "admin:workflows:edit",
-            "admin:workflows:delete",
-            "admin:workflows:execute",
-            "admin:workflows:manage",
             "workflows:builder:view",
             "workflows:builder:create",
             "workflows:builder:edit",
@@ -580,9 +496,6 @@ ROLE_PRESETS = [
             "admin:nodes:view",
             "admin:nodes:execute",
             "admin:nodes:manage",
-            "nodes:catalog:view",
-            "nodes:catalog:execute",
-            "nodes:catalog:manage",
             "admin:knowledge:view",
             "admin:profiles:view",
         ],
@@ -1045,32 +958,6 @@ STANDARD_PRESETS = [
 
 DEFAULT_DOMAINS = [
     {
-        "domain_key": "legal_judgment",
-        "name": "Legal Judgments & Court Orders",
-        "description": "Exhaustive legal judgment document domain schema for courts, advocates, findings, and arguments.",
-        "scope": "SYSTEM",
-        "schema_data": {
-            **LEGAL_JUDGMENT_SCHEMA,
-            "default_path": "/legal",
-            "icon": "Scale",
-            "theme_color": "#4f46e5",
-            "status": "active",
-        },
-    },
-    {
-        "domain_key": "legal",
-        "name": "Legal & Contracts",
-        "description": "Legal agreement, court judgment, and contract extraction schema",
-        "scope": "SYSTEM",
-        "schema_data": {
-            **LEGAL_JUDGMENT_SCHEMA,
-            "default_path": "/legal",
-            "icon": "Scale",
-            "theme_color": "#4f46e5",
-            "status": "active",
-        },
-    },
-    {
         "domain_key": "general",
         "name": "General Knowledge",
         "description": "Standard general document domain schema",
@@ -1085,44 +972,6 @@ DEFAULT_DOMAINS = [
                 {"key": "author", "label": "Author", "type": "string", "weight": 1.0, "importance": "medium", "required": False, "description": "Document author"},
                 {"key": "summary", "label": "Summary", "type": "string", "weight": 2.0, "importance": "high", "required": False, "description": "Brief content summary"},
             ],
-        },
-    },
-    {
-        "domain_key": "finance",
-        "name": "Finance & Invoices",
-        "description": "Financial and invoice document extraction schema",
-        "scope": "SYSTEM",
-        "schema_data": {
-            "default_path": "/finance",
-            "icon": "Briefcase",
-            "theme_color": "#059669",
-            "status": "active",
-            "fields": [
-                {"key": "invoice_number", "label": "Invoice Number", "type": "string", "weight": 2.5, "importance": "critical", "required": False, "description": "Invoice identifier"},
-                {"key": "total_amount", "label": "Total Amount", "type": "number", "weight": 2.0, "importance": "high", "required": False, "description": "Total monetary amount"},
-                {"key": "vendor_name", "label": "Vendor Name", "type": "string", "weight": 1.5, "importance": "medium", "required": False, "description": "Vendor or issuer name"},
-            ],
-        },
-    },
-    {
-        "domain_key": "education",
-        "name": "Education & Academic Research",
-        "description": "Academic records, courses, student evaluations, and research papers schema",
-        "scope": "SYSTEM",
-        "schema_data": {
-            "default_path": "/education",
-            "icon": "AcademicCap",
-            "theme_color": "#8b5cf6",
-            "status": "active",
-            "fields": [
-                {"key": "professor", "label": "Professor / Instructor", "type": "entity", "weight": 2.5, "importance": "high", "required": False, "description": "Course instructor or professor"},
-                {"key": "student", "label": "Student Name", "type": "entity", "weight": 2.0, "importance": "high", "required": False, "description": "Student or candidate name"},
-                {"key": "course_code", "label": "Course Code", "type": "value", "weight": 2.0, "importance": "high", "required": False, "description": "Course identifier like CS101, PHY201"},
-                {"key": "grade", "label": "Grade / Score", "type": "value", "weight": 1.5, "importance": "medium", "required": False, "description": "Final score or letter grade"},
-                {"key": "department", "label": "Department / School", "type": "entity", "weight": 1.5, "importance": "medium", "required": False, "description": "Department or faculty"},
-                {"key": "syllabus", "label": "Syllabus / Curriculum", "type": "text", "weight": 1.0, "importance": "low", "required": False, "description": "Course curriculum narrative"},
-            ],
-            "noise_tokens": ["student", "students", "taught", "by", "prof", "professor", "course", "class", "scoring", "above", "in"],
         },
     },
 ]
@@ -1532,6 +1381,31 @@ async def run_schema_migrations(target_engine: Optional[AsyncEngine] = None) -> 
 # Reference: EPIC-DB-MIGRATION-001 / CHANGE-1
 # ==============================================================================
 
+STALE_UI_ROUTE_PATTERNS = {
+    "/legal",
+    "/legal/**",
+    "/legal-research",
+    "/legal-research/**",
+    "/autopilot",
+    "/autopilot/**",
+    "/demo-flows",
+    "/demo-flows/**",
+    "/knowledge",
+    "/knowledge/**",
+    "/logs",
+    "/logs/**",
+    "/system",
+    "/system/**",
+    "/oauth",
+    "/oauth/**",
+    "/admin/triggers",
+    "/admin/triggers/**",
+}
+
+REMOVED_DOMAIN_MODULE_IDS = {"legal_platform", "legal_autopilot"}
+REMOVED_DOMAIN_ROLE_TYPES = {"para_legal", "legal_analyst"}
+
+
 async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
     """
     Idempotently seeds canonical modules, atomic permissions, wildcard permissions,
@@ -1539,6 +1413,66 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
     When `force=False` (default), preserves existing customized records and only
     inserts missing records or backfills null baseline attributes.
     """
+    # 0. Purge stale UI route patterns & removed domain RBAC entries
+    for stale_pat in STALE_UI_ROUTE_PATTERNS:
+        stale_rp_res = await db.execute(
+            select(RoutePermissionDB).where(
+                RoutePermissionDB.pattern == stale_pat,
+                RoutePermissionDB.http_method == "*",
+                RoutePermissionDB.customer_id.is_(None),
+            )
+        )
+        for stale_rp in stale_rp_res.scalars().all():
+            await db.delete(stale_rp)
+
+    for rem_mod_id in REMOVED_DOMAIN_MODULE_IDS:
+        rem_mod_res = await db.execute(
+            select(ModuleDB).where(ModuleDB.id == rem_mod_id, ModuleDB.customer_id.is_(None))
+        )
+        for rem_mod in rem_mod_res.scalars().all():
+            await db.delete(rem_mod)
+
+    rem_perm_ids = (
+        await db.execute(
+            select(PermissionDB.id).where(
+                (PermissionDB.module == "legal")
+                | PermissionDB.submodule.in_(["user_management", "role_management", "customer_management", "tenant_settings", "catalog"])
+                | PermissionDB.id.in_(["kb:*:*", "workflow:*:*", "node:*:*"])
+            )
+        )
+    ).scalars().all()
+    if rem_perm_ids:
+        rem_role_perms = (
+            await db.execute(select(RolePermissionDB).where(RolePermissionDB.permission_id.in_(rem_perm_ids)))
+        ).scalars().all()
+        for rem_rp_link in rem_role_perms:
+            await db.delete(rem_rp_link)
+        await db.flush()
+
+        rem_perms = (
+            await db.execute(select(PermissionDB).where(PermissionDB.id.in_(rem_perm_ids)))
+        ).scalars().all()
+        for rem_perm in rem_perms:
+            await db.delete(rem_perm)
+
+    rem_legacy_rp_res = await db.execute(
+        select(RoutePermissionDB).where(
+            RoutePermissionDB.customer_id.is_(None),
+            RoutePermissionDB.submodule.in_(["user_management", "role_management", "customer_management", "tenant_settings", "catalog"]),
+        )
+    )
+    for rem_rp in rem_legacy_rp_res.scalars().all():
+        await db.delete(rem_rp)
+
+    for rem_rt in REMOVED_DOMAIN_ROLE_TYPES:
+        rem_role_res = await db.execute(
+            select(RoleDB).where(RoleDB.role_type == rem_rt, RoleDB.customer_id.is_(None))
+        )
+        for rem_role in rem_role_res.scalars().all():
+            u_chk = await db.execute(select(UserDB.id).where(UserDB.role_id == rem_role.id))
+            if not u_chk.scalars().first():
+                await db.delete(rem_role)
+
     # 1. Seed Canonical Modules (ModuleDB) and Atomic Permissions (PermissionDB)
     for mod_data in MODULES_REGISTRY:
         stmt = select(ModuleDB).where(ModuleDB.id == mod_data["id"], ModuleDB.customer_id.is_(None))
@@ -1569,8 +1503,30 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
         else:
             if not existing_mod.route_patterns and mod_data.get("route_patterns"):
                 existing_mod.route_patterns = mod_data["route_patterns"]
+            if isinstance(existing_mod.route_patterns, list):
+                cleaned_mod_patterns = [
+                    p for p in existing_mod.route_patterns
+                    if p not in STALE_UI_ROUTE_PATTERNS
+                ]
+                for pat in mod_data.get("route_patterns", []):
+                    if pat not in cleaned_mod_patterns:
+                        cleaned_mod_patterns.append(pat)
+                if cleaned_mod_patterns != existing_mod.route_patterns:
+                    existing_mod.route_patterns = cleaned_mod_patterns
             if not existing_mod.icon and mod_data.get("icon"):
                 existing_mod.icon = mod_data.get("icon")
+            # =================================================================
+            # BLOCK COMMENT: SPLIT LEGACY /admin/api-keys FROM admin_settings
+            # Reference: EPIC-AUTH-001 / STORY-1.5
+            # Ensures existing DB rows seeded prior to admin_api_keys split no
+            # longer expose /admin/api-keys under the "Company Settings" label.
+            # =================================================================
+            if mod_data["id"] in ("admin_customers", "admin_users", "admin_roles", "admin_workflows", "admin_nodes", "admin_settings"):
+                existing_mod.module = mod_data["module"]
+                existing_mod.submodule = mod_data.get("submodule")
+                existing_mod.label = mod_data["label"]
+                existing_mod.route_patterns = mod_data["route_patterns"]
+                existing_mod.description = mod_data.get("description")
         await db.commit()
 
         # Seed atomic action permissions for this module
@@ -1607,10 +1563,14 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
             else:
                 if not existing_p.module_id:
                     existing_p.module_id = mod_data["id"]
+                    existing_p.is_route_guard = act.get("is_route_guard", False)
                 if not existing_p.submodule and mod_data.get("submodule"):
                     existing_p.submodule = mod_data.get("submodule")
                 if not existing_p.action:
                     existing_p.action = act["action"]
+                if existing_p.label == existing_p.id:
+                    existing_p.label = act["label"]
+                    existing_p.description = act.get("description")
                 if (existing_p.api_path is None or existing_p.api_path == "") and act.get("api_path"):
                     existing_p.api_path = act.get("api_path")
                 if not existing_p.http_methods and act.get("http_methods"):
@@ -1740,6 +1700,12 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
                 existing_rp.submodule = mod_data.get("submodule")
                 existing_rp.label = mod_data["label"]
                 existing_rp.description = mod_data.get("description")
+            elif mod_data["id"] == "admin_api_keys" and existing_rp.submodule == "tenant_settings":
+                existing_rp.permission_id = perm_id
+                existing_rp.module = mod_data["module"]
+                existing_rp.submodule = mod_data.get("submodule")
+                existing_rp.label = mod_data["label"]
+                existing_rp.description = mod_data.get("description")
 
         # 3b. Register Action API Endpoints with HTTP methods (supports comma-separated multi-path patterns)
         for act in mod_data.get("actions", []):
@@ -1754,6 +1720,7 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
                         stmt = select(RoutePermissionDB).where(
                             RoutePermissionDB.pattern == single_api_path,
                             RoutePermissionDB.http_method == norm_meth,
+                            RoutePermissionDB.permission_id == act_perm_id,
                             RoutePermissionDB.customer_id.is_(None),
                         )
                         res = await db.execute(stmt)
@@ -1772,6 +1739,12 @@ async def seed_rbac(db: AsyncSession, force: bool = False) -> None:
                             ))
                         elif force:
                             existing_api_rp.permission_id = act_perm_id
+                        elif mod_data["id"] == "admin_api_keys" and existing_api_rp.submodule == "tenant_settings":
+                            existing_api_rp.permission_id = act_perm_id
+                            existing_api_rp.module = mod_data["module"]
+                            existing_api_rp.submodule = mod_data.get("submodule")
+                            existing_api_rp.label = f"{mod_data['label']} - {act['label']}"
+                            existing_api_rp.description = act.get("description")
     await db.commit()
     try:
         from app.api.auth.dependencies import reload_route_permissions_cache
@@ -1867,6 +1840,11 @@ async def seed_all_domains(
             if not existing_ekp.schema_definition:
                 existing_ekp.schema_definition = schema_data
                 session.add(existing_ekp)
+            elif isinstance(existing_ekp.schema_definition, dict) and existing_ekp.schema_definition.get("default_path") == "/legal":
+                updated_def = dict(existing_ekp.schema_definition)
+                updated_def["default_path"] = "/autopilot"
+                existing_ekp.schema_definition = updated_def
+                session.add(existing_ekp)
 
         # 2. Synchronize DomainSchemaDB (domain_schemas table)
         schema_stmt = select(DomainSchemaDB).where(DomainSchemaDB.domain_key == domain_key)
@@ -1896,6 +1874,11 @@ async def seed_all_domains(
             updated = False
             if not existing_schema.schema_json:
                 existing_schema.schema_json = schema_data
+                updated = True
+            elif isinstance(existing_schema.schema_json, dict) and existing_schema.schema_json.get("default_path") == "/legal":
+                updated_json = dict(existing_schema.schema_json)
+                updated_json["default_path"] = "/autopilot"
+                existing_schema.schema_json = updated_json
                 updated = True
             if not existing_schema.system_prompt:
                 existing_schema.system_prompt = resolved_sys_prompt

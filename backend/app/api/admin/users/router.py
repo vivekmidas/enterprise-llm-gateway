@@ -5,11 +5,11 @@ from sqlalchemy import select, delete
 
 from app.core.database import get_db
 from app.models.db_models import UserDB as usersDb
-from app.api.auth.dependencies import get_current_user, require_admin, require_system_admin, require_admin_or_system_admin, resolve_role_for_user, resolve_role_and_id
+from app.api.auth.dependencies import get_current_user, require_admin, require_system_admin, require_admin_or_system_admin, resolve_role_for_user, resolve_role_and_id, dynamic_api_guard
 from app.core.types.users import User
 from app.core.security.hash import get_password_hash
 
-router = APIRouter(prefix="/admin/users", tags=["Admin"])
+router = APIRouter(prefix="/admin/users", tags=["Admin"], dependencies=[Depends(dynamic_api_guard)])
 
 # BLOCK COMMENT: TENANT-SCOPED LIST USERS ENDPOINT
 @router.get("", response_model=List[Dict[str, Any]])
@@ -128,7 +128,7 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
         
     # Company admins can only delete users in their own customer tenant
-    if current_user.role in ["admin", "tenant_admin"] and str(user.customer_id) != str(current_user.customer_id):
+    if current_user.role != "system_admin" and current_user.role_type != "system_admin" and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="You do not have permission to delete this user")
         
     # Prevent deletion of system_admin users
@@ -156,11 +156,11 @@ async def update_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if current_user.role in ["admin", "tenant_admin"] and str(user.customer_id) != str(current_user.customer_id):
+    if current_user.role != "system_admin" and current_user.role_type != "system_admin" and str(user.customer_id) != str(current_user.customer_id):
         raise HTTPException(status_code=403, detail="Not authorized to edit users outside your tenant")
 
     # BLOCK COMMENT: REASSIGN CUSTOMER_ID IF PROVIDED BY SYSTEM ADMIN
-    if "customer_id" in payload and current_user.role == "system_admin":
+    if "customer_id" in payload and (current_user.role == "system_admin" or current_user.role_type == "system_admin"):
         raw_cid = payload.get("customer_id")
         if raw_cid is not None and str(raw_cid).strip() not in ("", "null", "None", "system", "system-wide"):
             user.customer_id = str(raw_cid)

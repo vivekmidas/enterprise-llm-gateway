@@ -10,13 +10,14 @@ Mounts:
   /api/profiles/{id}/reranking
   /api/profiles/{id}/generation
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.auth.dependencies import dynamic_api_guard
 from app.api.profiles.defaults_router import router as defaults_router
 from app.api.profiles.profiles_router import router as profiles_router
 from app.api.profiles.sections_router import router as sections_router
 
-router = APIRouter(prefix="/api/profiles", tags=["LLM Profiles"])
+router = APIRouter(prefix="/api/profiles", tags=["LLM Profiles"], dependencies=[Depends(dynamic_api_guard)])
 
 # Register /default before /{profile_id} to avoid route shadowing
 router.include_router(defaults_router)

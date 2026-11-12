@@ -1,16 +1,17 @@
 import httpx
-from fastapi import APIRouter, Request, HTTPException, Query, Body
+from fastapi import APIRouter, Request, HTTPException, Query, Body, Depends
 from fastapi.responses import RedirectResponse
 import structlog
 from typing import Optional, List, Dict, Any
 from app.core.database import AsyncSessionLocal
 from app.models.db_models import CredentialDB, OAuthProviderDB
+from app.api.auth.dependencies import dynamic_api_guard
 from sqlalchemy import select
 
 router = APIRouter(prefix="/admin/oauth", tags=["Authentication"])
 logger = structlog.get_logger(__name__)
 
-@router.get("/providers", response_model=List[Dict[str, Any]])
+@router.get("/providers", response_model=List[Dict[str, Any]], dependencies=[Depends(dynamic_api_guard)])
 async def list_providers():
     """Lists all configured OAuth providers."""
     async with AsyncSessionLocal() as session:
@@ -30,7 +31,7 @@ async def list_providers():
             } for p in providers
         ]
 
-@router.post("/providers")
+@router.post("/providers", dependencies=[Depends(dynamic_api_guard)])
 async def create_provider(data: Dict[str, Any] = Body(...)):
     """Creates a new OAuth provider configuration."""
     async with AsyncSessionLocal() as session:
@@ -39,7 +40,7 @@ async def create_provider(data: Dict[str, Any] = Body(...)):
         await session.commit()
         return {"status": "success", "id": provider.id}
 
-@router.get("/connect/{provider}")
+@router.get("/connect/{provider}", dependencies=[Depends(dynamic_api_guard)])
 async def connect_provider(
     provider: str, 
     client_id: str, 
@@ -137,7 +138,7 @@ async def auth_callback_success(credentialId: int, credentialName: str, origin: 
     </html>
     """
 
-@router.get("/credentials", response_model=List[Dict[str, Any]])
+@router.get("/credentials", response_model=List[Dict[str, Any]], dependencies=[Depends(dynamic_api_guard)])
 async def list_credentials(type: Optional[str] = None):
     """Lists available credentials, optionally filtered by type."""
     from sqlalchemy import select

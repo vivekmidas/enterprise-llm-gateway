@@ -15,11 +15,11 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.api.auth.dependencies import require_system_admin
+from app.api.auth.dependencies import require_system_admin, dynamic_api_guard
 from app.core.types.users import User
 from app.core.backup_exporter import export_sql_backup, generate_backup_filename
 
-router = APIRouter(prefix="/api/admin/backup", tags=["admin-backup"])
+router = APIRouter(prefix="/api/admin/backup", tags=["admin-backup"], dependencies=[Depends(dynamic_api_guard)])
 
 
 @router.post("/export")
