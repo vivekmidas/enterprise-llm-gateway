@@ -77,15 +77,16 @@ class GenericMySQLDBExecutor(DBExecutor):
         try:
             conn = mysql.connector.connect(
                 host=connection_config.get("host", "127.0.0.1"),
-                user=connection_config.get("user", "root"),
+                user=connection_config.get("username", "root"),
                 passwd=connection_config.get("password", "password"),
-                database=connection_config.get("database", "test"),
+                database=connection_config.get("database", "enterprise_gateway"),
                 port=port
             )
             self.logger.info("mysql_connection_acquired", database=connection_config.get("database"))
             return conn
         except Exception as e:
-            self.logger.error("mysql_connection_failed", database=connection_config.get("database"), error=str(e))
+            self.logger.error("mysql_connection_failed", database=connection_config.get("database"), username=connection_config.get("username"), 
+                              password=connection_config.get("password"),  error=str(e))
             raise RuntimeError(f"MySQL connection failed: {e.msg}") from e
 
     
